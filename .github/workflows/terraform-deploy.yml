@@ -37,6 +37,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    # Manual trigger is ONLY permitted on the main branch. This matches
+    # the "terraform pipeline can only run on the main branch" requirement
+    # and prevents accidental destruction of the production state file
+    # triggered from a feature branch.
+    branches:
+      - main
     inputs:
       environment:
         description: "Target environment name (sets the R2 state key prefix)."
@@ -121,6 +127,12 @@ jobs:
   plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
+    # DOUBLE-GATE: on.push.branches already restricts triggers to main, but
+    # we ALSO assert it here at job level. Without this, a user could edit
+    # the workflow file locally on a feature branch to remove the on-level
+    # restriction and manually dispatch terraform against production
+    # state. Both assertions must pass before any terraform command runs.
+    if: github.ref == 'refs/heads/main'
     outputs:
       plan-artifact: tfplan-${{ github.sha }}
       changed: ${{ steps.plan-summary.outputs.changed }}
@@ -263,7 +275,17 @@ jobs:
   apply:
     name: Terraform Apply  ✅ Manual approval required
     needs: plan
-    if: ${{ success() }}
+    # EXPLICIT ordering + gating — three independent conditions must be
+    # true before Apply runs:
+    #   1. We are running on the `main` branch (job-level double-gate).
+    #   2. The `plan` job completed with status `success` — not skipped,
+    #      cancelled, or failed. The default `success()` function would
+    #      technically cover this too, but spelling it out as
+    #      `needs.plan.result == 'success'` is explicit and auditable.
+    #   3. (Implicit from the `environment:` block below) at least one
+    #      authorized reviewer has explicitly approved this exact run
+    #      from the Environment approval UI — it NEVER auto-triggers.
+    if: github.ref == 'refs/heads/main' && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     # ---- Gating mechanism ------------------------------------------------
     # By attaching this job to the `production` GitHub Environment,
