@@ -1,25 +1,44 @@
 # ============================================================
-# Worker scripts + bindings.
+# Workers Builds (Git-connected CI/CD) — IaC role.
 #
-# IMPORTANT: with Cloudflare Workers Builds (Git-connected CI/CD), the
-# worker CODE is uploaded by the build system on every push. Terraform's
-# job here is to provision the *bindings* (D1, KV, R2, Queue, DO, AI) so
-# the dashboard-deployed workers see the right resources.
+# Cloudflare's Workers Builds (托管式 Git 集成) is the canonical,
+# zero-configuration way to build and deploy the workers. The build
+# system:
+#   1. reads each wrangler.toml in apps/api/*/
+#   2. runs `pnpm turbo run build` (declared in [build])
+#   3. uploads the compiled worker via Cloudflare's internal Git bridge
+#   4. applies [vars] and any dashboard-set Secrets as the runtime env
 #
-# Two deployment modes are supported:
+# As a result, Terraform NO LONGER owns:
+#   × worker script content (content = file("dist/index.js"))
+#   × plain_text / secret_text bindings that are pure configuration
+#     (URLs, flags, B2 region, JWT secrets, Neo4j credentials, etc.)
 #
-#   1. Workers Builds (recommended): comment out the `content` lines
-#      below, keep only the bindings. Each `cloudflare_worker_script`
-#      becomes a binding manifest that the build system reads when
-#      deploying.
+# Terraform KEEPS ownership of resources whose IDs originate INSIDE
+# the Cloudflare account / B2 project and therefore cannot be known
+# when writing wrangler.toml ahead of time:
+#   ✓ D1 database IDs
+#   ✓ KV namespace IDs
+#   ✓ Queue names / queue consumer bindings
+#   ✓ AI binding
+#   ✓ Durable Object bindings (declared in wrangler.toml, mirrored
+#     here so Terraform's dependency graph stays correct)
 #
-#   2. Manual deploy via `wrangler deploy`: keep the `content` lines
-#      (they point at the built `dist/index.js`); running `terraform
-#      apply` will upload the worker code as well.
+# After `terraform apply`, the operator copies values from
+# `terraform output -json` into:
+#   • each wrangler.toml's `REPLACE_WITH_*` placeholders, OR
+#   • directly into the Cloudflare dashboard → Worker → Settings →
+#     Variables and Secrets (preferred so commits don't encode IDs).
+#
+# The `cloudflare_worker_script` resources themselves are STILL
+# declared: they act as the authoritative binding manifest, and the
+# cron triggers in cron.tf reference `cloudflare_worker_script.*.name`.
 # ============================================================
 
 locals {
   # Worker names match the `name` field in each worker's wrangler.toml.
+  # When using Workers Builds the Git bridge creates a script with this
+  # exact name; Terraform only manages its bindings + downstream deps.
   worker_names = {
     gateway   = "${var.project_name}-gateway"
     user      = "${var.project_name}-user-service"
@@ -28,23 +47,19 @@ locals {
     ai        = "${var.project_name}-ai-service"
     cleanup   = "${var.project_name}-cleanup-service"
   }
-
-  # Common bindings shared by every worker.
-  common_bindings = [
-    {name = "JWT_SECRET", type = "secret_text", text = var.jwt_secret},
-  ]
 }
 
 # ============================================================
 # 1. Gateway Worker
+#    • Cloudflare public entry point
+#    • KV caches: JWT blacklist + rate limit
+#    • All runtime configuration (USER_SERVICE_URL, JWT_SECRET, etc.)
+#      lives in apps/api/gateway/wrangler.toml [vars] + dashboard Secrets.
 # ============================================================
 resource "cloudflare_worker_script" "gateway" {
   account_id = local.account_id
   name       = local.worker_names.gateway
   module     = true
-
-  # Comment out the next line when deploying via Workers Builds only.
-  content = file("${path.module}/../../apps/api/gateway/dist/index.js")
 
   kv_namespace_binding {
     name         = "JWT_BLACKLIST"
@@ -54,28 +69,18 @@ resource "cloudflare_worker_script" "gateway" {
     name         = "RATE_LIMIT"
     namespace_id = cloudflare_kv_namespace.caches["rate-limit"].id
   }
-
-  secret_text_binding {
-    name = "JWT_SECRET"
-    text = var.jwt_secret
-  }
-
-  # Routing URLs: each downstream worker's workers.dev subdomain.
-  plain_text_binding {
-    name = "USER_SERVICE_URL"
-    text = "https://${local.worker_names.user}.${var.cloudflare_account_id_or_workers_dev}.workers.dev"
-  }
 }
 
 # ============================================================
 # 2. User Service
+#    • D1 decision-db (users / audit_logs / system_config tables)
+#    • KV user-cache
+#    • JWT / Neo4j env managed via wrangler.toml [vars] + Secrets.
 # ============================================================
 resource "cloudflare_worker_script" "user_service" {
   account_id = local.account_id
   name       = local.worker_names.user
   module     = true
-
-  content = file("${path.module}/../../apps/api/user/dist/index.js")
 
   d1_database_binding {
     name        = "DB"
@@ -85,111 +90,65 @@ resource "cloudflare_worker_script" "user_service" {
     name         = "CACHE"
     namespace_id = cloudflare_kv_namespace.caches["user-cache"].id
   }
-  secret_text_binding {
-    name = "JWT_SECRET"
-    text = var.jwt_secret
-  }
-  # Neo4j AuraDB bindings — User Service creates per-tenant databases.
-  plain_text_binding {
-    name = "NEO4J_URL"
-    text = var.neo4j_url
-  }
-  plain_text_binding {
-    name = "NEO4J_USER"
-    text = var.neo4j_user
-  }
-  secret_text_binding {
-    name = "NEO4J_PASSWORD"
-    text = var.neo4j_password
-  }
 }
 
 # ============================================================
 # 3. Graph Service
+#    • KV graph-cache
+#    • Neo4j AuraDB credentials via wrangler.toml [vars] + Secrets.
 # ============================================================
 resource "cloudflare_worker_script" "graph_service" {
   account_id = local.account_id
   name       = local.worker_names.graph
   module     = true
 
-  content = file("${path.module}/../../apps/api/graph/dist/index.js")
-
   kv_namespace_binding {
     name         = "CACHE"
     namespace_id = cloudflare_kv_namespace.caches["graph-cache"].id
-  }
-  secret_text_binding {
-    name = "JWT_SECRET"
-    text = var.jwt_secret
-  }
-  plain_text_binding {
-    name = "NEO4J_URL"
-    text = var.neo4j_url
-  }
-  plain_text_binding {
-    name = "NEO4J_USER"
-    text = var.neo4j_user
-  }
-  secret_text_binding {
-    name = "NEO4J_PASSWORD"
-    text = var.neo4j_password
   }
 }
 
 # ============================================================
 # 4. Ingestion Service
+#    • KV ingestion-jobs (pollable job status records)
+#    • Queue ingestion-queue producer + consumer (this same worker
+#      exports a `queue` handler; consumer limits declared in
+#      wrangler.toml's [[queues_consumers]]).
+#    • B2 staging-bucket credentials / bucket name live in
+#      wrangler.toml [vars] + dashboard Secrets.
+#    • Graph service URL cross-worker reference: written in
+#      wrangler.toml [vars].
 # ============================================================
 resource "cloudflare_worker_script" "ingestion_service" {
   account_id = local.account_id
   name       = local.worker_names.ingestion
   module     = true
 
-  content = file("${path.module}/../../apps/api/ingestion/dist/index.js")
-
-  # Backblaze B2 S3-compatible storage config (ingestion staging).
-  secret_text_binding {
-    name = "B2_KEY_ID"
-    text = var.b2_application_key_id
-  }
-  secret_text_binding {
-    name = "B2_KEY"
-    text = var.b2_application_key
-  }
-  plain_text_binding {
-    name = "B2_REGION"
-    text = var.b2_region
-  }
-  plain_text_binding {
-    name = "B2_INGESTION_BUCKET"
-    text = aws_s3_bucket.ingestion_staging.bucket
-  }
   kv_namespace_binding {
     name         = "JOBS"
     namespace_id = cloudflare_kv_namespace.caches["ingestion-jobs"].id
   }
   queue_binding {
-    name         = "INGEST_QUEUE"
-    queue_name   = cloudflare_queue.ingestion.name
-  }
-  secret_text_binding {
-    name = "JWT_SECRET"
-    text = var.jwt_secret
-  }
-  plain_text_binding {
-    name = "GRAPH_SERVICE_URL"
-    text = "https://${local.worker_names.graph}.${var.cloudflare_account_id_or_workers_dev}.workers.dev"
+    name       = "INGEST_QUEUE"
+    queue_name = cloudflare_queue.ingestion.name
   }
 }
 
 # ============================================================
 # 5. AI Service
+#    • Workers AI binding (free tier Neurons).
+#    • D1 decision-db (decisions / recommendations tables; shared).
+#    • KV ai-cache (inference cache + neuron-budget counter).
+#    • Durable Object PlanningAgent — class declared in
+#      apps/api/ai/wrangler.toml [[durable_objects.bindings]];
+#      mirrored here for Terraform's dependency graph.
+#    • LLM provider config, third-party API keys: wrangler.toml
+#      [vars] + dashboard Secrets.
 # ============================================================
 resource "cloudflare_worker_script" "ai_service" {
   account_id = local.account_id
   name       = local.worker_names.ai
   module     = true
-
-  content = file("${path.module}/../../apps/api/ai/dist/index.js")
 
   ai_binding {
     name = "AI"
@@ -206,55 +165,26 @@ resource "cloudflare_worker_script" "ai_service" {
     name       = "AGENT"
     class_name = "PlanningAgent"
   }
-  secret_text_binding {
-    name = "JWT_SECRET"
-    text = var.jwt_secret
-  }
-  plain_text_binding {
-    name = "AI_DEFAULT_PROVIDER"
-    text = var.default_provider
-  }
-  plain_text_binding {
-    name = "WORKERS_AI_MODEL"
-    text = var.workers_ai_model
-  }
 }
 
 # ============================================================
 # 6. Cleanup Service
+#    • D1 decision-db (final row deletions after archival write).
+#    • Queue cleanup-queue (one tenant per message; DLQ in queues.tf).
+#    • KV caches: user/graph/ingestion-jobs/ai + CLEANUP_JOBS state.
+#    • Dual B2 buckets (staging purge + archive write): B2 region,
+#      bucket names, and credentials are in wrangler.toml [vars] +
+#      dashboard Secrets.
+#    • Neo4j credentials / tenant DROP authorizer: in wrangler.toml.
 # ============================================================
 resource "cloudflare_worker_script" "cleanup_service" {
   account_id = local.account_id
   name       = local.worker_names.cleanup
   module     = true
 
-  content = file("${path.module}/../../apps/api/cleanup/dist/index.js")
-
   d1_database_binding {
     name        = "DB"
     database_id = cloudflare_d1_database.decision_db.database_id
-  }
-  # Backblaze B2 S3-compatible storage config (dual-bucket: ingestion
-  # staging for purge + tenant archive for metadata backup).
-  secret_text_binding {
-    name = "B2_KEY_ID"
-    text = var.b2_application_key_id
-  }
-  secret_text_binding {
-    name = "B2_KEY"
-    text = var.b2_application_key
-  }
-  plain_text_binding {
-    name = "B2_REGION"
-    text = var.b2_region
-  }
-  plain_text_binding {
-    name = "B2_INGESTION_BUCKET"
-    text = aws_s3_bucket.ingestion_staging.bucket
-  }
-  plain_text_binding {
-    name = "B2_ARCHIVE_BUCKET"
-    text = aws_s3_bucket.tenant_archive.bucket
   }
   queue_binding {
     name       = "CLEANUP_QUEUE"
@@ -279,21 +209,5 @@ resource "cloudflare_worker_script" "cleanup_service" {
   kv_namespace_binding {
     name         = "CLEANUP_JOBS"
     namespace_id = cloudflare_kv_namespace.caches["cleanup-jobs"].id
-  }
-  secret_text_binding {
-    name = "JWT_SECRET"
-    text = var.jwt_secret
-  }
-  plain_text_binding {
-    name = "NEO4J_URL"
-    text = var.neo4j_url
-  }
-  plain_text_binding {
-    name = "NEO4J_USER"
-    text = var.neo4j_user
-  }
-  secret_text_binding {
-    name = "NEO4J_PASSWORD"
-    text = var.neo4j_password
   }
 }

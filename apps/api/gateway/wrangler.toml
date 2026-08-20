@@ -1,15 +1,36 @@
 # Gateway Worker — public entry point.
 #
-# Deployed via Cloudflare Workers Builds (Git-connected). The CI pipeline
-# runs `pnpm turbo run build` then `wrangler deploy`. Secrets (JWT_SECRET,
-# internal service URLs) are configured in the Cloudflare dashboard.
+# Deployed via Cloudflare Workers Builds (Git-connected — the preferred
+# zero-config mechanism for this repository as a whole). The Cloudflare
+# Git bridge runs the [build] command on every push and deploys.
+#
+# Ownership split between this wrangler.toml (Workers Builds source of
+# truth) and Terraform (infra resource source of truth):
+#
+#   HERE (wrangler.toml + Cloudflare dashboard Variables & Secrets):
+#     • Worker code — built & uploaded by Workers Builds Git bridge.
+#     • Runtime env config: JWT_SECRET, USER_SERVICE_URL, etc.
+#       Set either as [vars] (non-secret) below OR as Worker Secrets
+#       via the dashboard / `wrangler secret put`.
+#     • KV namespace IDs: populated from `terraform output` after
+#       apply.
+#
+#   THERE (infrastructure/terraform/*.tf):
+#     • KV namespaces themselves (jwt-blacklist / rate-limit KVs).
+#     • D1 / Queues / Durable Object namespaces / AI / other
+#       Cloudflare resources.
+#     • Cron triggers.
+#
+# After the first `terraform apply` on a fresh account, run:
+#   cd infrastructure/terraform && terraform output kv_namespaces
+# and paste the two IDs into the REPLACE_WITH_KV_ID placeholders below
+# (or override them directly in the dashboard → Worker → Variables,
+#  which does not require committing IDs to git).
 name = "decision-gateway"
 main = "dist/index.js"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Workers Builds: connect this directory to the repository in the
-# Cloudflare dashboard. Build configuration lives in `apps/api/gateway/`.
 [build]
 command = "pnpm turbo run build --filter=@ontodecide/gateway"
 cwd = "apps/api/gateway"
@@ -19,16 +40,30 @@ format = "modules"
 dir = "dist"
 main = "./index.js"
 
-# Public routes; downstream service workers are *not* exposed directly.
+# Non-secret runtime variables. Workers Builds applies these to every
+# deploy; override per-environment via dashboard → Variables when the
+# default isn't right.
 [vars]
 AI_DEFAULT_PROVIDER = "workers-ai"
+# Downstream user-service URL — format:
+#   https://<user-worker-name>.<workers.dev subdomain>.workers.dev
+# The user-worker name matches apps/api/user/wrangler.toml's `name`
+# field, typically `decision-user-service`.
+USER_SERVICE_URL = "https://decision-user-service.<ACCOUNT-SUBDOMAIN>.workers.dev"
+
+# Secrets (set via Cloudflare dashboard → Worker → Secrets OR
+# `wrangler secret put <NAME>`):
+#   JWT_SECRET          — 32+ byte HMAC signing key (shared across all
+#                         6 workers that validate tokens).
+#   GATEWAY_PASSTHROUGH_SECRETS — add any other worker-specific secrets
+#                         here; NEVER commit the values.
 
 [[kv_namespaces]]
 binding = "JWT_BLACKLIST"
-id = "REPLACE_WITH_KV_ID"
+id = "REPLACE_WITH_KV_ID"   # From: `terraform output kv_namespaces.jwt-blacklist`
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "REPLACE_WITH_KV_ID"
+id = "REPLACE_WITH_KV_ID"   # From: `terraform output kv_namespaces.rate-limit`
 
 # Cron trigger is owned by the Cleanup Worker; see apps/api/cleanup/wrangler.toml.

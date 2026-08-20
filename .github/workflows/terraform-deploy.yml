@@ -1,56 +1,65 @@
 # ============================================================
 # Terraform Deploy Workflow
 #
+# STANDARD: Google Cloud Platform / Cloud Foundation Toolkit
+# workflow code-style conventions.
+#
 # Backblaze B2 has replaced Cloudflare R2 for ALL object storage
 # in this project: business-data buckets (ingestion-staging +
 # tenant-archive) AND the Terraform remote-state bucket all live
 # in B2 now.
 #
-# Follows Backblaze + Cloudflare official Terraform best practices:
+# Two-stage pipeline (CFT standard):
+#   Stage 1 "plan"  — automatic on EVERY branch. Emits a plan
+#                     artifact + human-readable diff summary.
+#                     On branches / forks WITHOUT the required
+#                     secrets, Plan is gracefully SKIPPED (exit
+#                     0 with an informative GITHUB_STEP_SUMMARY,
+#                     never a red failure).
+#   Stage 2 "apply" — EXPLICITLY requires: (a) approval of the
+#                     "production" GitHub Environment, AND
+#                     (b) running from `refs/heads/main`.
 #
-#   1. Provider auth  →  CLOUDFLARE_API_TOKEN env var
-#                        (never written to config / tfvars)
-#   2. State backend  →  Backblaze B2 (remote S3-compatible)
-#                        credentials via AWS_ACCESS_KEY_ID /
-#                        AWS_SECRET_ACCESS_KEY env vars
-#                        (the bundled HashiCorp AWS SDK inside
-#                        Terraform's backend "s3" hard-codes
-#                        those variable names)
-#   3. Input vars     →  TF_VAR_* env variables (standard
-#                        Terraform mechanism; no auto.tfvars file)
-#   4. Environments   →  separate accounts + separate B2 state
-#                        bucket keys per env
-#   5. Secrets        →  all from GitHub Secrets / a secret store
-#                        such as Vault, per Cloudflare guidance
+# ==================================================================
+# GITHUB CONFIGURATION REFERENCE — Google-style config matrix
+# ==================================================================
+# Navigate:  Repo → Settings → Secrets and variables → Actions
 #
-# Two-stage pipeline:
-#   Stage 1 "plan"  — automatic on every branch. Produces a
-#                     plan artifact + human-readable diff.
-#                     On PRs / forks WITHOUT the full secret
-#                     set, the Plan is gracefully SKIPPED
-#                     (informs the reviewer but does not fail
-#                     the check; Build/Lint/Test CI still runs).
-#   Stage 2 "apply" — requires manual approval via the
-#                     "production" GitHub Environment. Never runs
-#                     unless someone explicitly clicks
-#                     "Approve and deploy" in the Actions UI.
-#                     Restricted to `main` branch only.
+# ┌─────────────────────────────────────────────────────────────────────────────┬──────────┬──────────┬──────────────────────────────────────────────────────────┬─────────────────────────────────────────────┬─────────────────────────────────────────────────────────────┐
+# │ Name                                                                        │ Type     │ Required │ Purpose                                                │ Example                                     │ Rotation / Notes                                            │
+# ├─────────────────────────────────────────────────────────────────────────────┼──────────┼──────────┼──────────────────────────────────────────────────────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤
+# │ CLOUDFLARE_API_TOKEN                                                        │ Secret   │ Yes      │ Cloudflare Terraform provider authentication.          │ AQhi...612                                  │ Per Cloudflare token lifecycle; rotation is hot-swappable.  │
+# │ CLOUDFLARE_ACCOUNT_ID                                                       │ Secret   │ No       │ Override for auto-discover. Only set if the token       │ 0123456789abcdef0123456789abcdef            │ does NOT grant the Account List permission.                 │
+# │ TF_VAR_jwt_secret                                                           │ Secret   │ Yes      │ HMAC signing secret for gateway/user JWT tokens.        │ (64 random chars via openssl rand -base64 48)│ Invalidate all existing sessions on rotation.               │
+# │ TF_VAR_neo4j_password                                                       │ Secret   │ Yes      │ Password for Neo4j AuraDB user (var.neo4j_user).        │ (dashboard secret)                          │ Rotate via AuraDB dashboard FIRST, then update the secret. │
+# │ TF_VAR_cloudflare_account_id_or_workers_dev                                 │ Secret   │ Yes      │ Workers.dev subdomain prefix for cross-worker URLs.     │ "myteam-a1b2"                               │ Rarely changes; tied to the Cloudflare account.            │
+# │ TF_B2_STATE_KEY_ID                                                          │ Secret   │ Yes      │ B2 App Key keyID — Terraform STATE backend bucket R/W   │ 0001a2b3c4d5e6f00000000001k                  │ Bucket-scoped (ontodecide-terraform-state) ONLY.          │
+# │ TF_B2_STATE_APPLICATION_KEY                                                 │ Secret   │ Yes      │ B2 App Key secret — paired with TF_B2_STATE_KEY_ID.     │ (shown once at App Key creation)            │ Create a 2nd key, swap, delete old — no downtime.          │
+# │ TF_VAR_b2_application_key_id                                                │ Secret   │ Yes      │ B2 App Key keyID — BUSINESS buckets (ingestion +        │ 000...0001k                                 │ Must cover BOTH business buckets (Read & Write).           │
+# │                               archive).                                     │          │          │                                                        │                                             │                                                             │
+# │ TF_VAR_b2_application_key                                                   │ Secret   │ Yes      │ B2 App Key secret — paired with the business-bucket     │ (shown once at App Key creation)            │ Rotate together with b2_application_key_id.                 │
+# │                               keyID.                                        │          │          │                                                        │                                             │                                                             │
+# │ TF_VAR_neo4j_url                                                            │ Variable │ Yes      │ AuraDB cluster base URL (https://...databases.neo4j.io).│ https://neo4j+s://abc123.databases.neo4j.io │ From Neo4j AuraDB dashboard → Connection details.          │
+# │ TF_VAR_cloudflare_account_id                                                │ Variable │ No       │ Alternate delivery for the optional account override.  │ 0123...cdef                                │ Same-named Secret takes precedence if both exist.          │
+# │ TF_VAR_b2_region                                                            │ Variable │ Yes      │ B2 region code — used for BOTH backend endpoint and    │ "us-west-004"                               │ Copy from any B2 bucket's details screen in dashboard.     │
+# │                               the aws.b2 provider endpoint.                │          │          │                                                        │                                             │                                                             │
+# │ TF_VAR_default_provider                                                     │ Variable │ No       │ Default LLM provider for AI Worker.                    │ "workers-ai"                                │ Defaults to "workers-ai" if unset.                         │
+# │ TF_VAR_workers_ai_model                                                     │ Variable │ No       │ Workers AI model id for default_provider=workers-ai.   │ "@cf/meta/llama-3-8b-instruct"              │ Defaults to @cf/meta/llama-3-8b-instruct.                  │
+# └─────────────────────────────────────────────────────────────────────────────┴──────────┴──────────┴──────────────────────────────────────────────────────────┴─────────────────────────────────────────────┴─────────────────────────────────────────────────────────────┘
 #
-# To run Stage 2 after a successful Stage 1:
-#   1. Open the completed workflow run in GitHub → Actions.
-#   2. Click the paused "production" environment card.
-#   3. Review the plan output → click "Approve and deploy".
-#   4. The "Apply" job begins automatically.
-# ============================================================
+# ADDITIONAL GITHUB SETUP:
+#   • Settings → Environments → New environment → name = "production"
+#     → Enable "Required reviewers" → add people / teams authorized
+#     to approve production applies.
+# ==================================================================
 
 name: Terraform Deploy
 
 on:
   # ------------------------------------------------------------------
-  #   • terraform PLAN  → may run on EVERY branch (for PR authors to
-  #                        preview resource changes before merging).
+  #   • terraform PLAN  → may run on EVERY branch.
   #   • terraform APPLY → still restricted to the main branch ONLY
-  #                      (the job-level gate enforces that separately).
+  #                      (gated separately at the job level).
   # ------------------------------------------------------------------
   push:
     branches:
@@ -76,95 +85,22 @@ env:
   # ---- Shared configuration ----
   TF_VERSION: "1.6.6"
   TF_WORKING_DIR: "infrastructure/terraform"
-  # B2 bucket created manually (first-time setup in main.tf docs):
-  #   B2 Dashboard → Buckets → ontodecide-terraform-state
-  # B2 bucket names are GLOBALLY unique (not account-scoped).
+  # Manually-created B2 bucket for Terraform remote state.
+  # See main.tf for the one-time first-setup instructions.
   TF_STATE_BUCKET: "ontodecide-terraform-state"
-
-# ============================================================
-# Required repository setup (Settings → Secrets and variables
-# → Actions)
-#
-# SECRETS (Settings → Secrets and variables → Actions → Secrets):
-# ─────────────────────────────────────────────────────────────
-#   CLOUDFLARE_API_TOKEN
-#       Cloudflare API token with these permissions:
-#         Account.Account Settings:Read
-#         D1:Edit
-#         Workers KV Storage:Edit
-#         Workers Queues:Edit
-#         Workers Scripts:Edit
-#         Workers AI:Read
-#
-#   CLOUDFLARE_ACCOUNT_ID
-#       (Optional — only if the token lacks Account List scope)
-#       Cloudflare numeric Account ID.
-#
-#   TF_VAR_jwt_secret
-#       Shared JWT signing secret (>= 32 random bytes).
-#
-#   TF_VAR_neo4j_password
-#       Neo4j AuraDB password.
-#
-#   TF_VAR_cloudflare_account_id_or_workers_dev
-#       Workers.dev subdomain prefix, e.g. "myteam-a1b2".
-#
-#   TF_B2_STATE_KEY_ID
-#       B2 Application Key keyID used for the Terraform state
-#       backend ONLY. Bucket-scoped (Read & Write) on
-#       ontodecide-terraform-state. Created in B2 Dashboard
-#       → App Keys → Add Application Key. This value maps to
-#       AWS_ACCESS_KEY_ID env var for Terraform's bundled SDK.
-#
-#   TF_B2_STATE_APPLICATION_KEY
-#       Matching B2 applicationKey for state backend. Maps to
-#       AWS_SECRET_ACCESS_KEY env var.
-#
-#   TF_VAR_b2_application_key_id
-#       B2 Application Key keyID for business-data buckets
-#       (ingestion-staging + tenant-archive). Can be a single
-#       key with Read & Write on both buckets, or a key scoped
-#       per bucket. Created in B2 Dashboard → App Keys.
-#
-#   TF_VAR_b2_application_key
-#       Matching B2 applicationKey for business-data buckets.
-#
-# VARIABLES (Settings → Secrets and variables → Actions → Variables):
-# ─────────────────────────────────────────────────────────────
-#   TF_VAR_neo4j_url
-#       e.g. "https://neo4j+s://xxxxxxxx.databases.neo4j.io"
-#
-#   TF_VAR_cloudflare_account_id
-#       (Optional — override via Variable if you don't want to
-#        create a second secret for it.)
-#
-#   TF_VAR_b2_region
-#       Backblaze B2 region code, e.g. "us-west-004".
-#       Find it in B2 dashboard → Buckets → bucket details.
-#       Used for BOTH the provider configuration AND the
-#       backend endpoint (s3.<region>.backblazeb2.com).
-#
-#   TF_VAR_default_provider   (optional)
-#   TF_VAR_workers_ai_model   (optional)
-#
-# ENVIRONMENT (Settings → Environments → New environment):
-# ─────────────────────────────────────────────────────────────
-#   Create an environment named "production" and enable
-#   "Required reviewers". Add the people or teams allowed to
-#   approve a production apply.
-# ============================================================
 
 jobs:
   # ================================================================
   # Stage 1 — Plan (automatic, no approval)
   #
-  # Graceful-skip behaviour:
-  #   If any credential required to reach the remote state is
-  #   missing (typical on first-time contributor forks / PR
-  #   branches without secrets), we produce an informative
-  #   GITHUB_STEP_SUMMARY note, upload an empty plan stub, set
-  #   changed=false, and exit 0 — so the PR check does not
-  #   fail. The Build/Lint/Test CI still gives full validation.
+  # Graceful-skip behaviour (Google CFT pattern):
+  #   If ANY required Secret / Variable needed to reach the remote
+  #   state or to validate Terraform inputs is missing (typical on
+  #   contributor forks / feature branches without secrets), we
+  #   produce an informative GITHUB_STEP_SUMMARY note, set
+  #   changed=false, skipped=true, and exit 0 — so the PR check
+  #   does NOT turn red. The Build/Lint/Test CI still provides
+  #   full code-quality validation.
   # ================================================================
   plan:
     name: Terraform Plan
@@ -172,56 +108,93 @@ jobs:
     outputs:
       plan-artifact: tfplan-${{ github.sha }}
       changed: ${{ steps.plan-summary.outputs.changed }}
-      skipped: ${{ steps.creds-check.outputs.skipped }}
+      skipped: ${{ steps.preflight.outputs.skipped }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---- Terraform install ----
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
-      # ---- Credential preflight + graceful skip gate ----
-      - name: Check state-backend credentials (skip Plan if missing)
-        id: creds-check
+      # ---- Preflight: required Secret + Variable presence ----
+      #
+      # Terraform's own validation blocks (see variables.tf and
+      # b2.tf) will catch FORMAT issues during `plan`; this step
+      # catches PRESENCE issues early so the operator sees a
+      # single clean list of missing items with remediation
+      # hints instead of 10 cryptic errors later.
+      - name: Preflight — required secrets & variables
+        id: preflight
         env:
-          TF_B2_STATE_KEY_ID:          ${{ secrets.TF_B2_STATE_KEY_ID }}
-          TF_B2_STATE_APPLICATION_KEY: ${{ secrets.TF_B2_STATE_APPLICATION_KEY }}
-          TF_VAR_b2_region:            ${{ vars.TF_VAR_b2_region }}
+          # --- Terraform state backend ---
+          S__TF_B2_STATE_KEY_ID:              ${{ secrets.TF_B2_STATE_KEY_ID }}
+          S__TF_B2_STATE_APPLICATION_KEY:     ${{ secrets.TF_B2_STATE_APPLICATION_KEY }}
+          V__TF_VAR_b2_region:                ${{ vars.TF_VAR_b2_region }}
+          # --- Cloudflare provider ---
+          S__CLOUDFLARE_API_TOKEN:            ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # --- Required Terraform input vars (no defaults) ---
+          S__TF_VAR_jwt_secret:               ${{ secrets.TF_VAR_jwt_secret }}
+          S__TF_VAR_neo4j_password:           ${{ secrets.TF_VAR_neo4j_password }}
+          S__TF_VAR_cloudflare_account_id_or_workers_dev: ${{ secrets.TF_VAR_cloudflare_account_id_or_workers_dev }}
+          S__TF_VAR_b2_application_key_id:    ${{ secrets.TF_VAR_b2_application_key_id }}
+          S__TF_VAR_b2_application_key:       ${{ secrets.TF_VAR_b2_application_key }}
+          V__TF_VAR_neo4j_url:                ${{ vars.TF_VAR_neo4j_url }}
         run: |
           set +e
+          declare -A SPEC=(
+            # [env_var_name]="human_readable_spec"
+            ["S__TF_B2_STATE_KEY_ID"]="Secret   | TF_B2_STATE_KEY_ID                    | B2 App Key keyID for ontodecide-terraform-state bucket"
+            ["S__TF_B2_STATE_APPLICATION_KEY"]="Secret   | TF_B2_STATE_APPLICATION_KEY       | B2 App Key secret (matches TF_B2_STATE_KEY_ID)"
+            ["V__TF_VAR_b2_region"]="Variable | TF_VAR_b2_region                   | B2 region code, e.g. us-west-004"
+            ["S__CLOUDFLARE_API_TOKEN"]="Secret   | CLOUDFLARE_API_TOKEN               | Cloudflare Terraform provider token"
+            ["S__TF_VAR_jwt_secret"]="Secret   | TF_VAR_jwt_secret                  | JWT signing secret (>=32 random bytes)"
+            ["S__TF_VAR_neo4j_password"]="Secret   | TF_VAR_neo4j_password              | Neo4j AuraDB password"
+            ["S__TF_VAR_cloudflare_account_id_or_workers_dev"]="Secret   | TF_VAR_cloudflare_account_id_or_workers_dev | Workers.dev subdomain prefix"
+            ["S__TF_VAR_b2_application_key_id"]="Secret   | TF_VAR_b2_application_key_id     | B2 App Key keyID for business-data buckets"
+            ["S__TF_VAR_b2_application_key"]="Secret   | TF_VAR_b2_application_key        | B2 App Key secret for business-data buckets"
+            ["V__TF_VAR_neo4j_url"]="Variable | TF_VAR_neo4j_url                   | AuraDB cluster base URL"
+          )
+
           missing=()
-          [ -z "${TF_B2_STATE_KEY_ID}" ]          && missing+=("TF_B2_STATE_KEY_ID (B2 Application Key keyID for ontodecide-terraform-state bucket)")
-          [ -z "${TF_B2_STATE_APPLICATION_KEY}" ] && missing+=("TF_B2_STATE_APPLICATION_KEY (matching B2 applicationKey)")
-          [ -z "${TF_VAR_b2_region}" ]            && missing+=("TF_VAR_b2_region Variable (B2 region code, e.g. us-west-004)")
+          for var_name in "${!SPEC[@]}"; do
+            if [ -z "${!var_name}" ]; then
+              missing+=("${SPEC[$var_name]}")
+            fi
+          done
           set -e
 
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::notice::Terraform state-backend credentials missing. Skipping Plan gracefully for this run. Missing: $(IFS=, ; echo "${missing[*]}")"
+            echo "::notice::${#missing[@]} required Terraform secrets/variables missing — gracefully skipping Plan for this run."
             {
-              echo "### Terraform Plan — Skipped (credentials not available)"
+              echo "### Terraform Plan — Skipped (${#missing[@]} required item(s) not configured)"
               echo ""
-              echo "This branch / fork does not have the GitHub Secrets required"
-              echo "to connect to the Backblaze B2 Terraform state bucket."
+              echo "This branch / fork does not carry all of the GitHub Secrets"
+              echo "and Variables required to run Terraform Plan against the"
+              echo "Backblaze B2 remote state. The Build/Lint/Test CI job still"
+              echo "provides full code-quality validation for this PR."
               echo ""
-              echo "Missing secret / variable:"
+              echo "| Type | Name | Hint |"
+              echo "|---|---|---|"
               for m in "${missing[@]}"; do
-                echo "- \`${m}\`"
+                IFS='|' read -r type name hint <<<"$m"
+                # trim whitespace
+                type="$(echo "$type" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+                name="$(echo "$name" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+                hint="$(echo "$hint" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+                echo "| ${type} | \`${name}\` | ${hint} |"
               done
               echo ""
               echo "**What this means:**"
               echo "- No infrastructure diff can be previewed from this run."
-              echo "- The Build/Lint/Test CI job still provides full code-quality"
-              echo "  validation for this PR."
-              echo "- After merging to \`main\`, the Plan + Apply jobs will run"
-              echo "  with the production credentials configured on the repo."
+              echo "- After merging to \`main\`, Plan + Apply will run with the"
+              echo "  production credentials configured on the repo."
               echo ""
-              echo "**To configure (repo owner only):** follow the detailed"
-              echo "instructions in the header of \`.github/workflows/terraform-deploy.yml\`"
-              echo "or in \`infrastructure/terraform/main.tf\`."
+              echo "**To configure (repo owner only):** See the full configuration"
+              echo "matrix at the top of \`.github/workflows/terraform-deploy.yml\`"
+              echo "and the setup docs in \`infrastructure/terraform/main.tf\`."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "skipped=true" >> "$GITHUB_OUTPUT"
           else
@@ -230,62 +203,34 @@ jobs:
 
       # ---- Terraform init with B2 remote backend ----
       #
-      # The backend "s3" block in main.tf is intentionally
-      # partial — we inject the real B2 credentials HERE via
-      # the STANDARD AWS SDK environment variables. This is the
-      # OFFICIAL recommended mechanism per Backblaze's
-      # Terraform integration guide, and places the credentials
-      # at the very TOP of the AWS credential provider chain.
-      #
-      # AWS_EC2_METADATA_DISABLED=true tells the bundled AWS SDK
-      # to NOT fall through to EC2 IMDS lookups on GitHub
-      # Actions runners (which are not on AWS — IMDS always
-      # fails and used to mask the REAL error when credentials
-      # were missing).
-      #
-      # Non-secret backend options (bucket, key, endpoints.s3)
-      # are passed via `-backend-config=FILE` form, because the
-      # dotted CLI form cannot handle nested HCL object attrs.
+      # The backend "s3" block in main.tf is partial — we inject
+      # the real B2 credentials via AWS_ACCESS_KEY_ID /
+      # AWS_SECRET_ACCESS_KEY (the bundled AWS SDK inside
+      # Terraform's backend "s3" only accepts those env vars).
+      # AWS_EC2_METADATA_DISABLED=true prevents the SDK from
+      # falling through to EC2 IMDS lookups on GitHub
+      # Actions runners, which would otherwise produce a
+      # misleading "no EC2 IMDS role found" error that masks
+      # the real root cause.
       - name: Terraform Init (B2 backend)
-        if: steps.creds-check.outputs.skipped == 'false'
+        if: steps.preflight.outputs.skipped == 'false'
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          # ──────────────────────────────────────────────────────
-          # [1] Cloudflare Terraform provider — official env vars
-          # ──────────────────────────────────────────────────────
+          # Cloudflare Terraform provider — official env vars
           CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-          # ──────────────────────────────────────────────────────
-          # [2] B2 remote STATE backend auth — uses AWS SDK env
-          #     vars because Terraform's backend "s3" ships with a
-          #     BUNDLED HashiCorp AWS SDK that only accepts those
-          #     env var names.
-          #
-          #     ⚠️  NOT AN AWS COMMITMENT — ZERO AWS RESOURCES.
-          #     ─────────────────────────────────────────────────
-          #     The AWS_-prefixed naming is imposed by Terraform.
-          #     The actual secret values are:
-          #       AWS_ACCESS_KEY_ID     ← B2 App Key keyID
-          #                              (ontodecide-terraform-state)
-          #       AWS_SECRET_ACCESS_KEY ← B2 App Key secret
-          #     AWS_DEFAULT_REGION       ← B2 region, e.g. us-west-004
-          # ──────────────────────────────────────────────────────
+          # B2 state backend — standard AWS SDK env vars
           AWS_ACCESS_KEY_ID:            ${{ secrets.TF_B2_STATE_KEY_ID }}
           AWS_SECRET_ACCESS_KEY:        ${{ secrets.TF_B2_STATE_APPLICATION_KEY }}
           AWS_DEFAULT_REGION:           ${{ vars.TF_VAR_b2_region }}
           AWS_EC2_METADATA_DISABLED:    true
-
-          # Non-secret init inputs (shell variables used in run block)
+          # Non-secret init inputs (shell variables)
           B2_REGION:  ${{ vars.TF_VAR_b2_region }}
           ENV:        ${{ github.event.inputs.environment || 'production' }}
         run: |
           STATE_KEY="${ENV}/terraform.tfstate"
           B2_ENDPOINT="https://s3.${B2_REGION}.backblazeb2.com"
 
-          # FILE-based backend config (not KEY=VALUE — see main.tf
-          # docs for the reasoning: nested HCL objects cannot be
-          # reliably passed via CLI flags).
           BACKEND_CFG_FILE="backend-config-overrides.tfvars"
 
           cat > "${BACKEND_CFG_FILE}" <<'EOF'
@@ -310,9 +255,9 @@ jobs:
             -input=false \
             -backend-config="${BACKEND_CFG_FILE}"
 
-      # ---- Terraform validate (only if init ran) ----
+      # ---- Terraform validate (Google CFT style — runs before plan) ----
       - name: Terraform Validate
-        if: steps.creds-check.outputs.skipped == 'false'
+        if: steps.preflight.outputs.skipped == 'false'
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -321,25 +266,24 @@ jobs:
       # ---- Terraform plan ----
       - name: Terraform Plan
         id: plan
-        if: steps.creds-check.outputs.skipped == 'false'
+        if: steps.preflight.outputs.skipped == 'false'
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           # Provider auth
           CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # Input variables — secrets
-          TF_VAR_jwt_secret: ${{ secrets.TF_VAR_jwt_secret }}
-          TF_VAR_neo4j_password: ${{ secrets.TF_VAR_neo4j_password }}
+          # Terraform input vars — secrets
+          TF_VAR_jwt_secret:              ${{ secrets.TF_VAR_jwt_secret }}
+          TF_VAR_neo4j_password:          ${{ secrets.TF_VAR_neo4j_password }}
           TF_VAR_cloudflare_account_id_or_workers_dev: ${{ secrets.TF_VAR_cloudflare_account_id_or_workers_dev }}
-          # Backblaze B2 credentials (S3-compatible) for business buckets
-          TF_VAR_b2_application_key_id: ${{ secrets.TF_VAR_b2_application_key_id }}
-          TF_VAR_b2_application_key: ${{ secrets.TF_VAR_b2_application_key }}
-          # Input variables — non-sensitive
-          TF_VAR_neo4j_url: ${{ vars.TF_VAR_neo4j_url }}
-          TF_VAR_cloudflare_account_id: ${{ vars.TF_VAR_cloudflare_account_id }}
-          TF_VAR_b2_region: ${{ vars.TF_VAR_b2_region }}
-          TF_VAR_default_provider: ${{ vars.TF_VAR_default_provider }}
-          TF_VAR_workers_ai_model: ${{ vars.TF_VAR_workers_ai_model }}
+          TF_VAR_b2_application_key_id:   ${{ secrets.TF_VAR_b2_application_key_id }}
+          TF_VAR_b2_application_key:      ${{ secrets.TF_VAR_b2_application_key }}
+          # Terraform input vars — non-sensitive
+          TF_VAR_neo4j_url:               ${{ vars.TF_VAR_neo4j_url }}
+          TF_VAR_cloudflare_account_id:   ${{ vars.TF_VAR_cloudflare_account_id }}
+          TF_VAR_b2_region:               ${{ vars.TF_VAR_b2_region }}
+          TF_VAR_default_provider:        ${{ vars.TF_VAR_default_provider }}
+          TF_VAR_workers_ai_model:        ${{ vars.TF_VAR_workers_ai_model }}
           ENV_TAG: ${{ github.event.inputs.environment || 'production' }}
         run: |
           terraform plan \
@@ -348,7 +292,7 @@ jobs:
             -var="environment=${ENV_TAG}"
           terraform show -json tfplan.binary > tfplan.json
 
-      # ---- Upload plan artifact for apply stage (or a stub if skipped) ----
+      # ---- Upload plan artifact ----
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
         with:
@@ -359,12 +303,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # ---- Human-readable change summary ----
+      # ---- Human-readable change summary (Google CFT pattern) ----
       - name: Summarize resource changes
         id: plan-summary
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
-          if [ "${{ steps.creds-check.outputs.skipped }}" = "true" ]; then
+          if [ "${{ steps.preflight.outputs.skipped }}" = "true" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -391,17 +335,11 @@ jobs:
           fi
 
   # ================================================================
-  # Stage 2 — Apply (requires manual approval + main branch)
+  # Stage 2 — Apply (manual approval + main branch only)
   # ================================================================
   apply:
     name: Terraform Apply  ✅ Manual approval required
     needs: plan
-    # Apply is ONLY ever run from `main`, and ONLY after a
-    # human explicitly approves the production Environment.
-    # If Plan was gracefully skipped (no credentials), we
-    # never reach this branch (needs.plan.result would still
-    # be success, but the artifact will be empty — the verify
-    # step below catches that).
     if: github.ref == 'refs/heads/main' && needs.plan.result == 'success' && needs.plan.outputs.skipped != 'true'
     runs-on: ubuntu-latest
     environment:
@@ -417,18 +355,62 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
-      # Reconnect to the B2 backend before we can use the saved plan.
+      # Re-run the same credential preflight on apply. Apply
+      # NEVER falls back to graceful skip — it always runs from
+      # `main` with the full production secret set configured.
+      # If something is missing here we HARD-FAIL so the
+      # operator sees the missing-item list directly instead of
+      # a confusing Terraform error.
+      - name: Preflight — required secrets & variables (Apply — hard-fail)
+        env:
+          S__TF_B2_STATE_KEY_ID:              ${{ secrets.TF_B2_STATE_KEY_ID }}
+          S__TF_B2_STATE_APPLICATION_KEY:     ${{ secrets.TF_B2_STATE_APPLICATION_KEY }}
+          V__TF_VAR_b2_region:                ${{ vars.TF_VAR_b2_region }}
+          S__CLOUDFLARE_API_TOKEN:            ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          S__TF_VAR_jwt_secret:               ${{ secrets.TF_VAR_jwt_secret }}
+          S__TF_VAR_neo4j_password:           ${{ secrets.TF_VAR_neo4j_password }}
+          S__TF_VAR_cloudflare_account_id_or_workers_dev: ${{ secrets.TF_VAR_cloudflare_account_id_or_workers_dev }}
+          S__TF_VAR_b2_application_key_id:    ${{ secrets.TF_VAR_b2_application_key_id }}
+          S__TF_VAR_b2_application_key:       ${{ secrets.TF_VAR_b2_application_key }}
+          V__TF_VAR_neo4j_url:                ${{ vars.TF_VAR_neo4j_url }}
+        run: |
+          set +e
+          declare -A SPEC=(
+            ["S__TF_B2_STATE_KEY_ID"]="Secret   | TF_B2_STATE_KEY_ID"
+            ["S__TF_B2_STATE_APPLICATION_KEY"]="Secret   | TF_B2_STATE_APPLICATION_KEY"
+            ["V__TF_VAR_b2_region"]="Variable | TF_VAR_b2_region"
+            ["S__CLOUDFLARE_API_TOKEN"]="Secret   | CLOUDFLARE_API_TOKEN"
+            ["S__TF_VAR_jwt_secret"]="Secret   | TF_VAR_jwt_secret"
+            ["S__TF_VAR_neo4j_password"]="Secret   | TF_VAR_neo4j_password"
+            ["S__TF_VAR_cloudflare_account_id_or_workers_dev"]="Secret   | TF_VAR_cloudflare_account_id_or_workers_dev"
+            ["S__TF_VAR_b2_application_key_id"]="Secret   | TF_VAR_b2_application_key_id"
+            ["S__TF_VAR_b2_application_key"]="Secret   | TF_VAR_b2_application_key"
+            ["V__TF_VAR_neo4j_url"]="Variable | TF_VAR_neo4j_url"
+          )
+          missing=()
+          for var_name in "${!SPEC[@]}"; do
+            [ -z "${!var_name}" ] && missing+=("${SPEC[$var_name]}")
+          done
+          set -e
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Terraform Apply aborted — ${#missing[@]} required secret(s)/variable(s) missing from the main-branch configuration:" >&2
+            for m in "${missing[@]}"; do
+              echo "  - ${m}" >&2
+            done
+            echo "Repair via Settings → Secrets and variables → Actions, then re-run Plan + Approve." >&2
+            exit 1
+          fi
+          echo "Preflight OK: all ${!#SPEC[@]} required items present."
+
       - name: Terraform Init (B2 backend)
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # B2 state backend auth via standard AWS SDK env vars
           AWS_ACCESS_KEY_ID:            ${{ secrets.TF_B2_STATE_KEY_ID }}
           AWS_SECRET_ACCESS_KEY:        ${{ secrets.TF_B2_STATE_APPLICATION_KEY }}
           AWS_DEFAULT_REGION:           ${{ vars.TF_VAR_b2_region }}
           AWS_EC2_METADATA_DISABLED:    true
-          # Non-secret init inputs
           B2_REGION:  ${{ vars.TF_VAR_b2_region }}
           ENV:        ${{ github.event.inputs.environment || 'production' }}
         run: |
@@ -473,23 +455,22 @@ jobs:
             exit 1
           fi
 
-      # ---- Terraform apply (from saved plan) ----
       - name: Terraform Apply
         id: apply
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TF_VAR_jwt_secret: ${{ secrets.TF_VAR_jwt_secret }}
-          TF_VAR_neo4j_password: ${{ secrets.TF_VAR_neo4j_password }}
+          TF_VAR_jwt_secret:              ${{ secrets.TF_VAR_jwt_secret }}
+          TF_VAR_neo4j_password:          ${{ secrets.TF_VAR_neo4j_password }}
           TF_VAR_cloudflare_account_id_or_workers_dev: ${{ secrets.TF_VAR_cloudflare_account_id_or_workers_dev }}
-          TF_VAR_b2_application_key_id: ${{ secrets.TF_VAR_b2_application_key_id }}
-          TF_VAR_b2_application_key: ${{ secrets.TF_VAR_b2_application_key }}
-          TF_VAR_neo4j_url: ${{ vars.TF_VAR_neo4j_url }}
-          TF_VAR_cloudflare_account_id: ${{ vars.TF_VAR_cloudflare_account_id }}
-          TF_VAR_b2_region: ${{ vars.TF_VAR_b2_region }}
-          TF_VAR_default_provider: ${{ vars.TF_VAR_default_provider }}
-          TF_VAR_workers_ai_model: ${{ vars.TF_VAR_workers_ai_model }}
+          TF_VAR_b2_application_key_id:   ${{ secrets.TF_VAR_b2_application_key_id }}
+          TF_VAR_b2_application_key:      ${{ secrets.TF_VAR_b2_application_key }}
+          TF_VAR_neo4j_url:               ${{ vars.TF_VAR_neo4j_url }}
+          TF_VAR_cloudflare_account_id:   ${{ vars.TF_VAR_cloudflare_account_id }}
+          TF_VAR_b2_region:               ${{ vars.TF_VAR_b2_region }}
+          TF_VAR_default_provider:        ${{ vars.TF_VAR_default_provider }}
+          TF_VAR_workers_ai_model:        ${{ vars.TF_VAR_workers_ai_model }}
           ENV_TAG: ${{ github.event.inputs.environment || 'production' }}
         run: |
           terraform apply -input=false tfplan.binary

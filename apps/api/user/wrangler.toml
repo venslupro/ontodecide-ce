@@ -1,7 +1,21 @@
 # User Service Worker — authentication and account management.
 #
-# Deployed via Cloudflare Workers Builds. Secrets (JWT_SECRET) are set in
-# the Cloudflare dashboard or via `wrangler secret put JWT_SECRET`.
+# Deployed via Cloudflare Workers Builds (Git-connected, the canonical
+# zero-config deploy path for this repository).
+#
+# Ownership split:
+#   HERE (wrangler.toml + dashboard Variables & Secrets):
+#     • Worker code uploaded by the Git bridge.
+#     • Neo4j AuraDB coordinates (NEO4J_URL / NEO4J_USER in [vars];
+#       NEO4J_PASSWORD as a Secret).
+#     • JWT_SECRET as a Secret (shared across workers).
+#     • D1 / KV IDs: REPLACE_WITH placeholders filled from
+#       `terraform output` or overridden in the dashboard.
+#
+#   THERE (infrastructure/terraform/*.tf):
+#     • D1 database "decision-db" itself.
+#     • KV "user-cache" namespace itself.
+#     • Worker-level binding manifests and downstream dependencies.
 name = "decision-user-service"
 main = "dist/index.js"
 compatibility_date = "2024-10-01"
@@ -16,21 +30,23 @@ format = "modules"
 dir = "dist"
 main = "./index.js"
 
-# D1 holds the users, audit_logs, system_config tables.
 [[d1_databases]]
 binding = "DB"
 database_name = "decision-db"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "REPLACE_WITH_D1_ID"   # From: `terraform output d1_database_id`
 migrations_dir = "src/migrations"
 
-# KV cache for user lookups and refresh-token registry.
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"
+id = "REPLACE_WITH_KV_ID"           # From: `terraform output kv_namespaces.user-cache`
 
 [vars]
 AI_DEFAULT_PROVIDER = "workers-ai"
-# Neo4j AuraDB connection — per-tenant logical DB provisioning.
-# The password is set as a Worker secret (NEO4J_PASSWORD).
-NEO4J_URL = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
+# Neo4j AuraDB connection — each signup runs CREATE DATABASE against
+# the system endpoint of this cluster; each expiry runs DROP DATABASE.
+NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"   # From `terraform` var equivalent; or set in dashboard.
 NEO4J_USER = "neo4j"
+
+# Secrets (dashboard → Secrets OR `wrangler secret put <NAME>`):
+#   JWT_SECRET       — HMAC signing secret (shared).
+#   NEO4J_PASSWORD   — Password for NEO4J_USER above.

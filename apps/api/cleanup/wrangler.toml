@@ -1,9 +1,20 @@
 # Cleanup Service Worker — daily retention enforcement + manual purge.
 #
+# Deployed via Cloudflare Workers Builds (Git-connected).
+#
 # Exports:
 #   * `fetch`     — admin endpoints (POST /cleanup, GET /cleanup/status/:id)
-#   * `scheduled` — cron trigger at 03:00 UTC (see [triggers] below)
-#   * `queue`     — consumer for `cleanup-queue` (one tenant per message)
+#   * `scheduled` — cron trigger at 03:00 UTC (see [triggers] below).
+#                   Cron resource in Terraform:
+#                   cloudflare_worker_cron_trigger.cleanup
+#   * `queue`     — consumer for cleanup-queue (one tenant per message)
+#
+# Ownership split:
+#   HERE: code, [vars] (Neo4j URL/user, B2 region & both bucket names),
+#         worker secrets (B2_KEY_ID/B2_KEY, NEO4J_PASSWORD, JWT_SECRET),
+#         queue consumer configuration, KV IDs filled from terraform.
+#   THERE: D1 decision-db, queue/DLQ, 5 KV cache namespaces, B2
+#          dual-bucket creation, cron triggers, worker script names.
 name = "decision-cleanup-service"
 main = "dist/index.js"
 compatibility_date = "2024-10-01"
@@ -18,60 +29,67 @@ format = "modules"
 dir = "dist"
 main = "./index.js"
 
-# Daily cleanup cron at 03:00 UTC (see design doc §4.6.1).
+# Daily cleanup at 03:00 UTC. Terraform also owns the equivalent
+# cloudflare_worker_cron_trigger.cleanup resource — keep both in sync.
 [triggers]
 crons = ["0 3 * * *"]
 
-# Queue: one message per tenant to be cleaned.
+# Queue: one message per tenant to be cleaned + DLQ for poison events.
 [[queues_producers]]
 binding = "CLEANUP_QUEUE"
-queue = "cleanup-queue"
+queue = "cleanup-queue"          # From: `terraform output queues.cleanup`
 
 [[queues_consumers]]
 queue = "cleanup-queue"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 3
-dead_letter_queue = "cleanup-dlq"
+dead_letter_queue = "cleanup-dlq" # From: `terraform output queues.cleanup_dlq`
 
-# D1 shares the decision-db with the User + AI services.
+# D1: shared decision-db; cleanup worker hard-deletes rows ONLY after
+# the tenant archive write to B2 tenant-archive bucket has returned 200.
 [[d1_databases]]
 binding = "DB"
 database_name = "decision-db"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "REPLACE_WITH_D1_ID"    # From: `terraform output d1_database_id`
 
-# Backblaze B2 S3-compatible storage credentials + dual buckets are
-# injected as environment variables (secret_text + plain_text bindings)
-# by Terraform at deploy time. See infrastructure/terraform/workers.tf.
-# There is NO r2_buckets binding here — B2 is external to Cloudflare.
-
-# KV namespaces: caches for the various services (all need purging).
+# KV namespaces: caches + job-status stores that Cleanup touches.
+# Every REPLACE_WITH_KV_ID has a terraform output key listed on the line.
 [[kv_namespaces]]
 binding = "USER_CACHE"
-id = "REPLACE_WITH_KV_ID"
+id = "REPLACE_WITH_KV_ID"            # From: kv_namespaces.user-cache
 
 [[kv_namespaces]]
 binding = "GRAPH_CACHE"
-id = "REPLACE_WITH_KV_ID"
+id = "REPLACE_WITH_KV_ID"            # From: kv_namespaces.graph-cache
 
 [[kv_namespaces]]
 binding = "INGESTION_JOBS"
-id = "REPLACE_WITH_KV_ID"
+id = "REPLACE_WITH_KV_ID"            # From: kv_namespaces.ingestion-jobs
 
 [[kv_namespaces]]
 binding = "AI_CACHE"
-id = "REPLACE_WITH_KV_ID"
+id = "REPLACE_WITH_KV_ID"            # From: kv_namespaces.ai-cache
 
 [[kv_namespaces]]
 binding = "CLEANUP_JOBS"
-id = "REPLACE_WITH_KV_ID"
+id = "REPLACE_WITH_KV_ID"            # From: kv_namespaces.cleanup-jobs
 
 [vars]
-NEO4J_URL = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
+# Neo4j AuraDB cluster (DROP DATABASE goes to its /db/system endpoint).
+NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
 NEO4J_USER = "neo4j"
-# NEO4J_PASSWORD is set as a secret.
-# B2 config — non-secret values here; B2_KEY_ID and B2_KEY are set
-# as secrets via the Cloudflare dashboard or Terraform.
-B2_REGION = "us-west-004"
+# Backblaze B2 S3-compatible: region plus the two bucket names.
+# Values must match `terraform output b2_buckets` and `var.b2_region`.
+B2_REGION           = "us-west-004"
 B2_INGESTION_BUCKET = "ontodecide-ingestion-staging-production"
-B2_ARCHIVE_BUCKET = "ontodecide-tenant-archive-production"
+B2_ARCHIVE_BUCKET   = "ontodecide-tenant-archive-production"
+
+# Secrets (dashboard → Secrets / `wrangler secret put`):
+#   JWT_SECRET       — shared HMAC signing secret.
+#   NEO4J_PASSWORD   — Password for NEO4J_USER; cluster /db/system role
+#                      MUST have the "Create database" / "Drop database"
+#                      privileges for per-tenant logical DBs.
+#   B2_KEY_ID        — B2 Application Key keyID with R/W on BOTH the
+#                      ingestion staging + tenant archive buckets.
+#   B2_KEY           — B2 Application Key secret matching B2_KEY_ID.
