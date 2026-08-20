@@ -14,7 +14,8 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "deploy": "scripts/build-worker.sh --deploy-only"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

@@ -1,33 +1,83 @@
-# Cloudflare Workers Builds project manifest.
+# ============================================================
+# Cloudflare Workers Builds — Build settings 对照表（Dashboard 粘贴版）
 #
-# This file documents how each Worker should be built when Cloudflare's
-# native Workers Builds connects this repository to the platform. The
-# values mirror the `[build]` section of each worker's wrangler.toml so
-# the dashboard import can be done in one click.
+# 重要：Cloudflare Workers Builds 不会自动读取本文件。
+#       本文件是为了把"每一个 Worker 在 Dashboard 里要填什么"这件事，
+#       以可版本化、可代码审阅的方式落盘。
 #
-# Setup (one-time per worker, per environment):
-#   1. In the Cloudflare dashboard open Workers & Pages → your worker.
-#   2. Settings → Builds → Connect a Git repository → pick this repo.
-#   3. Set "Build command" and "Root directory" as listed below.
-#   4. Add the matching environment variables / secrets (see docs/deployment-guide.md).
-#   5. Every `git push` to the configured branch deploys the worker.
+# 官方模型（Cloudflare Workers Builds Configuration docs）：
+#   https://developers.cloudflare.com/workers/ci-cd/builds/configuration/
 #
-# Workers Builds will automatically:
-#   - install pnpm via corepack
-#   - run the build command from the worker's wrangler.toml `[build]` section
-#   - upload the artifacts declared by `[build.upload]`
-#   - run `wrangler deploy` (or the equivalent platform action) on success
+#   - Build command (optional)        : 编译项目。
+#   - Deploy command                  : 生产分支部署命令。默认为
+#                                       npx wrangler deploy。
+#   - Non-production branch deploy command
+#                                     : 非生产分支部署（上传版本但不晋升）。
+#                                       默认 npx wrangler versions upload。
+#   - Root directory (optional)       : build command 运行的 CWD。
+#                                       monorepo + workspace 必须设为仓库根。
+#   - Build variables / secrets       : 编译期变量，不进入 Worker 运行时。
+#                                       运行时变量 → Worker → Variables & Secrets。
+#
+# 每一次维护 Worker 时，保持下列 4 处引用完全一致：
+#   1) Dashboard → Worker → Settings → Builds（生产环境权威来源）
+#   2) 本文件（本仓库的镜像对照表）
+#   3) scripts/build-worker.sh（在本地/脚本里跑同样的 build 命令）
+#   4) 各 apps/api/<name>/wrangler.toml 里的 [build] 块（仅本地 wrangler dev/deploy 使用）
+#
+# Dash 连接顺序（每 Worker / 每环境一次）：
+#   1. Workers & Pages → Create → Worker（或打开已有 Worker）
+#   2. Settings → Builds → Connect a Git repository → 选择本 repo
+#   3. 按下面的条目分别粘贴 Build command / Deploy command /
+#      Non-production branch deploy command / Root directory
+#   4. 在 Worker → Variables & Secrets 中按下方 secrets 列表逐一添加
+#      （推荐：即使 wrangler.toml 的 [vars] 中已经写了默认值，敏感项
+#      一律在 Secrets 里加；D1/KV/Queue ID 也在此处覆盖，避免写入 git）
+#   5. 对 main 分支 git push 一次即可触发首次 deploy。
+# ============================================================
 
 project: ontodecide
 default_branch: main
-package_manager: pnpm
+# Package manager in Workers Builds image: 安装前通过 corepack 锁定
+# packageManager=pnpm@9.12.0（见仓库根 package.json），与实际一致。
+package_manager: pnpm_via_corepack
 
+# ------------------------------------------------------------
+# 4x 通用规则（所有 Worker 相同，便于复制粘贴）
+# ------------------------------------------------------------
+_defaults:
+  root_directory: "."
+  # NOTE: Deploy command MUST pass --config pointing at the PER-APP
+  # wrangler.toml (apps/api/<name>/wrangler.toml).  The repo-root
+  # wrangler.toml is intentionally entry-point-free: it used to hold a
+  # misleading Custom Builds block, and Cloudflare Workers Builds runs
+  # deploy commands from root_directory (".") — so bare
+  #   npx wrangler deploy
+  # would pick up the root toml and fail with "Missing entry-point".
+  deploy_command: "npx wrangler deploy --config apps/api/<APP>/wrangler.toml"
+  preview_deploy_command: "npx wrangler versions upload --config apps/api/<APP>/wrangler.toml"
+  build_prefix: |
+    corepack enable &&
+    corepack prepare pnpm@9.12.0 --activate &&
+    pnpm install --frozen-lockfile --prefer-offline &&
+    pnpm turbo run build
+
+# ------------------------------------------------------------
+# Workers
+# ------------------------------------------------------------
 workers:
+  # ------------------------------------------------------------------
+  # 1. decision-gateway — 公共入口。
+  # ------------------------------------------------------------------
   - name: decision-gateway
-    root: apps/api/gateway
-    build_command: pnpm turbo run build --filter=@ontodecide/gateway
-    build_output: apps/api/gateway/dist
-    main: apps/api/gateway/dist/index.js
+    root_directory: "."
+    # Build command：粘贴到 Dash → Build settings → Build command。
+    build_command: "corepack enable && corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile --prefer-offline && pnpm turbo run build --filter=@ontodecide/gateway"
+    # Deploy command：粘贴到 Dash → Build settings → Deploy command。
+    deploy_command: "npx wrangler deploy --config apps/api/gateway/wrangler.toml"
+    # Non-production branch deploy command：粘贴到同名位置。
+    preview_deploy_command: "npx wrangler versions upload --config apps/api/gateway/wrangler.toml"
+    # Runtime env（Worker → Variables & Secrets）。名 ↔ wrangler.toml [vars] / secret。
     environment_variables:
       - AI_DEFAULT_PROVIDER
     secrets:
@@ -38,21 +88,30 @@ workers:
       - AI_SERVICE_URL
       - CLEANUP_SERVICE_URL
 
+  # ------------------------------------------------------------------
+  # 2. decision-user-service — 鉴权 / 账户生命周期。
+  # ------------------------------------------------------------------
   - name: decision-user-service
-    root: apps/api/user
-    build_command: pnpm turbo run build --filter=@ontodecide/user
-    build_output: apps/api/user/dist
-    main: apps/api/user/dist/index.js
+    root_directory: "."
+    build_command: "corepack enable && corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile --prefer-offline && pnpm turbo run build --filter=@ontodecide/user"
+    deploy_command: "npx wrangler deploy --config apps/api/user/wrangler.toml"
+    preview_deploy_command: "npx wrangler versions upload --config apps/api/user/wrangler.toml"
     environment_variables:
       - AI_DEFAULT_PROVIDER
+      - NEO4J_URL
+      - NEO4J_USER
     secrets:
       - JWT_SECRET
+      - NEO4J_PASSWORD
 
+  # ------------------------------------------------------------------
+  # 3. decision-graph-service — 知识图 / Neo4j AuraDB。
+  # ------------------------------------------------------------------
   - name: decision-graph-service
-    root: apps/api/graph
-    build_command: pnpm turbo run build --filter=@ontodecide/graph
-    build_output: apps/api/graph/dist
-    main: apps/api/graph/dist/index.js
+    root_directory: "."
+    build_command: "corepack enable && corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile --prefer-offline && pnpm turbo run build --filter=@ontodecide/graph"
+    deploy_command: "npx wrangler deploy --config apps/api/graph/wrangler.toml"
+    preview_deploy_command: "npx wrangler versions upload --config apps/api/graph/wrangler.toml"
     environment_variables:
       - NEO4J_URL
       - NEO4J_USER
@@ -60,21 +119,31 @@ workers:
       - JWT_SECRET
       - NEO4J_PASSWORD
 
+  # ------------------------------------------------------------------
+  # 4. decision-ingestion-service — 批量摄入 / ETL / Queue。
+  # ------------------------------------------------------------------
   - name: decision-ingestion-service
-    root: apps/api/ingestion
-    build_command: pnpm turbo run build --filter=@ontodecide/ingestion
-    build_output: apps/api/ingestion/dist
-    main: apps/api/ingestion/dist/index.js
+    root_directory: "."
+    build_command: "corepack enable && corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile --prefer-offline && pnpm turbo run build --filter=@ontodecide/ingestion"
+    deploy_command: "npx wrangler deploy --config apps/api/ingestion/wrangler.toml"
+    preview_deploy_command: "npx wrangler versions upload --config apps/api/ingestion/wrangler.toml"
     environment_variables:
       - GRAPH_SERVICE_URL
+      - B2_REGION
+      - B2_INGESTION_BUCKET
     secrets:
       - JWT_SECRET
+      - B2_KEY_ID
+      - B2_KEY
 
+  # ------------------------------------------------------------------
+  # 5. decision-ai-service — 多模型决策智能 + PlanningAgent(DO)。
+  # ------------------------------------------------------------------
   - name: decision-ai-service
-    root: apps/api/ai
-    build_command: pnpm turbo run build --filter=@ontodecide/ai
-    build_output: apps/api/ai/dist
-    main: apps/api/ai/dist/index.js
+    root_directory: "."
+    build_command: "corepack enable && corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile --prefer-offline && pnpm turbo run build --filter=@ontodecide/ai"
+    deploy_command: "npx wrangler deploy --config apps/api/ai/wrangler.toml"
+    preview_deploy_command: "npx wrangler versions upload --config apps/api/ai/wrangler.toml"
     environment_variables:
       - AI_DEFAULT_PROVIDER
       - WORKERS_AI_MODEL
@@ -91,25 +160,37 @@ workers:
       - OPENROUTER_API_KEY
       - AI_GATEWAY_TOKEN
 
+  # ------------------------------------------------------------------
+  # 6. decision-cleanup-service — 到期归档 / Neo4j 删库 / Cron。
+  # ------------------------------------------------------------------
   - name: decision-cleanup-service
-    root: apps/api/cleanup
-    build_command: pnpm turbo run build --filter=@ontodecide/cleanup
-    build_output: apps/api/cleanup/dist
-    main: apps/api/cleanup/dist/index.js
+    root_directory: "."
+    build_command: "corepack enable && corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile --prefer-offline && pnpm turbo run build --filter=@ontodecide/cleanup"
+    deploy_command: "npx wrangler deploy --config apps/api/cleanup/wrangler.toml"
+    preview_deploy_command: "npx wrangler versions upload --config apps/api/cleanup/wrangler.toml"
     environment_variables:
       - NEO4J_URL
       - NEO4J_USER
+      - B2_REGION
+      - B2_INGESTION_BUCKET
+      - B2_ARCHIVE_BUCKET
     secrets:
       - JWT_SECRET
       - NEO4J_PASSWORD
+      - B2_KEY_ID
+      - B2_KEY
 
-# Branch policies:
-#   - main:    deploys to production
-#   - staging: deploys to a "staging" alias of each worker
-#   - other:   deploy to a `<branch>` alias (ephemeral preview)
+# ------------------------------------------------------------
+# Branch policies（告知维护者，非生产分支预览版本不自动晋升）
+# ------------------------------------------------------------
 branches:
   main:
     environment: production
+    # 生产：Deploy command = npx wrangler deploy（会成为分配到流量的当前版本）
   staging:
     environment: staging
-    deploy_command_extra: --env staging
+    # 提示：可在 Dash Build settings 对 staging 使用 --env staging 切换多环境段。
+  "*":
+    environment: preview
+    # 其它分支：Non-production branch deploy command = npx wrangler versions upload
+    # （仅创建 version，不分配流量，返回 preview URL）

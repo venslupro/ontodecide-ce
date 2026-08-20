@@ -6,52 +6,67 @@
 #
 # Deployed via Cloudflare Workers Builds (Git-connected).
 #
-# Ownership split:
+# Ownership split (keep in sync with infrastructure/terraform/workers.tf):
 #   HERE: code, vars (GRAPH_SERVICE_URL, B2 region, bucket names),
-#         secrets (B2_KEY_ID, B2_KEY, JWT_SECRET), queue KV job IDs.
-#   THERE: queue resources (ingestion + DLQ), KV ingestion-jobs,
-#          B2 bucket creation itself.
+#         secrets (B2_KEY_ID, B2_KEY, JWT_SECRET), KV job IDs bindings,
+#         queue producer + consumer wiring.
+#   THERE (terraform): queue resources (ingestion + DLQ), KV ingestion-jobs,
+#         B2 bucket creation itself.
+
 name = "decision-ingestion-service"
-main = "dist/index.js"
+# NOTE: entry point is intentionally the TYPESCRIPT source file.
+# Wrangler bundles via its internal esbuild; the tsc-based
+# `turbo run build` step only typechecks and builds shared/dist.
+main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
 
+# LOCAL-ONLY [build] block (Workers Builds ignores Custom Builds;
+# authoritative build command lives in Dash + .cloudflare/workers-builds.yaml).
 [build]
-command = "pnpm turbo run build --filter=@ontodecide/ingestion"
+command = "pnpm --filter=@ontodecide/ingestion exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
 cwd = "apps/api/ingestion"
+# Note: Upload format/dir/main are inferred from top `main = "src/index.ts"`
+# automatically in wrangler >= 3.100.  Do NOT re-declare `[build.upload]`
+# + `main` — defining both is a fatal error.
 
-[build.upload]
-format = "modules"
-dir = "dist"
-main = "./index.js"
-
-# Async queue: producer sends, consumer (same Worker) picks up.
-[[queues_producers]]
+# Async queue: producer sends; consumer (same Worker) picks up.
+# Queue names MUST match terraform output queues.*, which default to
+# `${project}-<queue>-${env}` with env=production here.
+# NOTE: wrangler schema for Queues uses `[[queues.producers]]` /
+# `[[queues.consumers]]` (not `*_producers` / `*_consumers`).  The
+# underscore form is rejected by Wrangler >= 3.91 as an unknown top-level
+# field — it still deploys (warning, not error) but the bindings may
+# not be applied.  Keep the dotted form.
+[[queues.producers]]
 binding = "INGEST_QUEUE"
-queue = "ingestion-queue"    # From: `terraform output queues.ingestion`
+queue   = "ontodecide-ingestion-production"   # Terraform output: queues.ingestion
 
-[[queues_consumers]]
-queue = "ingestion-queue"
-max_batch_size = 5
+[[queues.consumers]]
+queue             = "ontodecide-ingestion-production"     # Terraform output: queues.ingestion
+max_batch_size    = 5
 max_batch_timeout = 30
-max_retries = 3
-dead_letter_queue = "ingestion-dlq"   # From: `terraform output queues.ingestion_dlq`
+max_retries       = 3
+dead_letter_queue = "ontodecide-ingestion-dlq-production" # Terraform output: queues.ingestion_dlq
 
 # KV namespace stores job-status records for callers to poll.
 [[kv_namespaces]]
 binding = "JOBS"
-id = "REPLACE_WITH_KV_ID"   # From: `terraform output kv_namespaces.ingestion-jobs`
+id = "REPLACE_WITH_KV_ID"   # Terraform output key: kv_namespaces["ingestion-jobs"]
 
 [vars]
-# Downstream Graph service worker URL — same workers.dev pattern.
+# Downstream Graph worker URL — use the same workers.dev pattern.
 GRAPH_SERVICE_URL = "https://decision-graph-service.<ACCOUNT-SUBDOMAIN>.workers.dev"
-# Backblaze B2 S3-compatible access: region + staging bucket name.
-# Region & bucket must match the output of `terraform output b2_buckets`
-# & terraform variable b2_region for the deployed environment.
-B2_REGION            = "us-west-004"
-B2_INGESTION_BUCKET  = "ontodecide-ingestion-staging-production"
 
-# Secrets (dashboard → Secrets / `wrangler secret put`):
+# Backblaze B2 S3-compatible access: region + staging bucket name.
+# These defaults match Terraform's default project=ontodecide/env=production
+# and its outputs:
+#   terraform output b2_region
+#   terraform output b2_buckets.ingestion_staging
+B2_REGION           = "us-west-004"
+B2_INGESTION_BUCKET = "ontodecide-ingestion-staging-production"
+
+# Secrets (Dashboard → Secrets / `wrangler secret put`):
 #   JWT_SECRET  — shared signing secret.
-#   B2_KEY_ID   — Application Key keyID with R/W on the staging bucket.
-#   B2_KEY      — Application Key secret matching B2_KEY_ID.
+#   B2_KEY_ID   — B2 Application Key keyID with R/W on the staging bucket.
+#   B2_KEY      — B2 Application Key secret paired with B2_KEY_ID.

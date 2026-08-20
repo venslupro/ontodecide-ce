@@ -1,10 +1,51 @@
-# Root-level shared Wrangler configuration.
+# Root-level shared Wrangler configuration (monorepo convenience).
 #
-# Each Worker under apps/api/<name>/wrangler.toml inherits common settings via
-# `inherit = true` and overrides only service-specific bindings and routes.
-name = "ontodecide-root"
+# IMPORTANT — Cloudflare Workers Builds does NOT read the Custom Builds
+# `[build]` section from any wrangler.toml (per Workers Builds Config
+# docs).  The authoritative Build command lives at:
+#   1) Dashboard → Worker → Settings → Builds (production source of truth)
+#   2) .cloudflare/workers-builds.yaml            (versioned mirror in repo)
+#   3) scripts/build-worker.sh                    (scripted equivalent)
+#
+# Each app under apps/api/<name>/wrangler.toml still carries its own
+# [build] / [build.upload] block for LOCAL DEVELOPMENT only
+# (`wrangler dev` / `wrangler deploy`).  Those sections are silently
+# ignored by Cloudflare's hosted Builds runner.
+#
+# CRITICAL — Deploy command must be TARGETED to a single app's toml:
+#   This root toml intentionally has no `main = ` entry-point, because
+#   there are 6 Workers, not one.  Workers Builds runs the Deploy
+#   command from root_directory="."; if you paste the bare command
+#     npx wrangler deploy
+#   Wrangler picks up THIS file (root wrangler.toml) and fails with
+#   "Missing entry-point to Worker script or to assets directory".
+#
+#   Correct Deploy command (per Worker, paste into Dash):
+#     npx wrangler deploy --config apps/api/<name>/wrangler.toml
+#   Correct Non-production deploy command:
+#     npx wrangler versions upload --config apps/api/<name>/wrangler.toml
+#
+#   See .cloudflare/workers-builds.yaml for the exact 6 tuples.
+
+name = "ontodecide"
+# NOTE: This root wrangler.toml intentionally does NOT declare the REAL
+# deployable entry-points.  This is a 6-Worker monorepo and each Worker
+# lives under apps/api/<name> with its own wrangler.toml that declares
+# its own `main` (src/index.ts) plus D1/KV/Queue/AI bindings.
+#
+# The entry-point declared here (`main = "src/root-wrangler-safety.ts"`)
+# is a DIAGNOSTIC SENTINEL only.  If you or Workers Builds ever run a
+# BARE `npx wrangler deploy` from repo root (instead of targeting the
+# correct per-app toml via `--config apps/api/<name>/wrangler.toml`),
+# wrangler will:
+#   1) pick up THIS root wrangler.toml (cwd = repo root),
+#   2) try to bundle src/root-wrangler-safety.ts,
+#   3) hit its immediate throw + actionable banner showing the 6 valid
+#      --config values.
+# This replaces the previous, silent failure mode ("Missing entry-point
+# to Worker script or to assets directory") which told the operator
+# nothing about *which* Worker needed fixing.
+main = "src/root-wrangler-safety.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
 
-[build]
-command = "pnpm install --frozen-lockfile && pnpm turbo run build"

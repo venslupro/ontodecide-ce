@@ -11,7 +11,7 @@ resource "cloudflare_d1_database" "decision_db" {
 # so this resource is safe to re-run; the script `scripts/migrate.sh` is the
 # authoritative path for production.
 resource "cloudflare_d1_database" "decision_db_seed" {
-  count      = var.environment == "production" ? 0 : 0  # placeholder
+  count      = var.environment == "production" ? 0 : 0 # placeholder
   account_id = local.account_id
   name       = "${var.project_name}-decision-db-seed-${var.environment}"
 }

@@ -8,13 +8,13 @@
 
 locals {
   kv_namespaces = {
-    user_cache      = "user-cache"
-    graph_cache     = "graph-cache"
-    ingestion_jobs  = "ingestion-jobs"
-    ai_cache        = "ai-cache"
-    cleanup_jobs    = "cleanup-jobs"
-    jwt_blacklist   = "jwt-blacklist"
-    rate_limit      = "rate-limit"
+    user_cache     = "user-cache"
+    graph_cache    = "graph-cache"
+    ingestion_jobs = "ingestion-jobs"
+    ai_cache       = "ai-cache"
+    cleanup_jobs   = "cleanup-jobs"
+    jwt_blacklist  = "jwt-blacklist"
+    rate_limit     = "rate-limit"
   }
 }
 

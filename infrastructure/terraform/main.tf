@@ -130,7 +130,7 @@ terraform {
     # flags required by the Backblaze Terraform integration
     # guide, plus skip_s3_checksum = true required because B2
     # does not implement AWS SigV4 checksum headers v2.
-    region                      = "us-west-004"   # overridden at runtime via env
+    region                      = "us-west-004" # overridden at runtime via env
     skip_credentials_validation = true
     skip_metadata_api_check     = true
     skip_region_validation      = true

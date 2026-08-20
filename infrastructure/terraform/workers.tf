@@ -1,31 +1,45 @@
 # ============================================================
 # Workers Builds (Git-connected CI/CD) — IaC role.
 #
-# Cloudflare's Workers Builds (托管式 Git 集成) is the canonical,
-# zero-configuration way to build and deploy the workers. The build
-# system:
-#   1. reads each wrangler.toml in apps/api/*/
-#   2. runs `pnpm turbo run build` (declared in [build])
-#   3. uploads the compiled worker via Cloudflare's internal Git bridge
-#   4. applies [vars] and any dashboard-set Secrets as the runtime env
+# CLOUDFLARE RECOMMENDED OWNERSHIP SPLIT (must stay in sync with each
+# apps/api/<name>/wrangler.toml's Ownership split comment block):
 #
-# As a result, Terraform NO LONGER owns:
-#   × worker script content (content = file("dist/index.js"))
-#   × plain_text / secret_text bindings that are pure configuration
-#     (URLs, flags, B2 region, JWT secrets, Neo4j credentials, etc.)
+#   WORKERS BUILDS (Dashboard → Worker → Settings → Builds):
+#     1. builds the code (Build command: corepack + pnpm install --frozen-lockfile
+#        + pnpm turbo run build --filter=<pkg>)
+#     2. uploads the Worker SCRIPT CONTENT / MODULE BUNDLE on every
+#        git push (Deploy command: npx wrangler deploy)
+#     3. applies runtime [vars] plus dashboard Variables & Secrets
 #
-# Terraform KEEPS ownership of resources whose IDs originate INSIDE
-# the Cloudflare account / B2 project and therefore cannot be known
-# when writing wrangler.toml ahead of time:
-#   ✓ D1 database IDs
-#   ✓ KV namespace IDs
-#   ✓ Queue names / queue consumer bindings
-#   ✓ AI binding
-#   ✓ Durable Object bindings (declared in wrangler.toml, mirrored
-#     here so Terraform's dependency graph stays correct)
+#   TERRAFORM (this file and its neighbours):
+#     ✓ Cloudflare ACCOUNT resources that CANNOT be known when
+#       writing wrangler.toml: D1 IDs, KV IDs, Queue names, AI/DO
+#       bindings — the AUTHORITATIVE binding manifest.
+#     ✓ Cron trigger resources (cron.tf) that reference script names.
+#     × NEVER the worker script content / module bundle.
+#
+# To avoid a permanent drift fight between Terraform and Workers
+# Builds on the same `cloudflare_worker_script` every time a git push
+# updates the bundle, EVERY `cloudflare_worker_script.*` below
+# declares:
+#
+#   lifecycle {
+#     ignore_changes = [content, module]
+#   }
+#
+# meaning: "Terraform brings bindings into line but ignores any
+# differences in the uploaded bundle, because Workers Builds owns
+# that part of the object."  This is the recommended pattern whenever
+# a Worker is deployed via Workers Builds and still bound to KV/D1/
+# Queue/AI/DO through Terraform.
+#
+# IMPORTANT: Workers Builds IGNORES wrangler.toml's Custom Builds
+# ([build]/[build.upload]).  The authoritative Build command lives in
+# the Dashboard AND in the human-readable map at
+# .cloudflare/workers-builds.yaml.  Keep all three in sync.
 #
 # After `terraform apply`, the operator copies values from
-# `terraform output -json` into:
+# `terraform output -json` into EITHER:
 #   • each wrangler.toml's `REPLACE_WITH_*` placeholders, OR
 #   • directly into the Cloudflare dashboard → Worker → Settings →
 #     Variables and Secrets (preferred so commits don't encode IDs).
@@ -61,6 +75,12 @@ resource "cloudflare_worker_script" "gateway" {
   name       = local.worker_names.gateway
   module     = true
 
+  # Workers Builds uploads the actual JS bundle; Terraform only owns
+  # the binding manifest below.  See header comment.
+  lifecycle {
+    ignore_changes = [content, module]
+  }
+
   kv_namespace_binding {
     name         = "JWT_BLACKLIST"
     namespace_id = cloudflare_kv_namespace.caches["jwt-blacklist"].id
@@ -82,6 +102,10 @@ resource "cloudflare_worker_script" "user_service" {
   name       = local.worker_names.user
   module     = true
 
+  lifecycle {
+    ignore_changes = [content, module]
+  }
+
   d1_database_binding {
     name        = "DB"
     database_id = cloudflare_d1_database.decision_db.database_id
@@ -101,6 +125,10 @@ resource "cloudflare_worker_script" "graph_service" {
   account_id = local.account_id
   name       = local.worker_names.graph
   module     = true
+
+  lifecycle {
+    ignore_changes = [content, module]
+  }
 
   kv_namespace_binding {
     name         = "CACHE"
@@ -123,6 +151,10 @@ resource "cloudflare_worker_script" "ingestion_service" {
   account_id = local.account_id
   name       = local.worker_names.ingestion
   module     = true
+
+  lifecycle {
+    ignore_changes = [content, module]
+  }
 
   kv_namespace_binding {
     name         = "JOBS"
@@ -149,6 +181,10 @@ resource "cloudflare_worker_script" "ai_service" {
   account_id = local.account_id
   name       = local.worker_names.ai
   module     = true
+
+  lifecycle {
+    ignore_changes = [content, module]
+  }
 
   ai_binding {
     name = "AI"
@@ -181,6 +217,10 @@ resource "cloudflare_worker_script" "cleanup_service" {
   account_id = local.account_id
   name       = local.worker_names.cleanup
   module     = true
+
+  lifecycle {
+    ignore_changes = [content, module]
+  }
 
   d1_database_binding {
     name        = "DB"

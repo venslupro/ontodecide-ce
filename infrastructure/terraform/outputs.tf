@@ -19,26 +19,26 @@ output "kv_namespaces" {
 output "b2_buckets" {
   value = {
     ingestion_staging = aws_s3_bucket.ingestion_staging.bucket
-    tenant_archive     = aws_s3_bucket.tenant_archive.bucket
+    tenant_archive    = aws_s3_bucket.tenant_archive.bucket
   }
 }
 
 output "queues" {
   value = {
-    ingestion        = cloudflare_queue.ingestion.name
-    ingestion_dlq    = cloudflare_queue.ingestion_dlq.name
-    cleanup          = cloudflare_queue.cleanup.name
-    cleanup_dlq      = cloudflare_queue.cleanup_dlq.name
+    ingestion     = cloudflare_queue.ingestion.name
+    ingestion_dlq = cloudflare_queue.ingestion_dlq.name
+    cleanup       = cloudflare_queue.cleanup.name
+    cleanup_dlq   = cloudflare_queue.cleanup_dlq.name
   }
 }
 
 output "worker_names" {
   value = {
-    gateway    = cloudflare_worker_script.gateway.name
-    user       = cloudflare_worker_script.user_service.name
-    graph      = cloudflare_worker_script.graph_service.name
-    ingestion  = cloudflare_worker_script.ingestion_service.name
-    ai         = cloudflare_worker_script.ai_service.name
-    cleanup    = cloudflare_worker_script.cleanup_service.name
+    gateway   = cloudflare_worker_script.gateway.name
+    user      = cloudflare_worker_script.user_service.name
+    graph     = cloudflare_worker_script.graph_service.name
+    ingestion = cloudflare_worker_script.ingestion_service.name
+    ai        = cloudflare_worker_script.ai_service.name
+    cleanup   = cloudflare_worker_script.cleanup_service.name
   }
 }

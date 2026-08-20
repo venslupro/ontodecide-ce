@@ -11,7 +11,7 @@ resource "cloudflare_worker_cron_trigger" "cleanup" {
   account_id  = local.account_id
   script_name = cloudflare_worker_script.cleanup_service.name
   schedules = [
-    "0 3 * * *",     # daily cleanup at 03:00 UTC
+    "0 3 * * *", # daily cleanup at 03:00 UTC
   ]
 }
 
@@ -21,6 +21,6 @@ resource "cloudflare_worker_cron_trigger" "keepalive" {
   account_id  = local.account_id
   script_name = cloudflare_worker_script.cleanup_service.name
   schedules = [
-    "0 */6 * * *",   # keep-alive ping
+    "0 */6 * * *", # keep-alive ping
   ]
 }

@@ -474,3 +474,93 @@ jobs:
           ENV_TAG: ${{ github.event.inputs.environment || 'production' }}
         run: |
           terraform apply -input=false tfplan.binary
+
+      # ----------------------------------------------------------------
+      # Post-apply: print a human-readable binding map so operators can
+      # copy-paste values directly into each Worker's Dashboard
+      # Variables & Secrets (or wrangler.toml placeholders) without
+      # grepping outputs individually.
+      # Cloudflare's Workers Builds manages code deployment; Terraform
+      # manages resource IDs.  This table is the handoff from IaC to the
+      # runtime bindings declared in each wrangler.toml.
+      # ----------------------------------------------------------------
+      - name: Write binding mapping to GITHUB_STEP_SUMMARY
+        id: bindings-summary
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+
+          RAW="$(terraform output -json)"
+
+          ACCOUNT_ID="$(jq -r '.account_id.value // "(unset)"' <<<"${RAW}")"
+          D1_ID="$(jq -r '.d1_database_id.value // "(unset)"' <<<"${RAW}")"
+          B2_REGION="$(jq -r '.b2_region.value // "(unset)"' <<<"${RAW}")"
+
+          {
+            echo "### Terraform Apply — Binding mapping for Workers Builds"
+            echo
+            echo "Copy the values below into each Worker's bindings."
+            echo "Cloudflare recommended path (no git commits of IDs):"
+            echo "Dashboard → Worker → Variables \& Secrets → override \`REPLACE_WITH_*\` / queue/database names here."
+            echo
+            echo "| Binding Type | Binding Name / Key | Value (ID / Name) | Wrangler binding name / Terraform output key |"
+            echo "|---|---|---|---|"
+
+            # --- Account ---
+            printf '| %s | %s | `%s` | %s |\n' \
+              "Account" \
+              "Cloudflare Account" \
+              "${ACCOUNT_ID}" \
+              "output: \`account_id\`"
+
+            # --- D1 ---
+            printf '| %s | %s | `%s` | %s |\n' \
+              "D1 Database (id)" \
+              "ontodecide-decision-db-${{ github.event.inputs.environment || 'production' }}" \
+              "${D1_ID}" \
+              "d1_databases binding \`DB\` → output: \`d1_database_id\`"
+
+            # --- KV namespaces (for each) ---
+            ROWS_KV="$(jq -r '
+              .kv_namespaces.value | to_entries[]
+              | "|\("KV Namespace (id)\t" + .key + "\t" + .value + "\tkv_namespaces[\"" + .key + "\"] -> binding \(.key | gsub("-"; "_") | ascii_upcase)\)|"
+            ' <<<"${RAW}")"
+            while IFS=$'\t' read -r _prefix key id binding_note; do
+              printf '| %s | %s | `%s` | %s |\n' \
+                "KV Namespace (id)" "${key}" "${id}" "${binding_note}"
+            done <<<"${ROWS_KV}"
+
+            # --- Queues ---
+            ROWS_Q="$(jq -r '
+              .queues.value | to_entries[]
+              | "Queues\t" + .key + "\t" + .value
+            ' <<<"${RAW}")"
+            while IFS=$'\t' read -r _type key value; do
+              printf '| %s | %s | `%s` | %s |\n' \
+                "Queue (name)" "${key}" "${value}" "output: \`queues.${key}\`; queue bindings reference this NAME"
+            done <<<"${ROWS_Q}"
+
+            # --- Worker script names ---
+            ROWS_W="$(jq -r '
+              .worker_names.value | to_entries[]
+              | "Worker\t" + .key + "\t" + .value
+            ' <<<"${RAW}")"
+            while IFS=$'\t' read -r _tier key value; do
+              printf '| %s | %s | `%s` | %s |\n' \
+                "Worker script (name)" "${key}" "${value}" "wrangler.toml \`name =\`; output: \`worker_names.${key}\`"
+            done <<<"${ROWS_W}"
+
+            # --- B2 buckets & region ---
+            B2_STAGING="$(jq -r '.b2_buckets.value.ingestion_staging // "(unset)"' <<<"${RAW}")"
+            B2_ARCHIVE="$(jq -r '.b2_buckets.value.tenant_archive     // "(unset)"' <<<"${RAW}")"
+            printf '| %s | %s | `%s` | %s |\n' \
+              "B2 Bucket" "ingestion-staging" "${B2_STAGING}" "output: \`b2_buckets.ingestion_staging\`"
+            printf '| %s | %s | `%s` | %s |\n' \
+              "B2 Bucket" "tenant-archive"    "${B2_ARCHIVE}" "output: \`b2_buckets.tenant_archive\`"
+            printf '| %s | %s | `%s` | %s |\n' \
+              "B2 Region" "-" "${B2_REGION}" "output: \`b2_region\`"
+
+            echo
+            echo "**Next step:** paste the IDs/names above into each Worker's Dashboard → Variables & Secrets,"
+            echo "then trigger Workers Builds (next push to \`main\` will auto deploy)."
+          } >> "$GITHUB_STEP_SUMMARY"

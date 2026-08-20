@@ -1,69 +1,92 @@
 # Gateway Worker — public entry point.
 #
-# Deployed via Cloudflare Workers Builds (Git-connected — the preferred
-# zero-config mechanism for this repository as a whole). The Cloudflare
-# Git bridge runs the [build] command on every push and deploys.
+# Ownership split (keep in sync with infrastructure/terraform/workers.tf):
 #
-# Ownership split between this wrangler.toml (Workers Builds source of
-# truth) and Terraform (infra resource source of truth):
-#
-#   HERE (wrangler.toml + Cloudflare dashboard Variables & Secrets):
-#     • Worker code — built & uploaded by Workers Builds Git bridge.
-#     • Runtime env config: JWT_SECRET, USER_SERVICE_URL, etc.
-#       Set either as [vars] (non-secret) below OR as Worker Secrets
-#       via the dashboard / `wrangler secret put`.
-#     • KV namespace IDs: populated from `terraform output` after
-#       apply.
+#   HERE (wrangler.toml + Worker → Variables & Secrets in Dashboard):
+#     • Worker code uploaded by Cloudflare Workers Builds.
+#     • [build] / [build.upload] below are for LOCAL wrangler dev/deploy
+#       only — Workers Builds IGNORES Custom Builds and uses Dashboard
+#       Build settings (see .cloudflare/workers-builds.yaml).
+#     • Runtime env (USER_SERVICE_URL, JWT_SECRET, downstream URLs, …):
+#       set as either [vars] below (non-secret) OR Worker Secrets via
+#       the Dashboard / `wrangler secret put`.  [vars] defaults below
+#       match the Terraform default project=ontodecide + env=production.
+#     • KV namespace IDs: filled from terraform output or (RECOMMENDED)
+#       pasted in Dashboard → Variables & Secrets, which overrides the
+#       id="REPLACE_WITH_*"  placeholder committed to git.
 #
 #   THERE (infrastructure/terraform/*.tf):
-#     • KV namespaces themselves (jwt-blacklist / rate-limit KVs).
-#     • D1 / Queues / Durable Object namespaces / AI / other
-#       Cloudflare resources.
+#     • KV namespaces jwt-blacklist / rate-limit themselves.
 #     • Cron triggers.
-#
-# After the first `terraform apply` on a fresh account, run:
-#   cd infrastructure/terraform && terraform output kv_namespaces
-# and paste the two IDs into the REPLACE_WITH_KV_ID placeholders below
-# (or override them directly in the dashboard → Worker → Variables,
-#  which does not require committing IDs to git).
+#     • Authoritative binding manifest on cloudflare_worker_script (with
+#       lifecycle.ignore_changes so Terraform never overwrites the
+#       bundle that Workers Builds uploads).
+
 name = "decision-gateway"
-main = "dist/index.js"
+# NOTE: entry point is intentionally the TYPESCRIPT source file.
+# Wrangler bundles Workers with its internal esbuild pipeline, so it
+# does NOT need a pre-built dist/index.js.  The tsc step triggered by
+# `turbo run build` (Build command) is a TYPECHECK guard only — its
+# output layout does NOT match what we need at deploy time anyway
+# (because the shared package is inlined via includes the tsc output
+# tree nests to dist/api/gateway/src/index.js with shared/src side by
+# side).  Pointing `main` at src/index.ts lets wrangler's bundler use
+# the standard Node/Bundler resolution:
+#   `import "@ontodecide/shared"` → package.json exports → dist/*.js
+# which was just produced by the Build command.
+main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
 
+# LOCAL-ONLY [build] block (Workers Builds ignores Custom Builds;
+# authoritative build command lives in Dash + .cloudflare/workers-builds.yaml).
 [build]
-command = "pnpm turbo run build --filter=@ontodecide/gateway"
+# IMPORTANT: build.command runs for LOCAL `wrangler dev` /
+# `wrangler deploy` only.  It must NOT emit a dist/index.js that
+# Wrangler will then pick up instead of its own bundler, because
+# tsc emits a NESTED output tree.  Therefore we deliberately keep
+# ONLY the TYPECHECK/declaration variant here and leave JS emission
+# to Wrangler's esbuild pass.  Run full-build via turbo if needed.
+command = "pnpm --filter=@ontodecide/gateway exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
 cwd = "apps/api/gateway"
-
-[build.upload]
-format = "modules"
-dir = "dist"
-main = "./index.js"
+# Note: Upload format/dir/main are inferred from top `main = "src/index.ts"`
+# automatically in wrangler >= 3.100.  Do NOT re-declare `[build.upload]`
+# + `main` — defining both is a fatal error.
 
 # Non-secret runtime variables. Workers Builds applies these to every
 # deploy; override per-environment via dashboard → Variables when the
-# default isn't right.
+# default isn't right (e.g. staging subdomain, non-default provider).
 [vars]
 AI_DEFAULT_PROVIDER = "workers-ai"
-# Downstream user-service URL — format:
-#   https://<user-worker-name>.<workers.dev subdomain>.workers.dev
-# The user-worker name matches apps/api/user/wrangler.toml's `name`
-# field, typically `decision-user-service`.
-USER_SERVICE_URL = "https://decision-user-service.<ACCOUNT-SUBDOMAIN>.workers.dev"
 
-# Secrets (set via Cloudflare dashboard → Worker → Secrets OR
-# `wrangler secret put <NAME>`):
-#   JWT_SECRET          — 32+ byte HMAC signing key (shared across all
-#                         6 workers that validate tokens).
-#   GATEWAY_PASSTHROUGH_SECRETS — add any other worker-specific secrets
-#                         here; NEVER commit the values.
+# Downstream user-service URL. Pattern:
+#   https://<worker-name>.<TF_VAR_cloudflare_account_id_or_workers_dev>.workers.dev
+# The worker name matches apps/api/user/wrangler.toml (`decision-user-service`).
+USER_SERVICE_URL    = "https://decision-user-service.<ACCOUNT-SUBDOMAIN>.workers.dev"
+GRAPH_SERVICE_URL   = "https://decision-graph-service.<ACCOUNT-SUBDOMAIN>.workers.dev"
+INGESTION_SERVICE_URL = "https://decision-ingestion-service.<ACCOUNT-SUBDOMAIN>.workers.dev"
+AI_SERVICE_URL      = "https://decision-ai-service.<ACCOUNT-SUBDOMAIN>.workers.dev"
+CLEANUP_SERVICE_URL = "https://decision-cleanup-service.<ACCOUNT-SUBDOMAIN>.workers.dev"
 
+# Secrets (set via Dashboard → Worker → Secrets OR `wrangler secret put <NAME>`):
+#   JWT_SECRET           — 32+ byte HMAC signing key (shared across every
+#                          worker that validates or issues tokens).
+#   <ACCOUNT-SUBDOMAIN>  — Replace the placeholder above, OR set the
+#                          full *_SERVICE_URL overrides individually in
+#                          dashboard Variables.
+
+# KV bindings.  IDs come from Terraform outputs — run:
+#   terraform -chdir=infrastructure/terraform output kv_namespaces
+# and paste the matching value into either:
+#   (a) the `id =` line below (not recommended — IDs end up in git), OR
+#   (b) Dashboard → Worker → Variables & Secrets (RECOMMENDED).
 [[kv_namespaces]]
 binding = "JWT_BLACKLIST"
-id = "REPLACE_WITH_KV_ID"   # From: `terraform output kv_namespaces.jwt-blacklist`
+id = "REPLACE_WITH_KV_ID"   # Terraform output key: kv_namespaces["jwt-blacklist"]
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "REPLACE_WITH_KV_ID"   # From: `terraform output kv_namespaces.rate-limit`
+id = "REPLACE_WITH_KV_ID"   # Terraform output key: kv_namespaces["rate-limit"]
 
-# Cron trigger is owned by the Cleanup Worker; see apps/api/cleanup/wrangler.toml.
+# Cron trigger is owned by the Cleanup Worker; see apps/api/cleanup/wrangler.toml
+# and infrastructure/terraform/cron.tf.
