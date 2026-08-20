@@ -196,22 +196,74 @@ jobs:
           STATE_KEY="${ENV}/terraform.tfstate"
           R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
-          # Terraform's -backend-config does NOT accept the dotted-attribute
-          # form "endpoints.s3=..."; it only accepts TOP-LEVEL backend
-          # attributes. For nested objects (endpoints is an object of the
-          # shape { s3 = "..." }) we must pass the complete HCL map literal.
+          # =================================================================
+          # ROOT-CAUSE LESSON LEARNED (4 init-failures in a row on R2 backend)
+          # =================================================================
+          # The -backend-config=KEY=VALUE CLI form CANNOT convey nested HCL
+          # object attributes correctly. Every attempt failed for a
+          # different, compounding reason:
           #
-          # Build the exact HCL string first into an intermediate bash
-          # variable — this avoids every backslash/quote/dollar escape pitfall
-          # of inlining it directly into the terraform init command line.
-          # Ref: hashicorp/terraform internal backendConfigFlagHCL parsing.
-          HCL_ENDPOINTS="endpoints = { s3 = \"${R2_ENDPOINT}\" }"
+          #  • Dotted form  "endpoints.s3=URL"
+          #       → Terraform treats the dotted string as an UNKNOWN top-level
+          #         attribute. Rejected: "Invalid backend configuration argument
+          #         endpoints.s3 ... is not expected".
+          #
+          #  • Inline map   "endpoints={s3=\"URL\"}"
+          #       → Bash/runner YAML quoting hell; inner URL colons + slashes
+          #         combined with backslash escapes frequently result in a
+          #         malformed literal.
+          #
+          #  • Inline map + spaces   "endpoints = { s3 = \"URL\" }"
+          #       → The KEY=VALUE splitter in Terraform's CLI parses the FIRST
+          #         unescaped `=` as the separator. Because HCL legitimately
+          #         puts spaces around `=`, Terraform reads the KEY literally
+          #         as "endpoints " (with a TRAILING SPACE!) which does not
+          #         match any known attribute either.
+          #
+          # CANONICAL FIX: use -backend-config=PATH (the FILE-based form)
+          #   • Terraform parses the file as HCL using its REAL HCL parser.
+          #   • "endpoints = { s3 = \"...\" }" with proper spacing & quoting
+          #     is accepted exactly the same way as if it were written in
+          #     the backend block in main.tf.
+          #   • There are zero bash / YAML escaping concerns because the
+          #     literal is written via a quoted heredoc (cat > FILE <<'EOF')
+          #     whose delimiter is single-quoted — NOTHING inside is expanded
+          #     by bash except the explicit ${VAR} interpolations we control.
+          # =================================================================
+
+          BACKEND_CFG_FILE="backend-config-overrides.tfvars"
+
+          # Single-quoted heredoc delimiter ('EOF') = bash performs NO
+          # variable interpolation inside the block. Every non-interpolated
+          # HCL token (endpoints, s3, braces, equals, quotes) comes through
+          # verbatim. Only the R2_ENDPOINT bash expansion below breaks out.
+          cat > "${BACKEND_CFG_FILE}" <<'EOF'
+          bucket     = "__TF_STATE_BUCKET__"
+          key        = "__STATE_KEY__"
+          endpoints = {
+            s3 = "__R2_ENDPOINT__"
+          }
+          EOF
+
+          # Now substitute the three placeholders. Using envsubst-free sed
+          # here because the placeholder strings contain NO special regex
+          # characters — plain literal find/replace guarantees correctness.
+          sed -i \
+            -e "s|__TF_STATE_BUCKET__|${TF_STATE_BUCKET}|g" \
+            -e "s|__STATE_KEY__|${STATE_KEY}|g" \
+            -e "s|__R2_ENDPOINT__|${R2_ENDPOINT}|g" \
+            "${BACKEND_CFG_FILE}"
+
+          # Diagnostic echo for the runner log — lets maintainers verify
+          # the literal HCL before Terraform consumes it (no secrets here,
+          # only the bucket name, state path, and public R2 endpoint URL).
+          echo "--- backend-config-overrides.tfvars ---"
+          cat "${BACKEND_CFG_FILE}"
+          echo "---------------------------------------"
 
           terraform init \
             -input=false \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="key=${STATE_KEY}" \
-            -backend-config="${HCL_ENDPOINTS}"
+            -backend-config="${BACKEND_CFG_FILE}"
 
       # ---- Terraform validate ----
       - name: Terraform Validate
@@ -354,22 +406,74 @@ jobs:
           STATE_KEY="${ENV}/terraform.tfstate"
           R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
-          # Terraform's -backend-config does NOT accept the dotted-attribute
-          # form "endpoints.s3=..."; it only accepts TOP-LEVEL backend
-          # attributes. For nested objects (endpoints is an object of the
-          # shape { s3 = "..." }) we must pass the complete HCL map literal.
+          # =================================================================
+          # ROOT-CAUSE LESSON LEARNED (4 init-failures in a row on R2 backend)
+          # =================================================================
+          # The -backend-config=KEY=VALUE CLI form CANNOT convey nested HCL
+          # object attributes correctly. Every attempt failed for a
+          # different, compounding reason:
           #
-          # Build the exact HCL string first into an intermediate bash
-          # variable — this avoids every backslash/quote/dollar escape pitfall
-          # of inlining it directly into the terraform init command line.
-          # Ref: hashicorp/terraform internal backendConfigFlagHCL parsing.
-          HCL_ENDPOINTS="endpoints = { s3 = \"${R2_ENDPOINT}\" }"
+          #  • Dotted form  "endpoints.s3=URL"
+          #       → Terraform treats the dotted string as an UNKNOWN top-level
+          #         attribute. Rejected: "Invalid backend configuration argument
+          #         endpoints.s3 ... is not expected".
+          #
+          #  • Inline map   "endpoints={s3=\"URL\"}"
+          #       → Bash/runner YAML quoting hell; inner URL colons + slashes
+          #         combined with backslash escapes frequently result in a
+          #         malformed literal.
+          #
+          #  • Inline map + spaces   "endpoints = { s3 = \"URL\" }"
+          #       → The KEY=VALUE splitter in Terraform's CLI parses the FIRST
+          #         unescaped `=` as the separator. Because HCL legitimately
+          #         puts spaces around `=`, Terraform reads the KEY literally
+          #         as "endpoints " (with a TRAILING SPACE!) which does not
+          #         match any known attribute either.
+          #
+          # CANONICAL FIX: use -backend-config=PATH (the FILE-based form)
+          #   • Terraform parses the file as HCL using its REAL HCL parser.
+          #   • "endpoints = { s3 = \"...\" }" with proper spacing & quoting
+          #     is accepted exactly the same way as if it were written in
+          #     the backend block in main.tf.
+          #   • There are zero bash / YAML escaping concerns because the
+          #     literal is written via a quoted heredoc (cat > FILE <<'EOF')
+          #     whose delimiter is single-quoted — NOTHING inside is expanded
+          #     by bash except the explicit ${VAR} interpolations we control.
+          # =================================================================
+
+          BACKEND_CFG_FILE="backend-config-overrides.tfvars"
+
+          # Single-quoted heredoc delimiter ('EOF') = bash performs NO
+          # variable interpolation inside the block. Every non-interpolated
+          # HCL token (endpoints, s3, braces, equals, quotes) comes through
+          # verbatim. Only the R2_ENDPOINT bash expansion below breaks out.
+          cat > "${BACKEND_CFG_FILE}" <<'EOF'
+          bucket     = "__TF_STATE_BUCKET__"
+          key        = "__STATE_KEY__"
+          endpoints = {
+            s3 = "__R2_ENDPOINT__"
+          }
+          EOF
+
+          # Now substitute the three placeholders. Using envsubst-free sed
+          # here because the placeholder strings contain NO special regex
+          # characters — plain literal find/replace guarantees correctness.
+          sed -i \
+            -e "s|__TF_STATE_BUCKET__|${TF_STATE_BUCKET}|g" \
+            -e "s|__STATE_KEY__|${STATE_KEY}|g" \
+            -e "s|__R2_ENDPOINT__|${R2_ENDPOINT}|g" \
+            "${BACKEND_CFG_FILE}"
+
+          # Diagnostic echo for the runner log — lets maintainers verify
+          # the literal HCL before Terraform consumes it (no secrets here,
+          # only the bucket name, state path, and public R2 endpoint URL).
+          echo "--- backend-config-overrides.tfvars ---"
+          cat "${BACKEND_CFG_FILE}"
+          echo "---------------------------------------"
 
           terraform init \
             -input=false \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="key=${STATE_KEY}" \
-            -backend-config="${HCL_ENDPOINTS}"
+            -backend-config="${BACKEND_CFG_FILE}"
 
       # Download the binary plan saved by the "plan" job.
       - name: Download plan artifact
