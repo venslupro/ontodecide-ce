@@ -8,6 +8,10 @@ export interface UserEnv extends BaseEnv {
   DB: D1Database;
   /** KV cache namespace. */
   CACHE: KVNamespace;
+  /** Neo4j AuraDB connection — used to create per-tenant databases. */
+  NEO4J_URL: string;
+  NEO4J_USER: string;
+  NEO4J_PASSWORD: string;
 }
 
 /** Role assigned to a user; determines API permissions. */

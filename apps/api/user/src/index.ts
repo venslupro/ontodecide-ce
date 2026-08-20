@@ -85,13 +85,14 @@ const app = new OpenAPIHono<UserContext>({
 /** Allow auth routes through without the internal-call marker. */
 app.use('*', internalOnlyMiddleware(['/auth/']));
 
-/** Create the DDD service layer per request from D1 bindings. */
+/** Create the DDD service layer per request from D1 + Neo4j bindings. */
 app.use('*', async (c, next) => {
   const service = new UserManagementService(
       new D1UserRepository(c.env.DB),
       new D1AuditRepository(c.env.DB),
       new D1RefreshTokenRepository(c.env.DB),
       new D1ConfigRepository(c.env.DB),
+      c.env, // NEO4J_URL / NEO4J_USER / NEO4J_PASSWORD bindings
   );
   c.set('service', service);
   await next();

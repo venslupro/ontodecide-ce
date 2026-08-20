@@ -16,10 +16,10 @@ output "kv_namespaces" {
   }
 }
 
-output "r2_buckets" {
+output "b2_buckets" {
   value = {
-    ingestion = cloudflare_r2_bucket.ingestion.name
-    archive   = cloudflare_r2_bucket.cleanup_archive.name
+    ingestion_staging = aws_s3_bucket.ingestion_staging.bucket
+    tenant_archive     = aws_s3_bucket.tenant_archive.bucket
   }
 }
 

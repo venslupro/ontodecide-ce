@@ -48,7 +48,10 @@ export async function runDailyCleanup(env: CleanupEnv): Promise<void> {
   const record: CleanupTaskRecord = {
     taskId,
     status: 'queued',
-    mode: 'soft',
+    // Retention-expired users get HARD mode + account deletion.
+    // Their metadata is archived to the B2 tenant-archive bucket
+    // BEFORE the account is deleted (compliance backup).
+    mode: 'hard',
     triggeredBy: 'cron',
     tenantIds: due.map((row) => row.tenant_id),
     progress,
@@ -63,8 +66,10 @@ export async function runDailyCleanup(env: CleanupEnv): Promise<void> {
     await env.CLEANUP_QUEUE.send({
       taskId,
       tenantId: tenant.tenant_id,
-      mode: 'soft',
+      mode: 'hard',
       triggeredBy: 'cron',
+      // User retention expired → delete account + archive metadata.
+      deleteAccount: true,
     });
   }
 }
@@ -74,6 +79,7 @@ export async function triggerManualCleanup(
     env: CleanupEnv,
     tenantId: string | undefined,
     mode: 'soft' | 'hard',
+    deleteAccount: boolean,
 ): Promise<string> {
   const taskId = uuid();
   const repo = new D1TenantCleanupRepository(env.DB);
@@ -100,6 +106,7 @@ export async function triggerManualCleanup(
       tenantId: tenant.tenant_id,
       mode,
       triggeredBy: 'admin',
+      deleteAccount: mode === 'hard' && deleteAccount,
     });
   }
   return taskId;

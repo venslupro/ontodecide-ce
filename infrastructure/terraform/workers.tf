@@ -89,6 +89,19 @@ resource "cloudflare_worker_script" "user_service" {
     name = "JWT_SECRET"
     text = var.jwt_secret
   }
+  # Neo4j AuraDB bindings — User Service creates per-tenant databases.
+  plain_text_binding {
+    name = "NEO4J_URL"
+    text = var.neo4j_url
+  }
+  plain_text_binding {
+    name = "NEO4J_USER"
+    text = var.neo4j_user
+  }
+  secret_text_binding {
+    name = "NEO4J_PASSWORD"
+    text = var.neo4j_password
+  }
 }
 
 # ============================================================
@@ -133,9 +146,22 @@ resource "cloudflare_worker_script" "ingestion_service" {
 
   content = file("${path.module}/../../apps/api/ingestion/dist/index.js")
 
-  r2_bucket_binding {
-    name        = "BUCKET"
-    bucket_name = cloudflare_r2_bucket.ingestion.name
+  # Backblaze B2 S3-compatible storage config (ingestion staging).
+  secret_text_binding {
+    name = "B2_KEY_ID"
+    text = var.b2_application_key_id
+  }
+  secret_text_binding {
+    name = "B2_KEY"
+    text = var.b2_application_key
+  }
+  plain_text_binding {
+    name = "B2_REGION"
+    text = var.b2_region
+  }
+  plain_text_binding {
+    name = "B2_INGESTION_BUCKET"
+    text = aws_s3_bucket.ingestion_staging.bucket
   }
   kv_namespace_binding {
     name         = "JOBS"
@@ -208,9 +234,27 @@ resource "cloudflare_worker_script" "cleanup_service" {
     name        = "DB"
     database_id = cloudflare_d1_database.decision_db.database_id
   }
-  r2_bucket_binding {
-    name        = "BUCKET"
-    bucket_name = cloudflare_r2_bucket.cleanup_archive.name
+  # Backblaze B2 S3-compatible storage config (dual-bucket: ingestion
+  # staging for purge + tenant archive for metadata backup).
+  secret_text_binding {
+    name = "B2_KEY_ID"
+    text = var.b2_application_key_id
+  }
+  secret_text_binding {
+    name = "B2_KEY"
+    text = var.b2_application_key
+  }
+  plain_text_binding {
+    name = "B2_REGION"
+    text = var.b2_region
+  }
+  plain_text_binding {
+    name = "B2_INGESTION_BUCKET"
+    text = aws_s3_bucket.ingestion_staging.bucket
+  }
+  plain_text_binding {
+    name = "B2_ARCHIVE_BUCKET"
+    text = aws_s3_bucket.tenant_archive.bucket
   }
   queue_binding {
     name       = "CLEANUP_QUEUE"

@@ -34,6 +34,9 @@ neo4j_user = "neo4j"
 default_provider = "workers-ai"
 workers_ai_model = "@cf/meta/llama-3-8b-instruct"
 
+# Backblaze B2 region code (find in B2 dashboard → Buckets).
+b2_region = "us-west-004"
+
 # ---- DO NOT PUT SECRETS HERE ----
 #
 # The following are handled via environment variables (see top of
@@ -43,4 +46,6 @@ workers_ai_model = "@cf/meta/llama-3-8b-instruct"
 #   - TF_VAR_jwt_secret
 #   - TF_VAR_neo4j_password
 #   - TF_VAR_cloudflare_account_id_or_workers_dev
-#   - R2 backend access_key / secret_key  (via -backend-config)
+#   - R2 state backend: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+#   - TF_VAR_b2_application_key_id  (B2 S3-compatible access key)
+#   - TF_VAR_b2_application_key   (B2 S3-compatible secret key)

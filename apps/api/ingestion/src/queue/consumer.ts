@@ -11,7 +11,7 @@
  * Failures are retried up to `max_retries` (set in wrangler.toml); after
  * that the message is routed to the dead-letter queue.
  */
-import {ERROR_CODES, nowIso, type IngestPayload} from '@ontodecide/shared';
+import {ERROR_CODES, nowIso, type IngestPayload, createIngestionB2Client} from '@ontodecide/shared';
 import {extract} from '../etl/extractor.js';
 import {transform} from '../etl/transformer.js';
 import {load} from '../etl/loader.js';
@@ -47,9 +47,10 @@ export async function handleQueueBatch(
 
 async function processJob(message: IngestJobMessage, env: IngestionEnv): Promise<void> {
   await updateJob(env, message.jobId, {status: 'running', startedAt: nowIso()});
-  const object = await env.BUCKET.get(message.objectKey);
+  const b2 = createIngestionB2Client(env);
+  const object = await b2.get(message.objectKey);
   if (!object) {
-    throw new Error(`R2 object not found: ${message.objectKey}`);
+    throw new Error(`B2 object not found: ${message.objectKey}`);
   }
   const bytes = new Uint8Array(await object.arrayBuffer());
   const records = await extract(bytes, message.format);
@@ -79,7 +80,7 @@ async function processJob(message: IngestJobMessage, env: IngestionEnv): Promise
   // Delete the staged file once the job is durable; the archive copy in
   // `archive/<tenantId>/` is preserved by the Cleanup service's regret
   // window.
-  await env.BUCKET.delete(message.objectKey);
+  await b2.delete(message.objectKey);
 }
 
 /** Update the job-status record in KV (used by GET /jobs/:id). */

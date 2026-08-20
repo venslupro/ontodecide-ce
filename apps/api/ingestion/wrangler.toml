@@ -2,7 +2,7 @@
 #
 # Two paths:
 #   * sync path  : small JSON / webhook (≤10 entities) → Graph Service call
-#   * async path: large JSON / CSV / Parquet → R2 → ingestion-queue → consumer
+#   * async path: large JSON / CSV / Parquet → B2 → ingestion-queue → consumer
 #
 # Queues are provisioned by Terraform (see infrastructure/terraform/queues.tf).
 name = "decision-ingestion-service"
@@ -19,11 +19,10 @@ format = "modules"
 dir = "dist"
 main = "./index.js"
 
-# R2 bucket holds the uploaded source files (and the per-tenant archive area).
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "decision-ingestion"
-# bucket_id = "REPLACE_WITH_R2_ID"
+# Backblaze B2 S3-compatible storage credentials + bucket are injected
+# as environment variables (secret_text + plain_text bindings) by
+# Terraform at deploy time. See infrastructure/terraform/workers.tf.
+# There is NO r2_buckets binding here — B2 is external to Cloudflare.
 
 # Async queue: the queue consumer is this same Worker (see `queue` export).
 [[queues_producers]]
@@ -45,3 +44,7 @@ id = "REPLACE_WITH_KV_ID"
 [vars]
 # Downstream Graph Service URL (same as the Gateway uses).
 GRAPH_SERVICE_URL = "https://decision-graph-service.<account>.workers.dev"
+# B2 config — non-secret values here; B2_KEY_ID and B2_KEY are set
+# as secrets via the Cloudflare dashboard or Terraform.
+B2_REGION = "us-west-004"
+B2_INGESTION_BUCKET = "ontodecide-ingestion-staging-production"

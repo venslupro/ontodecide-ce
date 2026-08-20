@@ -40,10 +40,10 @@ binding = "DB"
 database_name = "decision-db"
 database_id = "REPLACE_WITH_D1_ID"
 
-# R2 bucket for archive copies (3-day regret window).
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "decision-cleanup-archive"
+# Backblaze B2 S3-compatible storage credentials + dual buckets are
+# injected as environment variables (secret_text + plain_text bindings)
+# by Terraform at deploy time. See infrastructure/terraform/workers.tf.
+# There is NO r2_buckets binding here — B2 is external to Cloudflare.
 
 # KV namespaces: caches for the various services (all need purging).
 [[kv_namespaces]]
@@ -70,3 +70,8 @@ id = "REPLACE_WITH_KV_ID"
 NEO4J_URL = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
 NEO4J_USER = "neo4j"
 # NEO4J_PASSWORD is set as a secret.
+# B2 config — non-secret values here; B2_KEY_ID and B2_KEY are set
+# as secrets via the Cloudflare dashboard or Terraform.
+B2_REGION = "us-west-004"
+B2_INGESTION_BUCKET = "ontodecide-ingestion-staging-production"
+B2_ARCHIVE_BUCKET = "ontodecide-tenant-archive-production"

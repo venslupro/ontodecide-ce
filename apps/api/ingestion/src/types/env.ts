@@ -4,8 +4,11 @@
 import type {BaseEnv} from '@ontodecide/shared';
 
 export interface IngestionEnv extends BaseEnv {
-  /** R2 bucket for source files (sync path uses it as a staging area too). */
-  BUCKET: R2Bucket;
+  /** Backblaze B2 S3-compatible credentials + bucket for staging files. */
+  B2_KEY_ID: string;
+  B2_KEY: string;
+  B2_REGION: string;
+  B2_INGESTION_BUCKET: string;
   /** Queue producer for async ETL jobs. */
   INGEST_QUEUE: Queue<IngestJobMessage>;
   /** KV namespace holding job-status records (polled by the client). */

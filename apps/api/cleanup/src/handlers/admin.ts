@@ -27,11 +27,13 @@ export async function triggerCleanupHandler(c: Context) {
   const body = (await c.req.json()) as {
     tenantId?: string;
     mode?: 'soft' | 'hard';
+    deleteAccount?: boolean;
   };
   const taskId = await triggerManualCleanup(
       env,
       body.tenantId,
       body.mode ?? 'soft',
+      body.deleteAccount ?? false,
   );
   return c.json(ok({taskId}, c.req.header(HEADERS.TRACE_ID)), 202);
 }

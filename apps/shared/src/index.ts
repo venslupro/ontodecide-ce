@@ -13,3 +13,4 @@ export * from './constants/index.js';
 export * from './schemas/index.js';
 export * from './db/index.js';
 export * from './hono/index.js';
+export * from './storage/index.js';

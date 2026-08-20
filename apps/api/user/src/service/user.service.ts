@@ -20,6 +20,7 @@ import {
   uuid,
   nowIso,
   nowEpochSeconds,
+  createTenantDbStatement,
 } from '@ontodecide/shared';
 import {User} from '../domain/user.entity.js';
 import type {
@@ -29,7 +30,7 @@ import type {
   IRefreshTokenRepository,
   IUserRepository,
 } from '../repository/user.repository.js';
-import type {UserRole} from '../types/env.js';
+import type {UserEnv, UserRole} from '../types/env.js';
 
 export interface CreateUserInput {
   username: string;
@@ -57,9 +58,10 @@ export class UserManagementService {
     private readonly audit: IAuditRepository,
     private readonly refresh: IRefreshTokenRepository,
     private readonly config: IConfigRepository,
+    private readonly env?: UserEnv,
   ) {}
 
-  /** Create a new account. Returns the plaintext password once. */
+  /** Create a new account AND provision the tenant's Neo4j database. */
   public async createUser(input: CreateUserInput, ctx: AuditContext): Promise<CreateUserResult> {
     const existing = await this.users.findByUsername(input.username);
     if (existing) {
@@ -83,6 +85,10 @@ export class UserManagementService {
       role,
       dataRetentionDays: retention,
     });
+    // Create the tenant's Neo4j logical database BEFORE saving the
+    // user to D1. If database provisioning fails (network, Neo4j
+    // unavailable) we roll back cleanly with no D1 state left behind.
+    await this.createNeo4jDatabase(user.tenantId);
     await this.users.save(user);
     await this.recordAudit(ctx, {
       action: 'create_user',
@@ -91,6 +97,50 @@ export class UserManagementService {
       tenantId: user.tenantId,
     });
     return {user, temporaryPassword};
+  }
+
+  /**
+   * Issue a `CREATE DATABASE` command to the Neo4j system database.
+   *
+   * Uses IF NOT EXISTS for idempotency (safe if the command is
+   * retried by the caller). The endpoint path is /db/system/tx/commit.
+   *
+   * Graceful no-op if the env binding was not provided (unit-test / local
+   * dev scenarios without a real Neo4j cluster).
+   */
+  private async createNeo4jDatabase(tenantId: string): Promise<void> {
+    if (!this.env) return;
+    const {NEO4J_URL, NEO4J_USER, NEO4J_PASSWORD} = this.env;
+    if (!NEO4J_URL || !NEO4J_USER || !NEO4J_PASSWORD) return;
+    const base = NEO4J_URL.replace(/\/$/, '');
+    const endpoint = `${base}/db/system/tx/commit`;
+    const auth = 'Basic ' + btoa(`${NEO4J_USER}:${NEO4J_PASSWORD}`);
+    const body = JSON.stringify({
+      statements: [{statement: createTenantDbStatement(tenantId)}],
+    });
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': auth,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json;charset=UTF-8',
+      },
+      body,
+    });
+    if (!response.ok) {
+      throwError(
+          ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
+          `Failed to provision Neo4j tenant DB: HTTP ${response.status} ${await response.text()}`,
+      );
+    }
+    const data = (await response.json()) as {errors?: Array<{code: string; message: string}>};
+    if (data.errors && data.errors.length > 0) {
+      const first = data.errors[0];
+      throwError(
+          ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
+          `Failed to provision Neo4j tenant DB: ${first.code}: ${first.message}`,
+      );
+    }
   }
 
   /** Authenticate a user; returns the user entity when credentials match. */
@@ -179,9 +229,14 @@ export class UserManagementService {
       throwError(ERROR_CODES.AUTH_FORBIDDEN, 'Cannot delete the bootstrap admin.');
     }
     await this.refresh.revokeAllForUser(user.id);
-    // NOTE: data cleanup is delegated to the Cleanup service via the
-    // cleanup-queue. The User service only removes the auth record.
-    await this.users.delete(userId);
+    // NOTE: compliance archival + full account deletion is delegated to
+    // the Cleanup service (tenant-archive bucket write → DROP DATABASE →
+    // permanent D1 row removal). Here we revoke tokens, mark the user
+    // inactive so login/auth handlers can't use the account, and record
+    // the audit entry. The Cleanup worker then drops the DB row after
+    // the backup is written.
+    user.disable();
+    await this.users.save(user);
     await this.recordAudit(ctx, {
       action: 'delete_user',
       targetUserId: user.id,

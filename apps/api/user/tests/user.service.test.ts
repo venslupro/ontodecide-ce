@@ -312,12 +312,17 @@ describe('UserManagementService.resetPassword', () => {
 });
 
 describe('UserManagementService.deleteUser', () => {
-  it('soft-deletes a user and revokes tokens', async () => {
+  it('marks user inactive and revokes tokens (real deletion done by Cleanup worker)', async () => {
     const {service, users, refresh} = makeService();
     const {user} = await service.createUser({username: 'bob'}, auditCtx);
     await service.issueRefreshToken(user);
     await service.deleteUser(user.id, auditCtx);
-    expect(await users.findById(user.id)).toBeNull();
+    // User service no longer drops the D1 row — that's the Cleanup
+    // worker's job after archival to the B2 tenant-archive bucket.
+    // Instead it marks the user inactive so they can't log in.
+    const updated = await users.findById(user.id);
+    expect(updated).not.toBeNull();
+    expect(updated!.snapshot().isActive).toBe(false);
     for (const t of refresh.tokens.values()) {
       expect(t.revoked).toBe(true);
     }

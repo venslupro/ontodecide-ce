@@ -8,8 +8,14 @@ export interface CleanupEnv extends BaseEnv {
   CLEANUP_QUEUE: Queue<CleanupMessage>;
   /** D1 database (shared with User + AI services). */
   DB: D1Database;
-  /** R2 bucket for archive copies. */
-  BUCKET: R2Bucket;
+  /** Backblaze B2 S3-compatible credentials + dual buckets. */
+  B2_KEY_ID: string;
+  B2_KEY: string;
+  B2_REGION: string;
+  /** Ingestion staging bucket — purged on user expiry. */
+  B2_INGESTION_BUCKET: string;
+  /** Tenant archive bucket — user metadata archived here before deletion. */
+  B2_ARCHIVE_BUCKET: string;
   /** KV namespace for User Service caches (to purge). */
   USER_CACHE: KVNamespace;
   /** KV namespace for Graph Service caches (to purge). */
@@ -34,6 +40,12 @@ export interface CleanupMessage {
   tenantId: string;
   mode: 'soft' | 'hard';
   triggeredBy: 'cron' | 'admin';
+  /**
+   * When true (hard mode triggered by user-expiry / admin deletion),
+   * the consumer also deletes the user account from D1 after archiving
+   * their metadata to the tenant-archive B2 bucket.
+   */
+  deleteAccount?: boolean;
 }
 
 /** Job-status record stored in KV under `cleanup:task:<taskId>`. */

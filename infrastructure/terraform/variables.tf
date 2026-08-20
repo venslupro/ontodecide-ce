@@ -15,8 +15,10 @@
 #   Neo4j password                TF_VAR_neo4j_password   (env var)
 #   Workers.dev subdomain prefix  TF_VAR_cloudflare_account_id_or_workers_dev
 #                                 (env var or GitHub Secret)
-#   R2 backend access_key         Passed via `-backend-config`
-#   R2 backend secret_key         Passed via `-backend-config`
+#   R2 backend access_key         Passed via AWS_ACCESS_KEY_ID env
+#   R2 backend secret_key         Passed via AWS_SECRET_ACCESS_KEY env
+#   B2 application key ID         TF_VAR_b2_application_key_id (env)
+#   B2 application key            TF_VAR_b2_application_key (env)
 #
 # Note: TF_VAR_* environment variables are the OFFICIAL Terraform
 # mechanism for providing input-variable values outside of tfvars.

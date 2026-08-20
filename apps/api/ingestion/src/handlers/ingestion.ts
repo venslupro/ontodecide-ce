@@ -17,6 +17,7 @@ import {
   type IngestJobEnqueued,
   type IngestPayload,
   type IngestSyncResult,
+  createIngestionB2Client,
   fail,
   jobId as newJobId,
   ok,
@@ -70,7 +71,8 @@ export async function fileIngestHandler(c: Context) {
   const uploadedFile = file as unknown as File;
   const id = newJobId();
   const objectKey = `${tenantId}/staging/${id}/${uploadedFile.name}`;
-  await env.BUCKET.put(objectKey, await uploadedFile.arrayBuffer(), {
+  const b2 = createIngestionB2Client(env);
+  await b2.put(objectKey, await uploadedFile.arrayBuffer(), {
     customMetadata: {
       tenantId,
       ontologyType,

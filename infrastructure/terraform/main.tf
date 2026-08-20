@@ -1,140 +1,136 @@
 # ============================================================
-# Terraform Backend — Cloudflare R2 (remote)
+# Terraform Backend — Backblaze B2 (remote)
 #
-# Reference:
-#   Cloudflare Terraform docs → Advanced topics → Remote R2 backend
-#   https://developers.cloudflare.com/terraform/advanced-topics/remote-backend/
+# Rationale:
+#   • The project uses Backblaze B2 for ALL object storage:
+#       - ontodecide-ingestion-staging  (transient ETL landing)
+#       - ontodecide-tenant-archive     (compliance backups)
+#   • The Terraform remote state store follows the same
+#     provider for simplicity — one object-storage vendor,
+#     one set of credentials, zero cross-vendor lock-in.
+#   • Cloudflare R2 is no longer used anywhere in the project
+#     (was replaced in the "Replace R2 with B2" change set).
 #
-# Cloudflare R2 is the OFFICIAL recommended remote state backend for
-# Cloudflare Terraform deployments. It provides:
-#   • S3-compatible API (works with Terraform's built-in "s3" backend)
-#   • Zero egress fees
-#   • Built-in redundancy (data spread across Cloudflare's global network)
+# Why backend "s3" when the state lives in Backblaze B2?
+#   Backblaze B2 exposes a fully S3-compatible HTTPS API, and
+#   Terraform has no native "backblaze-b2" backend. Declaring
+#   backend "s3" simply selects the S3 WIRE PROTOCOL — every
+#   network call is redirected to B2's endpoint via
+#   endpoints.s3.  This is the official pattern recommended
+#   by Backblaze for Terraform:
+#     https://www.backblaze.com/docs/cloud-storage-integrate-b2-with-terraform
+#
+# Why credentials are named AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY:
+#   The backend "s3" implementation ships with a BUNDLED
+#   HashiCorp AWS SDK whose credential provider chain is
+#   HARD-CODED to look for the AWS_-prefixed env vars as its
+#   #1 credential source. Those are the ONLY env vars the
+#   bundled SDK accepts. The actual secrets you paste here are
+#   100% Backblaze — B2 Application Key (keyID) +
+#   applicationKey. We never touch AWS.
 #
 # FIRST-TIME SETUP (do this ONCE before the first `terraform init`):
-#   1. Create the R2 bucket:
-#        wrangler r2 bucket create ontodecide-terraform-state
-#      Or via the Cloudflare dashboard: R2 → Create bucket
-#      Bucket names MUST be lowercase alphanumeric + hyphen only.
+#   1. Create a B2 bucket for Terraform state:
+#        Dashboard → Buckets → Create a new Bucket
+#        Name:      ontodecide-terraform-state
+#        Encrypt:   Yes (default)
+#        Lifecycle: None (keep forever)
+#      B2 bucket names are globally unique; lowercase
+#      alphanumeric + hyphen only, 3-63 chars.
 #
-#   2. Create a bucket-scoped R2 API token:
-#      Dashboard → R2 → "Manage R2 API tokens" → Create API token
-#        • Permissions: Object Read & Write
-#        • Scope:      Only this bucket (ontodecide-terraform-state)
-#      Record: Access Key ID  and  Secret Access Key
+#   2. Create a bucket-scoped B2 Application Key:
+#      Dashboard → App Keys → Add Application Key
+#        • Name:         ontodecide-tf-state
+#        • Capabilities: Read and Write (not Master!)
+#        • Bucket:       ontodecide-terraform-state ONLY
+#      Record: keyID (→ AWS_ACCESS_KEY_ID)
+#              applicationKey (→ AWS_SECRET_ACCESS_KEY)
 #
-#   3. Initialize Terraform with backend credentials:
+#   3. Note your B2 region code from the bucket details screen,
+#      e.g. us-west-004, eu-central-003.
 #
-#      # --- OFFICIAL RECOMMENDED PATTERN per Cloudflare R2 docs ---
-#      export AWS_ACCESS_KEY_ID="<YOUR_R2_ACCESS_KEY_ID>"
-#      export AWS_SECRET_ACCESS_KEY="<YOUR_R2_SECRET_ACCESS_KEY>"
-#      export AWS_DEFAULT_REGION="auto"
-#      export CF_ACCOUNT_ID="<YOUR_CLOUDFLARE_ACCOUNT_ID>"
+#   4. Initialize Terraform with backend credentials:
 #
-#      # ------------------------------------------------------------------
+#      # --- Standard env vars consumed by the bundled AWS SDK ---
+#      export AWS_ACCESS_KEY_ID="<B2_KEY_ID>"
+#      export AWS_SECRET_ACCESS_KEY="<B2_APPLICATION_KEY>"
+#      export AWS_DEFAULT_REGION="<B2_REGION>"
+#      export AWS_EC2_METADATA_DISABLED=true
+#
+#      # --- B2 S3 endpoint (derived from region) ---
+#      B2_ENDPOINT="https://s3.${AWS_DEFAULT_REGION}.backblazeb2.com"
+#
 #      # CANONICAL FORM: -backend-config=FILE (not KEY=VALUE!)
-#      # ------------------------------------------------------------------
-#      # Terraform's `-backend-config KEY=VALUE` CLI form cannot reliably
-#      # pass nested HCL object attributes. Three different trapdoors hit
-#      # in CI before we settled on this pattern:
-#      #
-#      #   1. Dotted attribute "endpoints.s3=..." — Terraform treats the
-#      #      entire dotted string as a single UNKNOWN top-level attribute.
-#      #   2. Inline map without spaces around `=` inside VALUE — HCL map
-#      #      syntax requires spacing and the quoting survives transit.
-#      #   3. Inline map WITH spaces — Terraform's KEY=VALUE splitter uses
-#      #      the FIRST `=` as the delimiter, so "endpoints = {...}" reads
-#      #      back as KEY="endpoints " (literal trailing space!).
-#      #
-#      # The only stable form is the FILE-based form, where Terraform
-#      # applies its real HCL parser and "endpoints = { s3 = \"...\" }"
-#      # looks identical to a literal backend-block definition.
-#      # ------------------------------------------------------------------
-#
-#      R2_ENDPOINT="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
-#
-#      # Write the backend override file using a quoted heredoc so bash
-#      # does not mangle anything inside the block. Then substitute the
-#      # three runtime placeholders via plain sed (no regex metacharacters
-#      # are present in the placeholders, so literal s/// is safe).
+#      # Terraform's `-backend-config KEY=VALUE` CLI form cannot
+#      # reliably pass nested HCL object attributes. Use a FILE.
 #      cat > backend.tfvars <<'EOF'
 #      bucket     = "ontodecide-terraform-state"
 #      key        = "production/terraform.tfstate"
 #      endpoints = {
-#        s3 = "__R2_ENDPOINT__"
+#        s3 = "__B2_ENDPOINT__"
 #      }
 #      EOF
 #
-#      sed -i.bak -e "s|__R2_ENDPOINT__|${R2_ENDPOINT}|g" backend.tfvars \
+#      sed -i.bak -e "s|__B2_ENDPOINT__|${B2_ENDPOINT}|g" backend.tfvars \
 #        && rm -f backend.tfvars.bak
 #
 #      terraform init -backend-config=backend.tfvars
 #
-#      LOCAL TIP: Place AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
-#      AWS_DEFAULT_REGION / CLOUDFLARE_API_TOKEN in a `.env` file and
-#      source it before running the snippet above.
+#      LOCAL TIP: Place the 4 exported env vars in a `.env` file
+#      and source it before running the snippet above.
 #
-#      DO NOT use -backend-config="access_key=.../secret_key=..." —
-#      those backend attributes are lower-priority for the AWS SDK
-#      credential provider chain and frequently fall through to the
-#      EC2 IMDS lookup on non-AWS runners, producing:
-#        "No valid credential sources found ... no EC2 IMDS role found".
-#      Using AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY avoids this
-#      entirely and matches Cloudflare's official sample code.
+#   5. Migrating state from a previous backend (local / R2):
+#      Replace the old backend block with this block and run:
+#        terraform init -migrate-state -backend-config=backend.tfvars
+#      Terraform will prompt to copy the existing state file to
+#      the new B2 bucket automatically.
 #
-#   4. Migrating from local state: If you previously used backend "local",
-#      replace this block and run `terraform init -reconfigure` with the
-#      flags above — Terraform will prompt to upload the local state file
-#      to R2 automatically.
-#
-# SECURITY: Never hard-code access_key / secret_key in this file. Always
-# pass them via `-backend-config` on the command line.
+# SECURITY: Never hard-code access_key / secret_key in this
+# file. Always pass them via the AWS_ACCESS_KEY_ID /
+# AWS_SECRET_ACCESS_KEY environment variables.
 # ============================================================
 
 terraform {
   # ──────────────────────────────────────────────────────────────
-  # Why backend "s3" when the state lives in Cloudflare R2?
+  # Why backend "s3" when the state lives in Backblaze B2?
   #
-  #   ⚠️  THIS IS NOT AN AWS COMMITMENT — WE CREATE ZERO AWS RESOURCES.
+  #   ⚠️  THIS IS NOT AN AWS COMMITMENT — WE CREATE ZERO AWS
+  #      RESOURCES (no EC2, no S3, no IAM, nothing on AWS).
   #
   #   Terraform's supported remote-state backends are listed here:
   #     https://developer.hashicorp.com/terraform/language/v1.6.x/settings/backends
-  #   There is NO native "cloudflare-r2" backend in the list. The
-  #   correct way to use R2 as a Terraform state store is to exploit
-  #   its S3-COMPATIBLE API protocol. Declaring backend "s3" is just a
-  #   shorthand for "speak the S3 HTTPS wire format"; every actual
-  #   network call is redirected to Cloudflare's R2 endpoints via the
-  #   endpoints.s3 override (passed at init via -backend-config=FILE).
+  #   There is NO native "backblaze-b2" backend. The correct way
+  #   to use B2 as a Terraform state store is to exploit its
+  #   S3-COMPATIBLE API. Declaring backend "s3" is just a
+  #   shorthand for "speak the S3 HTTPS wire format"; every
+  #   actual network call is redirected to B2 via endpoints.s3.
   #
-  #   Why credentials are named AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY:
-  #     The S3 backend ships with a BUNDLED HashiCorp AWS SDK, and
-  #     that SDK's credential provider chain is HARD-CODED to look
-  #     for the AWS_-prefixed env vars as its #1 credential source.
-  #     This is the EXACT pattern Cloudflare documents for R2 with
-  #     S3-compatible clients:
-  #       developers.cloudflare.com/r2/api/s3/api-examples/
-  #       → "Use AWS_ACCESS_KEY_ID in combination with
-  #          AWS_SECRET_ACCESS_KEY for authentication with any
-  #          S3-compatible client."
-  #     The secrets you paste are still purely Cloudflare R2 tokens
-  #     (bucket-scoped Object Read & Write on ontodecide-terraform-state).
+  #   Why AWS_ env vars:
+  #     The S3 backend ships with a BUNDLED HashiCorp AWS SDK,
+  #     and that SDK's credential provider chain is HARD-CODED
+  #     to look for the AWS_-prefixed env vars as its #1
+  #     credential source. This is the EXACT pattern Backblaze
+  #     documents for Terraform + B2.
+  #     The secrets you paste are purely B2 Application Keys.
   # ──────────────────────────────────────────────────────────────
   backend "s3" {
     # ---- Partially configured — runtime overrides required ----
-    # bucket   → -backend-config=FILE (bucket = "...")
-    # key      → -backend-config=FILE (key    = "...")
-    # endpoints→ -backend-config=FILE (endpoints = { s3 = "https://..." })
+    # bucket     → -backend-config=FILE (bucket = "...")
+    # key        → -backend-config=FILE (key    = "...")
+    # endpoints  → -backend-config=FILE (endpoints = { s3 = "https://..." })
     # access_key / secret_key → read from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
     #                           environment variables ONLY (never hard-code).
 
-    # ---- R2 compatibility flags (DO NOT EDIT) ---------------------
-    # Cloudflare R2 implements the S3 OBJECT APIs but not the AWS
-    # control-plane APIs (STS:GetCallerIdentity, EC2 metadata, region
-    # validation, account id lookups, AWS-style checksums). Skip all
-    # of those preflight checks, otherwise each one fails against R2
-    # and init aborts. These are the exact flags required by the
-    # official Cloudflare R2 remote-backend documentation.
-    region                      = "auto"
+    # ---- B2 compatibility flags ---------------------------------
+    # B2 implements the S3 OBJECT APIs but not the AWS
+    # control-plane APIs (STS:GetCallerIdentity, EC2 metadata,
+    # region validation, account id lookups, AWS checksums).
+    # Skip all of those preflight checks, otherwise each one
+    # fails against B2 and init aborts. These are the exact
+    # flags required by the Backblaze Terraform integration
+    # guide, plus skip_s3_checksum = true required because B2
+    # does not implement AWS SigV4 checksum headers v2.
+    region                      = "us-west-004"   # overridden at runtime via env
     skip_credentials_validation = true
     skip_metadata_api_check     = true
     skip_region_validation      = true
@@ -149,6 +145,10 @@ terraform {
     cloudflare = {
       source  = "cloudflare/cloudflare"
       version = "~> 4.30"
+    }
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
     }
   }
 }
@@ -169,7 +169,6 @@ terraform {
 #     the target account:
 #       • Account.Account Settings:Read
 #       • D1:Edit
-#       • Workers R2 Storage:Edit
 #       • Workers KV Storage:Edit
 #       • Workers Queues:Edit
 #       • Workers Scripts:Edit

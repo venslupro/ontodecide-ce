@@ -1,27 +1,40 @@
 # ============================================================
 # Terraform Deploy Workflow
 #
-# Follows Cloudflare's OFFICIAL Terraform best practices:
+# Backblaze B2 has replaced Cloudflare R2 for ALL object storage
+# in this project: business-data buckets (ingestion-staging +
+# tenant-archive) AND the Terraform remote-state bucket all live
+# in B2 now.
+#
+# Follows Backblaze + Cloudflare official Terraform best practices:
 #
 #   1. Provider auth  →  CLOUDFLARE_API_TOKEN env var
 #                        (never written to config / tfvars)
-#   2. State backend  →  Cloudflare R2 (remote S3-compatible)
-#                        credentials via `-backend-config` args
+#   2. State backend  →  Backblaze B2 (remote S3-compatible)
+#                        credentials via AWS_ACCESS_KEY_ID /
+#                        AWS_SECRET_ACCESS_KEY env vars
+#                        (the bundled HashiCorp AWS SDK inside
+#                        Terraform's backend "s3" hard-codes
+#                        those variable names)
 #   3. Input vars     →  TF_VAR_* env variables (standard
 #                        Terraform mechanism; no auto.tfvars file)
-#   4. Environments   →  separate accounts + separate R2 state
+#   4. Environments   →  separate accounts + separate B2 state
 #                        bucket keys per env
 #   5. Secrets        →  all from GitHub Secrets / a secret store
 #                        such as Vault, per Cloudflare guidance
 #
-# Two-stage pipeline (see bottom of this header for the approval
-# flow):
-#   Stage 1 "plan"  — automatic on push to main. Produces a plan
-#                     artifact and a human-readable diff summary.
+# Two-stage pipeline:
+#   Stage 1 "plan"  — automatic on every branch. Produces a
+#                     plan artifact + human-readable diff.
+#                     On PRs / forks WITHOUT the full secret
+#                     set, the Plan is gracefully SKIPPED
+#                     (informs the reviewer but does not fail
+#                     the check; Build/Lint/Test CI still runs).
 #   Stage 2 "apply" — requires manual approval via the
 #                     "production" GitHub Environment. Never runs
 #                     unless someone explicitly clicks
 #                     "Approve and deploy" in the Actions UI.
+#                     Restricted to `main` branch only.
 #
 # To run Stage 2 after a successful Stage 1:
 #   1. Open the completed workflow run in GitHub → Actions.
@@ -34,27 +47,20 @@ name: Terraform Deploy
 
 on:
   # ------------------------------------------------------------------
-  # NEW RULE per latest requirement:
   #   • terraform PLAN  → may run on EVERY branch (for PR authors to
   #                        preview resource changes before merging).
   #   • terraform APPLY → still restricted to the main branch ONLY
   #                      (the job-level gate enforces that separately).
   # ------------------------------------------------------------------
   push:
-    # Every branch (feature / hotfix / main) → auto run Plan so PRs
-    # can show what infrastructure impact the code has.
     branches:
       - '**'
     tags-ignore:
       - '**'
   workflow_dispatch:
-    # Manual trigger open to every branch so contributors can rerun
-    # Plan from any feature branch. Apply will still be gated to main
-    # by its own job-level `if` assertion, so no credentials or
-    # production state are ever modified from a non-main ref.
     inputs:
       environment:
-        description: "Target environment name (sets the R2 state key prefix)."
+        description: "Target environment name (sets the B2 state key prefix)."
         required: true
         default: "production"
         type: choice
@@ -70,8 +76,9 @@ env:
   # ---- Shared configuration ----
   TF_VERSION: "1.6.6"
   TF_WORKING_DIR: "infrastructure/terraform"
-  # Match the bucket name created with:
-  #   wrangler r2 bucket create ontodecide-terraform-state
+  # B2 bucket created manually (first-time setup in main.tf docs):
+  #   B2 Dashboard → Buckets → ontodecide-terraform-state
+  # B2 bucket names are GLOBALLY unique (not account-scoped).
   TF_STATE_BUCKET: "ontodecide-terraform-state"
 
 # ============================================================
@@ -84,7 +91,6 @@ env:
 #       Cloudflare API token with these permissions:
 #         Account.Account Settings:Read
 #         D1:Edit
-#         Workers R2 Storage:Edit
 #         Workers KV Storage:Edit
 #         Workers Queues:Edit
 #         Workers Scripts:Edit
@@ -103,12 +109,25 @@ env:
 #   TF_VAR_cloudflare_account_id_or_workers_dev
 #       Workers.dev subdomain prefix, e.g. "myteam-a1b2".
 #
-#   TF_R2_ACCESS_KEY
-#       R2 Object Read & Write access key id (bucket-scoped to
-#       $TF_STATE_BUCKET). Used for the Terraform state backend.
+#   TF_B2_STATE_KEY_ID
+#       B2 Application Key keyID used for the Terraform state
+#       backend ONLY. Bucket-scoped (Read & Write) on
+#       ontodecide-terraform-state. Created in B2 Dashboard
+#       → App Keys → Add Application Key. This value maps to
+#       AWS_ACCESS_KEY_ID env var for Terraform's bundled SDK.
 #
-#   TF_R2_SECRET_KEY
-#       Matching R2 secret access key.
+#   TF_B2_STATE_APPLICATION_KEY
+#       Matching B2 applicationKey for state backend. Maps to
+#       AWS_SECRET_ACCESS_KEY env var.
+#
+#   TF_VAR_b2_application_key_id
+#       B2 Application Key keyID for business-data buckets
+#       (ingestion-staging + tenant-archive). Can be a single
+#       key with Read & Write on both buckets, or a key scoped
+#       per bucket. Created in B2 Dashboard → App Keys.
+#
+#   TF_VAR_b2_application_key
+#       Matching B2 applicationKey for business-data buckets.
 #
 # VARIABLES (Settings → Secrets and variables → Actions → Variables):
 # ─────────────────────────────────────────────────────────────
@@ -117,7 +136,13 @@ env:
 #
 #   TF_VAR_cloudflare_account_id
 #       (Optional — override via Variable if you don't want to
-#       create a second secret for it.)
+#        create a second secret for it.)
+#
+#   TF_VAR_b2_region
+#       Backblaze B2 region code, e.g. "us-west-004".
+#       Find it in B2 dashboard → Buckets → bucket details.
+#       Used for BOTH the provider configuration AND the
+#       backend endpoint (s3.<region>.backblazeb2.com).
 #
 #   TF_VAR_default_provider   (optional)
 #   TF_VAR_workers_ai_model   (optional)
@@ -132,22 +157,22 @@ env:
 jobs:
   # ================================================================
   # Stage 1 — Plan (automatic, no approval)
+  #
+  # Graceful-skip behaviour:
+  #   If any credential required to reach the remote state is
+  #   missing (typical on first-time contributor forks / PR
+  #   branches without secrets), we produce an informative
+  #   GITHUB_STEP_SUMMARY note, upload an empty plan stub, set
+  #   changed=false, and exit 0 — so the PR check does not
+  #   fail. The Build/Lint/Test CI still gives full validation.
   # ================================================================
   plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
-    # --------------------------------------------------------------
-    # Plan may run on ANY branch. This lets contributors preview
-    # infrastructure diffs during code review (a plan produces a
-    # read-only view of the R2 state file, so there is no safety
-    # concern in allowing it from feature branches).
-    #
-    # The previous "github.ref == refs/heads/main" gate was removed
-    # on purpose to satisfy the new requirement.
-    # --------------------------------------------------------------
     outputs:
       plan-artifact: tfplan-${{ github.sha }}
       changed: ${{ steps.plan-summary.outputs.changed }}
+      skipped: ${{ steps.creds-check.outputs.skipped }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -159,148 +184,124 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
-      # ---- Terraform init with R2 remote backend ----
+      # ---- Credential preflight + graceful skip gate ----
+      - name: Check state-backend credentials (skip Plan if missing)
+        id: creds-check
+        env:
+          TF_B2_STATE_KEY_ID:          ${{ secrets.TF_B2_STATE_KEY_ID }}
+          TF_B2_STATE_APPLICATION_KEY: ${{ secrets.TF_B2_STATE_APPLICATION_KEY }}
+          TF_VAR_b2_region:            ${{ vars.TF_VAR_b2_region }}
+        run: |
+          set +e
+          missing=()
+          [ -z "${TF_B2_STATE_KEY_ID}" ]          && missing+=("TF_B2_STATE_KEY_ID (B2 Application Key keyID for ontodecide-terraform-state bucket)")
+          [ -z "${TF_B2_STATE_APPLICATION_KEY}" ] && missing+=("TF_B2_STATE_APPLICATION_KEY (matching B2 applicationKey)")
+          [ -z "${TF_VAR_b2_region}" ]            && missing+=("TF_VAR_b2_region Variable (B2 region code, e.g. us-west-004)")
+          set -e
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::notice::Terraform state-backend credentials missing. Skipping Plan gracefully for this run. Missing: $(IFS=, ; echo "${missing[*]}")"
+            {
+              echo "### Terraform Plan — Skipped (credentials not available)"
+              echo ""
+              echo "This branch / fork does not have the GitHub Secrets required"
+              echo "to connect to the Backblaze B2 Terraform state bucket."
+              echo ""
+              echo "Missing secret / variable:"
+              for m in "${missing[@]}"; do
+                echo "- \`${m}\`"
+              done
+              echo ""
+              echo "**What this means:**"
+              echo "- No infrastructure diff can be previewed from this run."
+              echo "- The Build/Lint/Test CI job still provides full code-quality"
+              echo "  validation for this PR."
+              echo "- After merging to \`main\`, the Plan + Apply jobs will run"
+              echo "  with the production credentials configured on the repo."
+              echo ""
+              echo "**To configure (repo owner only):** follow the detailed"
+              echo "instructions in the header of \`.github/workflows/terraform-deploy.yml\`"
+              echo "or in \`infrastructure/terraform/main.tf\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---- Terraform init with B2 remote backend ----
       #
-      # The backend "s3" block in main.tf is left intentionally
-      # partial — we inject the real R2 credentials HERE via the
-      # STANDARD AWS SDK environment variables AWS_ACCESS_KEY_ID /
-      # AWS_SECRET_ACCESS_KEY. This is the OFFICIAL recommended
-      # mechanism per Cloudflare R2 docs and places the credentials
-      # at the very TOP of the AWS credential provider chain (so
-      # the SDK never falls through to EC2 IMDS / metadata lookups,
-      # which is what caused the previous "no valid credential
-      # sources" error).
+      # The backend "s3" block in main.tf is intentionally
+      # partial — we inject the real B2 credentials HERE via
+      # the STANDARD AWS SDK environment variables. This is the
+      # OFFICIAL recommended mechanism per Backblaze's
+      # Terraform integration guide, and places the credentials
+      # at the very TOP of the AWS credential provider chain.
       #
-      # Non-secret backend options (bucket, key, endpoints.s3) are
-      # still passed via `-backend-config` CLI flags. We use the
-      # dotted-attribute form `-backend-config endpoints.s3=URL`
-      # instead of an HCL map literal `endpoints={s3="..."}` because
-      # bash quoting of the map literal is unreliable in CI.
-      - name: Terraform Init (R2 backend)
+      # AWS_EC2_METADATA_DISABLED=true tells the bundled AWS SDK
+      # to NOT fall through to EC2 IMDS lookups on GitHub
+      # Actions runners (which are not on AWS — IMDS always
+      # fails and used to mask the REAL error when credentials
+      # were missing).
+      #
+      # Non-secret backend options (bucket, key, endpoints.s3)
+      # are passed via `-backend-config=FILE` form, because the
+      # dotted CLI form cannot handle nested HCL object attrs.
+      - name: Terraform Init (B2 backend)
+        if: steps.creds-check.outputs.skipped == 'false'
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           # ──────────────────────────────────────────────────────
           # [1] Cloudflare Terraform provider — official env vars
-          #     Authenticates cloudflare_workers_script /
-          #     cloudflare_workers_d1 / cloudflare_r2_bucket etc.
-          #     These credentials are Cloudflare-only (no AWS).
           # ──────────────────────────────────────────────────────
           CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
           # ──────────────────────────────────────────────────────
-          # [2] R2 remote STATE backend — credentials are passed
-          #     via the STANDARD AWS SDK credential env vars below.
+          # [2] B2 remote STATE backend auth — uses AWS SDK env
+          #     vars because Terraform's backend "s3" ships with a
+          #     BUNDLED HashiCorp AWS SDK that only accepts those
+          #     env var names.
           #
-          #     ⚠️  IMPORTANT — THIS IS NOT AN AWS INTEGRATION.
+          #     ⚠️  NOT AN AWS COMMITMENT — ZERO AWS RESOURCES.
           #     ─────────────────────────────────────────────────
-          #     We create ZERO AWS resources (no EC2, no S3, no
-          #     IAM, no Route53, nothing on AWS side whatsoever).
-          #
-          #     The naming convention "AWS_ACCESS_KEY_ID" /
-          #     "AWS_SECRET_ACCESS_KEY" is DICTATED by Terraform's
-          #     built-in backend "s3". That backend ships with a
-          #     bundled HashiCorp AWS SDK, and the SDK's credential
-          #     provider chain is hard-coded to look for those
-          #     AWS_-prefixed environment variables as its TOP
-          #     credential source.
-          #
-          #     Cloudflare R2 implements the S3 COMPATIBLE API
-          #     protocol (the same protocol MinIO, Backblaze B2,
-          #     DigitalOcean Spaces, etc. all expose so that any
-          #     S3-aware SDK can consume them). The "s3" backend
-          #     in main.tf is not a commitment to AWS; it simply
-          #     means "use S3 wire protocol over HTTPS". We then
-          #     redirect the SDK to talk to R2 via endpoints.s3
-          #     pointing at *.r2.cloudflarestorage.com.
-          #
-          #     The SECRETS you paste here are:
-          #       AWS_ACCESS_KEY_ID     ← secrets.TF_R2_ACCESS_KEY
-          #         = Cloudflare R2 → Manage R2 API Tokens →
-          #           bucket-scoped (ontodecide-terraform-state)
-          #           Object Read & Write ACCESS KEY ID.
-          #       AWS_SECRET_ACCESS_KEY ← secrets.TF_R2_SECRET_KEY
-          #         = the matching SECRET ACCESS KEY from the
-          #           same R2 API token creation screen.
-          #
-          #     Official Cloudflare reference:
-          #       developers.cloudflare.com/r2/api/s3/api-examples/
-          #       → "Use AWS_ACCESS_KEY_ID in combination with
-          #          AWS_SECRET_ACCESS_KEY for authentication with
-          #          any S3-compatible client."
+          #     The AWS_-prefixed naming is imposed by Terraform.
+          #     The actual secret values are:
+          #       AWS_ACCESS_KEY_ID     ← B2 App Key keyID
+          #                              (ontodecide-terraform-state)
+          #       AWS_SECRET_ACCESS_KEY ← B2 App Key secret
+          #     AWS_DEFAULT_REGION       ← B2 region, e.g. us-west-004
           # ──────────────────────────────────────────────────────
-          AWS_ACCESS_KEY_ID:     ${{ secrets.TF_R2_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_R2_SECRET_KEY }}
-          AWS_DEFAULT_REGION:    auto
+          AWS_ACCESS_KEY_ID:            ${{ secrets.TF_B2_STATE_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY:        ${{ secrets.TF_B2_STATE_APPLICATION_KEY }}
+          AWS_DEFAULT_REGION:           ${{ vars.TF_VAR_b2_region }}
+          AWS_EC2_METADATA_DISABLED:    true
 
           # Non-secret init inputs (shell variables used in run block)
-          R2_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ENV:            ${{ github.event.inputs.environment || 'production' }}
+          B2_REGION:  ${{ vars.TF_VAR_b2_region }}
+          ENV:        ${{ github.event.inputs.environment || 'production' }}
         run: |
           STATE_KEY="${ENV}/terraform.tfstate"
-          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          B2_ENDPOINT="https://s3.${B2_REGION}.backblazeb2.com"
 
-          # =================================================================
-          # ROOT-CAUSE LESSON LEARNED (4 init-failures in a row on R2 backend)
-          # =================================================================
-          # The -backend-config=KEY=VALUE CLI form CANNOT convey nested HCL
-          # object attributes correctly. Every attempt failed for a
-          # different, compounding reason:
-          #
-          #  • Dotted form  "endpoints.s3=URL"
-          #       → Terraform treats the dotted string as an UNKNOWN top-level
-          #         attribute. Rejected: "Invalid backend configuration argument
-          #         endpoints.s3 ... is not expected".
-          #
-          #  • Inline map   "endpoints={s3=\"URL\"}"
-          #       → Bash/runner YAML quoting hell; inner URL colons + slashes
-          #         combined with backslash escapes frequently result in a
-          #         malformed literal.
-          #
-          #  • Inline map + spaces   "endpoints = { s3 = \"URL\" }"
-          #       → The KEY=VALUE splitter in Terraform's CLI parses the FIRST
-          #         unescaped `=` as the separator. Because HCL legitimately
-          #         puts spaces around `=`, Terraform reads the KEY literally
-          #         as "endpoints " (with a TRAILING SPACE!) which does not
-          #         match any known attribute either.
-          #
-          # CANONICAL FIX: use -backend-config=PATH (the FILE-based form)
-          #   • Terraform parses the file as HCL using its REAL HCL parser.
-          #   • "endpoints = { s3 = \"...\" }" with proper spacing & quoting
-          #     is accepted exactly the same way as if it were written in
-          #     the backend block in main.tf.
-          #   • There are zero bash / YAML escaping concerns because the
-          #     literal is written via a quoted heredoc (cat > FILE <<'EOF')
-          #     whose delimiter is single-quoted — NOTHING inside is expanded
-          #     by bash except the explicit ${VAR} interpolations we control.
-          # =================================================================
-
+          # FILE-based backend config (not KEY=VALUE — see main.tf
+          # docs for the reasoning: nested HCL objects cannot be
+          # reliably passed via CLI flags).
           BACKEND_CFG_FILE="backend-config-overrides.tfvars"
 
-          # Single-quoted heredoc delimiter ('EOF') = bash performs NO
-          # variable interpolation inside the block. Every non-interpolated
-          # HCL token (endpoints, s3, braces, equals, quotes) comes through
-          # verbatim. Only the R2_ENDPOINT bash expansion below breaks out.
           cat > "${BACKEND_CFG_FILE}" <<'EOF'
           bucket     = "__TF_STATE_BUCKET__"
           key        = "__STATE_KEY__"
           endpoints = {
-            s3 = "__R2_ENDPOINT__"
+            s3 = "__B2_ENDPOINT__"
           }
           EOF
 
-          # Now substitute the three placeholders. Using envsubst-free sed
-          # here because the placeholder strings contain NO special regex
-          # characters — plain literal find/replace guarantees correctness.
           sed -i \
             -e "s|__TF_STATE_BUCKET__|${TF_STATE_BUCKET}|g" \
             -e "s|__STATE_KEY__|${STATE_KEY}|g" \
-            -e "s|__R2_ENDPOINT__|${R2_ENDPOINT}|g" \
+            -e "s|__B2_ENDPOINT__|${B2_ENDPOINT}|g" \
             "${BACKEND_CFG_FILE}"
 
-          # Diagnostic echo for the runner log — lets maintainers verify
-          # the literal HCL before Terraform consumes it (no secrets here,
-          # only the bucket name, state path, and public R2 endpoint URL).
           echo "--- backend-config-overrides.tfvars ---"
           cat "${BACKEND_CFG_FILE}"
           echo "---------------------------------------"
@@ -309,22 +310,18 @@ jobs:
             -input=false \
             -backend-config="${BACKEND_CFG_FILE}"
 
-      # ---- Terraform validate ----
+      # ---- Terraform validate (only if init ran) ----
       - name: Terraform Validate
+        if: steps.creds-check.outputs.skipped == 'false'
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: terraform validate
 
       # ---- Terraform plan ----
-      #
-      # Input variables are passed via the standard Terraform
-      # TF_VAR_<name> environment variables — no tfvars file is
-      # written to disk during CI. Secrets come from GitHub
-      # Secrets; non-sensitive defaults come from GitHub
-      # Variables.
       - name: Terraform Plan
         id: plan
+        if: steps.creds-check.outputs.skipped == 'false'
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           # Provider auth
@@ -334,9 +331,13 @@ jobs:
           TF_VAR_jwt_secret: ${{ secrets.TF_VAR_jwt_secret }}
           TF_VAR_neo4j_password: ${{ secrets.TF_VAR_neo4j_password }}
           TF_VAR_cloudflare_account_id_or_workers_dev: ${{ secrets.TF_VAR_cloudflare_account_id_or_workers_dev }}
+          # Backblaze B2 credentials (S3-compatible) for business buckets
+          TF_VAR_b2_application_key_id: ${{ secrets.TF_VAR_b2_application_key_id }}
+          TF_VAR_b2_application_key: ${{ secrets.TF_VAR_b2_application_key }}
           # Input variables — non-sensitive
           TF_VAR_neo4j_url: ${{ vars.TF_VAR_neo4j_url }}
           TF_VAR_cloudflare_account_id: ${{ vars.TF_VAR_cloudflare_account_id }}
+          TF_VAR_b2_region: ${{ vars.TF_VAR_b2_region }}
           TF_VAR_default_provider: ${{ vars.TF_VAR_default_provider }}
           TF_VAR_workers_ai_model: ${{ vars.TF_VAR_workers_ai_model }}
           ENV_TAG: ${{ github.event.inputs.environment || 'production' }}
@@ -347,7 +348,7 @@ jobs:
             -var="environment=${ENV_TAG}"
           terraform show -json tfplan.binary > tfplan.json
 
-      # ---- Upload plan artifact for apply stage ----
+      # ---- Upload plan artifact for apply stage (or a stub if skipped) ----
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
         with:
@@ -355,6 +356,7 @@ jobs:
           path: |
             ${{ env.TF_WORKING_DIR }}/tfplan.binary
             ${{ env.TF_WORKING_DIR }}/tfplan.json
+          if-no-files-found: ignore
           retention-days: 7
 
       # ---- Human-readable change summary ----
@@ -362,6 +364,10 @@ jobs:
         id: plan-summary
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
+          if [ "${{ steps.creds-check.outputs.skipped }}" = "true" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           ADDS=$(jq '[.resource_changes[]?.change.actions[] | select(. == "create")] | length' tfplan.json)
           UPDATES=$(jq '[.resource_changes[]?.change.actions[] | select(. == "update")] | length' tfplan.json)
           DESTROYS=$(jq '[.resource_changes[]?.change.actions[] | select(. == "delete")] | length' tfplan.json)
@@ -385,40 +391,22 @@ jobs:
           fi
 
   # ================================================================
-  # Stage 2 — Apply (requires manual approval via GitHub Environment)
-  #
-  # This job pauses indefinitely until a reviewer with the
-  # "production" environment reviewer role approves the deployment
-  # from the Actions UI. It will never execute on its own.
+  # Stage 2 — Apply (requires manual approval + main branch)
   # ================================================================
   apply:
     name: Terraform Apply  ✅ Manual approval required
     needs: plan
-    # EXPLICIT ordering + gating — three independent conditions must be
-    # true before Apply runs:
-    #   1. We are running on the `main` branch (job-level double-gate).
-    #   2. The `plan` job completed with status `success` — not skipped,
-    #      cancelled, or failed. The default `success()` function would
-    #      technically cover this too, but spelling it out as
-    #      `needs.plan.result == 'success'` is explicit and auditable.
-    #   3. (Implicit from the `environment:` block below) at least one
-    #      authorized reviewer has explicitly approved this exact run
-    #      from the Environment approval UI — it NEVER auto-triggers.
-    if: github.ref == 'refs/heads/main' && needs.plan.result == 'success'
+    # Apply is ONLY ever run from `main`, and ONLY after a
+    # human explicitly approves the production Environment.
+    # If Plan was gracefully skipped (no credentials), we
+    # never reach this branch (needs.plan.result would still
+    # be success, but the artifact will be empty — the verify
+    # step below catches that).
+    if: github.ref == 'refs/heads/main' && needs.plan.result == 'success' && needs.plan.outputs.skipped != 'true'
     runs-on: ubuntu-latest
-    # ---- Gating mechanism ------------------------------------------------
-    # By attaching this job to the `production` GitHub Environment,
-    # we tell GitHub: "do not start this job until at least one
-    # authorized reviewer explicitly approves it."
-    #
-    # To enable the approval gate, go to:
-    #   Settings → Environments → New environment → "production"
-    # and check "Required reviewers", adding the relevant users
-    # or teams.
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
       url: https://dash.cloudflare.com/
-    # ----------------------------------------------------------------------
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -429,88 +417,40 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
-      # Reconnect to the R2 backend before we can use the saved plan.
-      # Same credential/env mechanism as the "plan" job's init step:
-      #   • credentials via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-      #     (standard SDK env vars — top of provider chain)
-      #   • non-secret options via dotted -backend-config flags
-      - name: Terraform Init (R2 backend)
+      # Reconnect to the B2 backend before we can use the saved plan.
+      - name: Terraform Init (B2 backend)
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # R2 backend auth via standard AWS SDK env vars
-          AWS_ACCESS_KEY_ID:     ${{ secrets.TF_R2_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_R2_SECRET_KEY }}
-          AWS_DEFAULT_REGION:    auto
+          # B2 state backend auth via standard AWS SDK env vars
+          AWS_ACCESS_KEY_ID:            ${{ secrets.TF_B2_STATE_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY:        ${{ secrets.TF_B2_STATE_APPLICATION_KEY }}
+          AWS_DEFAULT_REGION:           ${{ vars.TF_VAR_b2_region }}
+          AWS_EC2_METADATA_DISABLED:    true
           # Non-secret init inputs
-          R2_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ENV:            ${{ github.event.inputs.environment || 'production' }}
+          B2_REGION:  ${{ vars.TF_VAR_b2_region }}
+          ENV:        ${{ github.event.inputs.environment || 'production' }}
         run: |
           STATE_KEY="${ENV}/terraform.tfstate"
-          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-
-          # =================================================================
-          # ROOT-CAUSE LESSON LEARNED (4 init-failures in a row on R2 backend)
-          # =================================================================
-          # The -backend-config=KEY=VALUE CLI form CANNOT convey nested HCL
-          # object attributes correctly. Every attempt failed for a
-          # different, compounding reason:
-          #
-          #  • Dotted form  "endpoints.s3=URL"
-          #       → Terraform treats the dotted string as an UNKNOWN top-level
-          #         attribute. Rejected: "Invalid backend configuration argument
-          #         endpoints.s3 ... is not expected".
-          #
-          #  • Inline map   "endpoints={s3=\"URL\"}"
-          #       → Bash/runner YAML quoting hell; inner URL colons + slashes
-          #         combined with backslash escapes frequently result in a
-          #         malformed literal.
-          #
-          #  • Inline map + spaces   "endpoints = { s3 = \"URL\" }"
-          #       → The KEY=VALUE splitter in Terraform's CLI parses the FIRST
-          #         unescaped `=` as the separator. Because HCL legitimately
-          #         puts spaces around `=`, Terraform reads the KEY literally
-          #         as "endpoints " (with a TRAILING SPACE!) which does not
-          #         match any known attribute either.
-          #
-          # CANONICAL FIX: use -backend-config=PATH (the FILE-based form)
-          #   • Terraform parses the file as HCL using its REAL HCL parser.
-          #   • "endpoints = { s3 = \"...\" }" with proper spacing & quoting
-          #     is accepted exactly the same way as if it were written in
-          #     the backend block in main.tf.
-          #   • There are zero bash / YAML escaping concerns because the
-          #     literal is written via a quoted heredoc (cat > FILE <<'EOF')
-          #     whose delimiter is single-quoted — NOTHING inside is expanded
-          #     by bash except the explicit ${VAR} interpolations we control.
-          # =================================================================
+          B2_ENDPOINT="https://s3.${B2_REGION}.backblazeb2.com"
 
           BACKEND_CFG_FILE="backend-config-overrides.tfvars"
 
-          # Single-quoted heredoc delimiter ('EOF') = bash performs NO
-          # variable interpolation inside the block. Every non-interpolated
-          # HCL token (endpoints, s3, braces, equals, quotes) comes through
-          # verbatim. Only the R2_ENDPOINT bash expansion below breaks out.
           cat > "${BACKEND_CFG_FILE}" <<'EOF'
           bucket     = "__TF_STATE_BUCKET__"
           key        = "__STATE_KEY__"
           endpoints = {
-            s3 = "__R2_ENDPOINT__"
+            s3 = "__B2_ENDPOINT__"
           }
           EOF
 
-          # Now substitute the three placeholders. Using envsubst-free sed
-          # here because the placeholder strings contain NO special regex
-          # characters — plain literal find/replace guarantees correctness.
           sed -i \
             -e "s|__TF_STATE_BUCKET__|${TF_STATE_BUCKET}|g" \
             -e "s|__STATE_KEY__|${STATE_KEY}|g" \
-            -e "s|__R2_ENDPOINT__|${R2_ENDPOINT}|g" \
+            -e "s|__B2_ENDPOINT__|${B2_ENDPOINT}|g" \
             "${BACKEND_CFG_FILE}"
 
-          # Diagnostic echo for the runner log — lets maintainers verify
-          # the literal HCL before Terraform consumes it (no secrets here,
-          # only the bucket name, state path, and public R2 endpoint URL).
           echo "--- backend-config-overrides.tfvars ---"
           cat "${BACKEND_CFG_FILE}"
           echo "---------------------------------------"
@@ -519,7 +459,6 @@ jobs:
             -input=false \
             -backend-config="${BACKEND_CFG_FILE}"
 
-      # Download the binary plan saved by the "plan" job.
       - name: Download plan artifact
         uses: actions/download-artifact@v4
         with:
@@ -535,10 +474,6 @@ jobs:
           fi
 
       # ---- Terraform apply (from saved plan) ----
-      #
-      # We pass exactly the same env vars as `plan` to ensure
-      # consistency. Using the saved binary plan guarantees the
-      # apply executes EXACTLY the change set that was reviewed.
       - name: Terraform Apply
         id: apply
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -548,8 +483,11 @@ jobs:
           TF_VAR_jwt_secret: ${{ secrets.TF_VAR_jwt_secret }}
           TF_VAR_neo4j_password: ${{ secrets.TF_VAR_neo4j_password }}
           TF_VAR_cloudflare_account_id_or_workers_dev: ${{ secrets.TF_VAR_cloudflare_account_id_or_workers_dev }}
+          TF_VAR_b2_application_key_id: ${{ secrets.TF_VAR_b2_application_key_id }}
+          TF_VAR_b2_application_key: ${{ secrets.TF_VAR_b2_application_key }}
           TF_VAR_neo4j_url: ${{ vars.TF_VAR_neo4j_url }}
           TF_VAR_cloudflare_account_id: ${{ vars.TF_VAR_cloudflare_account_id }}
+          TF_VAR_b2_region: ${{ vars.TF_VAR_b2_region }}
           TF_VAR_default_provider: ${{ vars.TF_VAR_default_provider }}
           TF_VAR_workers_ai_model: ${{ vars.TF_VAR_workers_ai_model }}
           ENV_TAG: ${{ github.event.inputs.environment || 'production' }}
