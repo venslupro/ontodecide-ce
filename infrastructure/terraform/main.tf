@@ -92,20 +92,48 @@
 # ============================================================
 
 terraform {
-  # Cloudflare R2 uses the S3-compatible API, so we use the standard
-  # Terraform "s3" backend type with R2-specific tuning flags.
+  # ──────────────────────────────────────────────────────────────
+  # Why backend "s3" when the state lives in Cloudflare R2?
+  #
+  #   ⚠️  THIS IS NOT AN AWS COMMITMENT — WE CREATE ZERO AWS RESOURCES.
+  #
+  #   Terraform's supported remote-state backends are listed here:
+  #     https://developer.hashicorp.com/terraform/language/v1.6.x/settings/backends
+  #   There is NO native "cloudflare-r2" backend in the list. The
+  #   correct way to use R2 as a Terraform state store is to exploit
+  #   its S3-COMPATIBLE API protocol. Declaring backend "s3" is just a
+  #   shorthand for "speak the S3 HTTPS wire format"; every actual
+  #   network call is redirected to Cloudflare's R2 endpoints via the
+  #   endpoints.s3 override (passed at init via -backend-config=FILE).
+  #
+  #   Why credentials are named AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY:
+  #     The S3 backend ships with a BUNDLED HashiCorp AWS SDK, and
+  #     that SDK's credential provider chain is HARD-CODED to look
+  #     for the AWS_-prefixed env vars as its #1 credential source.
+  #     This is the EXACT pattern Cloudflare documents for R2 with
+  #     S3-compatible clients:
+  #       developers.cloudflare.com/r2/api/s3/api-examples/
+  #       → "Use AWS_ACCESS_KEY_ID in combination with
+  #          AWS_SECRET_ACCESS_KEY for authentication with any
+  #          S3-compatible client."
+  #     The secrets you paste are still purely Cloudflare R2 tokens
+  #     (bucket-scoped Object Read & Write on ontodecide-terraform-state).
+  # ──────────────────────────────────────────────────────────────
   backend "s3" {
-    # ---- R2 identity (OVERRIDE THESE via -backend-config at init time) ----
-    # bucket   = "ontodecide-terraform-state"
-    # key      = "production/terraform.tfstate"
-    # access_key = ""  # from -backend-config
-    # secret_key = ""  # from -backend-config
-    # endpoints  = { s3 = "https://<ACCOUNT_ID>.r2.cloudflarestorage.com" }
+    # ---- Partially configured — runtime overrides required ----
+    # bucket   → -backend-config=FILE (bucket = "...")
+    # key      → -backend-config=FILE (key    = "...")
+    # endpoints→ -backend-config=FILE (endpoints = { s3 = "https://..." })
+    # access_key / secret_key → read from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+    #                           environment variables ONLY (never hard-code).
 
-    # ---- R2 compatibility flags (DO NOT EDIT) ----
-    # These are required per Cloudflare's official R2 backend docs.
-    # R2 is not AWS S3, so we must tell Terraform to skip all the
-    # AWS-specific metadata, region, and account-id validation steps.
+    # ---- R2 compatibility flags (DO NOT EDIT) ---------------------
+    # Cloudflare R2 implements the S3 OBJECT APIs but not the AWS
+    # control-plane APIs (STS:GetCallerIdentity, EC2 metadata, region
+    # validation, account id lookups, AWS-style checksums). Skip all
+    # of those preflight checks, otherwise each one fails against R2
+    # and init aborts. These are the exact flags required by the
+    # official Cloudflare R2 remote-backend documentation.
     region                      = "auto"
     skip_credentials_validation = true
     skip_metadata_api_check     = true
