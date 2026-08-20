@@ -1,0 +1,47 @@
+# Ingestion Service Worker — multi-source data fusion.
+#
+# Two paths:
+#   * sync path  : small JSON / webhook (≤10 entities) → Graph Service call
+#   * async path: large JSON / CSV / Parquet → R2 → ingestion-queue → consumer
+#
+# Queues are provisioned by Terraform (see infrastructure/terraform/queues.tf).
+name = "decision-ingestion-service"
+main = "dist/index.js"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[build]
+command = "pnpm turbo run build --filter=@ontodecide/ingestion"
+cwd = "apps/api/ingestion"
+
+[build.upload]
+format = "modules"
+dir = "dist"
+main = "./index.js"
+
+# R2 bucket holds the uploaded source files (and the per-tenant archive area).
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "decision-ingestion"
+# bucket_id = "REPLACE_WITH_R2_ID"
+
+# Async queue: the queue consumer is this same Worker (see `queue` export).
+[[queues_producers]]
+binding = "INGEST_QUEUE"
+queue = "ingestion-queue"
+
+[[queues_consumers]]
+queue = "ingestion-queue"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 3
+dead_letter_queue = "ingestion-dlq"
+
+# KV namespace stores job-status records so callers can poll.
+[[kv_namespaces]]
+binding = "JOBS"
+id = "REPLACE_WITH_KV_ID"
+
+[vars]
+# Downstream Graph Service URL (same as the Gateway uses).
+GRAPH_SERVICE_URL = "https://decision-graph-service.<account>.workers.dev"

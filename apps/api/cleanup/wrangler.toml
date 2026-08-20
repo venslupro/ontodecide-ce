@@ -1,0 +1,72 @@
+# Cleanup Service Worker — daily retention enforcement + manual purge.
+#
+# Exports:
+#   * `fetch`     — admin endpoints (POST /cleanup, GET /cleanup/status/:id)
+#   * `scheduled` — cron trigger at 03:00 UTC (see [triggers] below)
+#   * `queue`     — consumer for `cleanup-queue` (one tenant per message)
+name = "decision-cleanup-service"
+main = "dist/index.js"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[build]
+command = "pnpm turbo run build --filter=@ontodecide/cleanup"
+cwd = "apps/api/cleanup"
+
+[build.upload]
+format = "modules"
+dir = "dist"
+main = "./index.js"
+
+# Daily cleanup cron at 03:00 UTC (see design doc §4.6.1).
+[triggers]
+crons = ["0 3 * * *"]
+
+# Queue: one message per tenant to be cleaned.
+[[queues_producers]]
+binding = "CLEANUP_QUEUE"
+queue = "cleanup-queue"
+
+[[queues_consumers]]
+queue = "cleanup-queue"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 3
+dead_letter_queue = "cleanup-dlq"
+
+# D1 shares the decision-db with the User + AI services.
+[[d1_databases]]
+binding = "DB"
+database_name = "decision-db"
+database_id = "REPLACE_WITH_D1_ID"
+
+# R2 bucket for archive copies (3-day regret window).
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "decision-cleanup-archive"
+
+# KV namespaces: caches for the various services (all need purging).
+[[kv_namespaces]]
+binding = "USER_CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+[[kv_namespaces]]
+binding = "GRAPH_CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+[[kv_namespaces]]
+binding = "INGESTION_JOBS"
+id = "REPLACE_WITH_KV_ID"
+
+[[kv_namespaces]]
+binding = "AI_CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+[[kv_namespaces]]
+binding = "CLEANUP_JOBS"
+id = "REPLACE_WITH_KV_ID"
+
+[vars]
+NEO4J_URL = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
+NEO4J_USER = "neo4j"
+# NEO4J_PASSWORD is set as a secret.

@@ -1,0 +1,32 @@
+# User Service Worker — authentication and account management.
+#
+# Deployed via Cloudflare Workers Builds. Secrets (JWT_SECRET) are set in
+# the Cloudflare dashboard or via `wrangler secret put JWT_SECRET`.
+name = "decision-user-service"
+main = "dist/index.js"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[build]
+command = "pnpm turbo run build --filter=@ontodecide/user"
+cwd = "apps/api/user"
+
+[build.upload]
+format = "modules"
+dir = "dist"
+main = "./index.js"
+
+# D1 holds the users, audit_logs, system_config tables.
+[[d1_databases]]
+binding = "DB"
+database_name = "decision-db"
+database_id = "REPLACE_WITH_D1_ID"
+migrations_dir = "src/migrations"
+
+# KV cache for user lookups and refresh-token registry.
+[[kv_namespaces]]
+binding = "CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+[vars]
+AI_DEFAULT_PROVIDER = "workers-ai"

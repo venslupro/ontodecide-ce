@@ -1,0 +1,115 @@
+# Cloudflare Workers Builds project manifest.
+#
+# This file documents how each Worker should be built when Cloudflare's
+# native Workers Builds connects this repository to the platform. The
+# values mirror the `[build]` section of each worker's wrangler.toml so
+# the dashboard import can be done in one click.
+#
+# Setup (one-time per worker, per environment):
+#   1. In the Cloudflare dashboard open Workers & Pages → your worker.
+#   2. Settings → Builds → Connect a Git repository → pick this repo.
+#   3. Set "Build command" and "Root directory" as listed below.
+#   4. Add the matching environment variables / secrets (see docs/deployment-guide.md).
+#   5. Every `git push` to the configured branch deploys the worker.
+#
+# Workers Builds will automatically:
+#   - install pnpm via corepack
+#   - run the build command from the worker's wrangler.toml `[build]` section
+#   - upload the artifacts declared by `[build.upload]`
+#   - run `wrangler deploy` (or the equivalent platform action) on success
+
+project: ontodecide
+default_branch: main
+package_manager: pnpm
+
+workers:
+  - name: decision-gateway
+    root: apps/api/gateway
+    build_command: pnpm turbo run build --filter=@ontodecide/gateway
+    build_output: apps/api/gateway/dist
+    main: apps/api/gateway/dist/index.js
+    environment_variables:
+      - AI_DEFAULT_PROVIDER
+    secrets:
+      - JWT_SECRET
+      - USER_SERVICE_URL
+      - GRAPH_SERVICE_URL
+      - INGESTION_SERVICE_URL
+      - AI_SERVICE_URL
+      - CLEANUP_SERVICE_URL
+
+  - name: decision-user-service
+    root: apps/api/user
+    build_command: pnpm turbo run build --filter=@ontodecide/user
+    build_output: apps/api/user/dist
+    main: apps/api/user/dist/index.js
+    environment_variables:
+      - AI_DEFAULT_PROVIDER
+    secrets:
+      - JWT_SECRET
+
+  - name: decision-graph-service
+    root: apps/api/graph
+    build_command: pnpm turbo run build --filter=@ontodecide/graph
+    build_output: apps/api/graph/dist
+    main: apps/api/graph/dist/index.js
+    environment_variables:
+      - NEO4J_URL
+      - NEO4J_USER
+    secrets:
+      - JWT_SECRET
+      - NEO4J_PASSWORD
+
+  - name: decision-ingestion-service
+    root: apps/api/ingestion
+    build_command: pnpm turbo run build --filter=@ontodecide/ingestion
+    build_output: apps/api/ingestion/dist
+    main: apps/api/ingestion/dist/index.js
+    environment_variables:
+      - GRAPH_SERVICE_URL
+    secrets:
+      - JWT_SECRET
+
+  - name: decision-ai-service
+    root: apps/api/ai
+    build_command: pnpm turbo run build --filter=@ontodecide/ai
+    build_output: apps/api/ai/dist
+    main: apps/api/ai/dist/index.js
+    environment_variables:
+      - AI_DEFAULT_PROVIDER
+      - WORKERS_AI_MODEL
+      - AI_GATEWAY_ID
+      - OPENAI_MODEL
+      - ANTHROPIC_MODEL
+      - GOOGLE_MODEL
+      - OPENROUTER_MODEL
+    secrets:
+      - JWT_SECRET
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - GOOGLE_API_KEY
+      - OPENROUTER_API_KEY
+      - AI_GATEWAY_TOKEN
+
+  - name: decision-cleanup-service
+    root: apps/api/cleanup
+    build_command: pnpm turbo run build --filter=@ontodecide/cleanup
+    build_output: apps/api/cleanup/dist
+    main: apps/api/cleanup/dist/index.js
+    environment_variables:
+      - NEO4J_URL
+      - NEO4J_USER
+    secrets:
+      - JWT_SECRET
+      - NEO4J_PASSWORD
+
+# Branch policies:
+#   - main:    deploys to production
+#   - staging: deploys to a "staging" alias of each worker
+#   - other:   deploy to a `<branch>` alias (ephemeral preview)
+branches:
+  main:
+    environment: production
+  staging:
+    environment: staging
+    deploy_command_extra: --env staging

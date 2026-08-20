@@ -1,0 +1,58 @@
+# AI Service Worker — multi-LLM decision intelligence.
+#
+# Bindings:
+#   * AI           — Cloudflare Workers AI binding (free tier, 10k Neurons/day)
+#   * DB           — D1 for decisions/recommendations tables
+#   * CACHE        — KV for inference cache + neuron-budget counter
+#   * AGENT        — Durable Object namespace for the planning agent
+#   * AI_GATEWAY_* — Cloudflare AI Gateway credentials (optional)
+name = "decision-ai-service"
+main = "dist/index.js"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[build]
+command = "pnpm turbo run build --filter=@ontodecide/ai"
+cwd = "apps/api/ai"
+
+[build.upload]
+format = "modules"
+dir = "dist"
+main = "./index.js"
+
+# Workers AI binding (free tier).
+[ai]
+binding = "AI"
+
+# D1 for decisions/recommendations (shares decision-db with User service).
+[[d1_databases]]
+binding = "DB"
+database_name = "decision-db"
+database_id = "REPLACE_WITH_D1_ID"
+migrations_dir = "src/migrations"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+# Durable Objects for the autonomous agent.
+[[durable_objects.bindings]]
+name = "AGENT"
+class_name = "PlanningAgent"
+
+# Migrations for Durable Object classes.
+[[migrations]]
+tag = "v1"
+new_classes = ["PlanningAgent"]
+
+[vars]
+AI_DEFAULT_PROVIDER = "workers-ai"
+WORKERS_AI_MODEL = "@cf/meta/llama-3-8b-instruct"
+AI_GATEWAY_ID = "decision-gateway"
+OPENAI_MODEL = "gpt-4o-mini"
+ANTHROPIC_MODEL = "claude-3-sonnet-20241022"
+GOOGLE_MODEL = "gemini-1.5-flash"
+OPENROUTER_MODEL = "openai/gpt-4o-mini"
+# Secrets (set via dashboard or `wrangler secret put`):
+#   OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, OPENROUTER_API_KEY,
+#   AI_GATEWAY_TOKEN

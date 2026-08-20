@@ -1,0 +1,334 @@
+# ============================================================
+# Terraform Deploy Workflow
+#
+# Follows Cloudflare's OFFICIAL Terraform best practices:
+#
+#   1. Provider auth  →  CLOUDFLARE_API_TOKEN env var
+#                        (never written to config / tfvars)
+#   2. State backend  →  Cloudflare R2 (remote S3-compatible)
+#                        credentials via `-backend-config` args
+#   3. Input vars     →  TF_VAR_* env variables (standard
+#                        Terraform mechanism; no auto.tfvars file)
+#   4. Environments   →  separate accounts + separate R2 state
+#                        bucket keys per env
+#   5. Secrets        →  all from GitHub Secrets / a secret store
+#                        such as Vault, per Cloudflare guidance
+#
+# Two-stage pipeline (see bottom of this header for the approval
+# flow):
+#   Stage 1 "plan"  — automatic on push to main. Produces a plan
+#                     artifact and a human-readable diff summary.
+#   Stage 2 "apply" — requires manual approval via the
+#                     "production" GitHub Environment. Never runs
+#                     unless someone explicitly clicks
+#                     "Approve and deploy" in the Actions UI.
+#
+# To run Stage 2 after a successful Stage 1:
+#   1. Open the completed workflow run in GitHub → Actions.
+#   2. Click the paused "production" environment card.
+#   3. Review the plan output → click "Approve and deploy".
+#   4. The "Apply" job begins automatically.
+# ============================================================
+
+name: Terraform Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment name (sets the R2 state key prefix)."
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - staging
+
+concurrency:
+  group: terraform-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+env:
+  # ---- Shared configuration ----
+  TF_VERSION: "1.6.6"
+  TF_WORKING_DIR: "infrastructure/terraform"
+  # Match the bucket name created with:
+  #   wrangler r2 bucket create ontodecide-terraform-state
+  TF_STATE_BUCKET: "ontodecide-terraform-state"
+
+# ============================================================
+# Required repository setup (Settings → Secrets and variables
+# → Actions)
+#
+# SECRETS (Settings → Secrets and variables → Actions → Secrets):
+# ─────────────────────────────────────────────────────────────
+#   CLOUDFLARE_API_TOKEN
+#       Cloudflare API token with these permissions:
+#         Account.Account Settings:Read
+#         D1:Edit
+#         Workers R2 Storage:Edit
+#         Workers KV Storage:Edit
+#         Workers Queues:Edit
+#         Workers Scripts:Edit
+#         Workers AI:Read
+#
+#   CLOUDFLARE_ACCOUNT_ID
+#       (Optional — only if the token lacks Account List scope)
+#       Cloudflare numeric Account ID.
+#
+#   TF_VAR_jwt_secret
+#       Shared JWT signing secret (>= 32 random bytes).
+#
+#   TF_VAR_neo4j_password
+#       Neo4j AuraDB password.
+#
+#   TF_VAR_cloudflare_account_id_or_workers_dev
+#       Workers.dev subdomain prefix, e.g. "myteam-a1b2".
+#
+#   TF_R2_ACCESS_KEY
+#       R2 Object Read & Write access key id (bucket-scoped to
+#       $TF_STATE_BUCKET). Used for the Terraform state backend.
+#
+#   TF_R2_SECRET_KEY
+#       Matching R2 secret access key.
+#
+# VARIABLES (Settings → Secrets and variables → Actions → Variables):
+# ─────────────────────────────────────────────────────────────
+#   TF_VAR_neo4j_url
+#       e.g. "https://neo4j+s://xxxxxxxx.databases.neo4j.io"
+#
+#   TF_VAR_cloudflare_account_id
+#       (Optional — override via Variable if you don't want to
+#       create a second secret for it.)
+#
+#   TF_VAR_default_provider   (optional)
+#   TF_VAR_workers_ai_model   (optional)
+#
+# ENVIRONMENT (Settings → Environments → New environment):
+# ─────────────────────────────────────────────────────────────
+#   Create an environment named "production" and enable
+#   "Required reviewers". Add the people or teams allowed to
+#   approve a production apply.
+# ============================================================
+
+jobs:
+  # ================================================================
+  # Stage 1 — Plan (automatic, no approval)
+  # ================================================================
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    outputs:
+      plan-artifact: tfplan-${{ github.sha }}
+      changed: ${{ steps.plan-summary.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- Terraform install ----
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: true
+
+      # ---- Terraform init with R2 remote backend ----
+      #
+      # The backend "s3" block in main.tf is left intentionally
+      # partial — we inject the real R2 credentials here via the
+      # standard `-backend-config` CLI flags so that no access key
+      # is ever written to a tracked file.
+      - name: Terraform Init (R2 backend)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          # Cloudflare provider auth (official env var name)
+          CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # R2 state backend credentials (via -backend-config)
+          R2_ACCESS_KEY:  ${{ secrets.TF_R2_ACCESS_KEY }}
+          R2_SECRET_KEY:  ${{ secrets.TF_R2_SECRET_KEY }}
+          R2_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ENV:            ${{ github.event.inputs.environment || 'production' }}
+        run: |
+          STATE_KEY="${ENV}/terraform.tfstate"
+          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          terraform init \
+            -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="access_key=${R2_ACCESS_KEY}" \
+            -backend-config="secret_key=${R2_SECRET_KEY}" \
+            -backend-config="endpoints={s3=\"${R2_ENDPOINT}\"}"
+
+      # ---- Terraform validate ----
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: terraform validate
+
+      # ---- Terraform plan ----
+      #
+      # Input variables are passed via the standard Terraform
+      # TF_VAR_<name> environment variables — no tfvars file is
+      # written to disk during CI. Secrets come from GitHub
+      # Secrets; non-sensitive defaults come from GitHub
+      # Variables.
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          # Provider auth
+          CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Input variables — secrets
+          TF_VAR_jwt_secret: ${{ secrets.TF_VAR_jwt_secret }}
+          TF_VAR_neo4j_password: ${{ secrets.TF_VAR_neo4j_password }}
+          TF_VAR_cloudflare_account_id_or_workers_dev: ${{ secrets.TF_VAR_cloudflare_account_id_or_workers_dev }}
+          # Input variables — non-sensitive
+          TF_VAR_neo4j_url: ${{ vars.TF_VAR_neo4j_url }}
+          TF_VAR_cloudflare_account_id: ${{ vars.TF_VAR_cloudflare_account_id }}
+          TF_VAR_default_provider: ${{ vars.TF_VAR_default_provider }}
+          TF_VAR_workers_ai_model: ${{ vars.TF_VAR_workers_ai_model }}
+          ENV_TAG: ${{ github.event.inputs.environment || 'production' }}
+        run: |
+          terraform plan \
+            -input=false \
+            -out=tfplan.binary \
+            -var="environment=${ENV_TAG}"
+          terraform show -json tfplan.binary > tfplan.json
+
+      # ---- Upload plan artifact for apply stage ----
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.sha }}
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan.binary
+            ${{ env.TF_WORKING_DIR }}/tfplan.json
+          retention-days: 7
+
+      # ---- Human-readable change summary ----
+      - name: Summarize resource changes
+        id: plan-summary
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          ADDS=$(jq '[.resource_changes[]?.change.actions[] | select(. == "create")] | length' tfplan.json)
+          UPDATES=$(jq '[.resource_changes[]?.change.actions[] | select(. == "update")] | length' tfplan.json)
+          DESTROYS=$(jq '[.resource_changes[]?.change.actions[] | select(. == "delete")] | length' tfplan.json)
+          {
+            echo "### Terraform Plan Summary"
+            echo ""
+            echo "| Change type | Count |"
+            echo "|---|---|"
+            echo "| 🟢 Add      | ${ADDS}    |"
+            echo "| 🟡 Update   | ${UPDATES} |"
+            echo "| 🔴 Destroy  | ${DESTROYS} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          TOTAL=$((ADDS + UPDATES + DESTROYS))
+          if [ "$TOTAL" -gt 0 ]; then
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+            echo ":warning: **${TOTAL} resource(s) will change.** Review the plan log before approving apply." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo ":white_check_mark: No resource changes. Apply will be a no-op." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ================================================================
+  # Stage 2 — Apply (requires manual approval via GitHub Environment)
+  #
+  # This job pauses indefinitely until a reviewer with the
+  # "production" environment reviewer role approves the deployment
+  # from the Actions UI. It will never execute on its own.
+  # ================================================================
+  apply:
+    name: Terraform Apply  ✅ Manual approval required
+    needs: plan
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    # ---- Gating mechanism ------------------------------------------------
+    # By attaching this job to the `production` GitHub Environment,
+    # we tell GitHub: "do not start this job until at least one
+    # authorized reviewer explicitly approves it."
+    #
+    # To enable the approval gate, go to:
+    #   Settings → Environments → New environment → "production"
+    # and check "Required reviewers", adding the relevant users
+    # or teams.
+    environment:
+      name: ${{ github.event.inputs.environment || 'production' }}
+      url: https://dash.cloudflare.com/
+    # ----------------------------------------------------------------------
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: true
+
+      # Reconnect to the R2 backend before we can use the saved plan.
+      - name: Terraform Init (R2 backend)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY:  ${{ secrets.TF_R2_ACCESS_KEY }}
+          R2_SECRET_KEY:  ${{ secrets.TF_R2_SECRET_KEY }}
+          R2_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ENV:            ${{ github.event.inputs.environment || 'production' }}
+        run: |
+          STATE_KEY="${ENV}/terraform.tfstate"
+          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          terraform init \
+            -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="access_key=${R2_ACCESS_KEY}" \
+            -backend-config="secret_key=${R2_SECRET_KEY}" \
+            -backend-config="endpoints={s3=\"${R2_ENDPOINT}\"}"
+
+      # Download the binary plan saved by the "plan" job.
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.plan-artifact }}
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Verify plan artifact exists
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          if [ ! -f tfplan.binary ]; then
+            echo "::error::Plan artifact is missing. Re-run the 'plan' job and approve apply before the artifact expires (7 days)."
+            exit 1
+          fi
+
+      # ---- Terraform apply (from saved plan) ----
+      #
+      # We pass exactly the same env vars as `plan` to ensure
+      # consistency. Using the saved binary plan guarantees the
+      # apply executes EXACTLY the change set that was reviewed.
+      - name: Terraform Apply
+        id: apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TF_VAR_jwt_secret: ${{ secrets.TF_VAR_jwt_secret }}
+          TF_VAR_neo4j_password: ${{ secrets.TF_VAR_neo4j_password }}
+          TF_VAR_cloudflare_account_id_or_workers_dev: ${{ secrets.TF_VAR_cloudflare_account_id_or_workers_dev }}
+          TF_VAR_neo4j_url: ${{ vars.TF_VAR_neo4j_url }}
+          TF_VAR_cloudflare_account_id: ${{ vars.TF_VAR_cloudflare_account_id }}
+          TF_VAR_default_provider: ${{ vars.TF_VAR_default_provider }}
+          TF_VAR_workers_ai_model: ${{ vars.TF_VAR_workers_ai_model }}
+          ENV_TAG: ${{ github.event.inputs.environment || 'production' }}
+        run: |
+          terraform apply -input=false tfplan.binary

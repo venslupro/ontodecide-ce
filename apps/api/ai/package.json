@@ -1,0 +1,26 @@
+{
+  "name": "@ontodecide/ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Service: multi-LLM scenario simulation, recommendation, autonomous agent.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "migrate:apply": "wrangler d1 migrations apply decision-db --local",
+    "migrate:apply:remote": "wrangler d1 migrations apply decision-db --remote",
+    "lint": "eslint \"src/**/*.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@hono/zod-openapi": "^1.6.1",
+    "@ontodecide/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.3",
+    "zod": "^4.4.3"
+  }
+}

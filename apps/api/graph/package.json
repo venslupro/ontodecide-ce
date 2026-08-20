@@ -1,0 +1,23 @@
+{
+  "name": "@ontodecide/graph",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Graph Service: Neo4j-backed ontology modeling and situation views.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "lint": "eslint \"src/**/*.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@hono/zod-openapi": "^1.6.1",
+    "@ontodecide/shared": "workspace:*",
+    "hono": "^4.13.3",
+    "zod": "^4.4.3"
+  }
+}

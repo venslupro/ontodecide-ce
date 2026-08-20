@@ -1,0 +1,746 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "OntoDecide AI Service",
+    "version": "0.1.0",
+    "description": "Scenario simulation, recommendation and autonomous agent API."
+  },
+  "components": {
+    "schemas": {},
+    "parameters": {}
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Service health."
+          }
+        }
+      }
+    },
+    "/ai/providers": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Configured LLM providers."
+          }
+        }
+      }
+    },
+    "/ai/scenario": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "topic": {
+                    "type": "string",
+                    "description": "Free-form topic or question to simulate."
+                  },
+                  "context": {
+                    "type": "string",
+                    "description": "Optional context bundle (entity summaries, prior decisions)."
+                  },
+                  "tones": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "optimistic",
+                        "pessimistic",
+                        "neutral"
+                      ]
+                    },
+                    "description": "Tones to generate; defaults to all three."
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "workers-ai",
+                      "openai",
+                      "anthropic",
+                      "google",
+                      "openrouter"
+                    ],
+                    "description": "Optional provider override."
+                  }
+                },
+                "required": [
+                  "topic"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scenario simulation result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "tenant_id": {
+                          "type": "string",
+                          "description": "Owning tenant id."
+                        },
+                        "topic": {
+                          "type": "string",
+                          "description": "Topic or question the scenario was generated for."
+                        },
+                        "scenarios": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "tone": {
+                                "type": "string",
+                                "enum": [
+                                  "optimistic",
+                                  "pessimistic",
+                                  "neutral"
+                                ],
+                                "description": "Tone of the narrative."
+                              },
+                              "narrative": {
+                                "type": "string",
+                                "description": "Generated narrative text."
+                              },
+                              "keyFactors": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Key factors driving the scenario."
+                              },
+                              "probability": {
+                                "type": "number",
+                                "description": "Estimated probability of the scenario (0..1)."
+                              }
+                            },
+                            "required": [
+                              "tone",
+                              "narrative",
+                              "keyFactors",
+                              "probability"
+                            ]
+                          },
+                          "description": "Generated scenarios, one per tone."
+                        },
+                        "generatedAt": {
+                          "type": "string",
+                          "description": "ISO-8601 generation timestamp."
+                        },
+                        "provider": {
+                          "type": "string",
+                          "enum": [
+                            "workers-ai",
+                            "openai",
+                            "anthropic",
+                            "google",
+                            "openrouter"
+                          ],
+                          "description": "Provider that served the call."
+                        }
+                      },
+                      "required": [
+                        "tenant_id",
+                        "topic",
+                        "scenarios",
+                        "generatedAt",
+                        "provider"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/recommend": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "topic": {
+                    "type": "string",
+                    "description": "Topic to produce recommendations for."
+                  },
+                  "history": {
+                    "type": "string",
+                    "description": "Historical reference text the model should reason from."
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "workers-ai",
+                      "openai",
+                      "anthropic",
+                      "google",
+                      "openrouter"
+                    ],
+                    "description": "Optional provider override."
+                  }
+                },
+                "required": [
+                  "topic"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recommendation result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "Stable recommendation id."
+                        },
+                        "tenant_id": {
+                          "type": "string",
+                          "description": "Owning tenant id."
+                        },
+                        "topic": {
+                          "type": "string",
+                          "description": "Topic the recommendation addresses."
+                        },
+                        "priority": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high",
+                            "critical"
+                          ],
+                          "description": "Priority of the recommendation."
+                        },
+                        "confidence": {
+                          "type": "number",
+                          "description": "Confidence score of the recommendation (0..1)."
+                        },
+                        "rationale": {
+                          "type": "string",
+                          "description": "Reasoning behind the recommendation."
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "order": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "exclusiveMinimum": true,
+                                "description": "1-based execution order."
+                              },
+                              "action": {
+                                "type": "string",
+                                "description": "Action to perform."
+                              },
+                              "expectedOutcome": {
+                                "type": "string",
+                                "description": "Expected outcome of the action."
+                              }
+                            },
+                            "required": [
+                              "order",
+                              "action",
+                              "expectedOutcome"
+                            ]
+                          },
+                          "description": "Ordered steps to act on the recommendation."
+                        },
+                        "generatedAt": {
+                          "type": "string",
+                          "description": "ISO-8601 generation timestamp."
+                        },
+                        "provider": {
+                          "type": "string",
+                          "enum": [
+                            "workers-ai",
+                            "openai",
+                            "anthropic",
+                            "google",
+                            "openrouter"
+                          ],
+                          "description": "Provider that served the call."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "tenant_id",
+                        "topic",
+                        "priority",
+                        "confidence",
+                        "rationale",
+                        "steps",
+                        "generatedAt",
+                        "provider"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/agent/plan": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "goal": {
+                    "type": "string",
+                    "description": "High-level goal the agent should plan for."
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "workers-ai",
+                      "openai",
+                      "anthropic",
+                      "google",
+                      "openrouter"
+                    ],
+                    "description": "Optional provider override."
+                  }
+                },
+                "required": [
+                  "goal"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Agent run started."
+          }
+        }
+      }
+    },
+    "/ai/agent/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Current agent state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "goal": {
+                          "type": "string",
+                          "description": "High-level goal the agent pursues."
+                        },
+                        "tasks": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Stable task id."
+                              },
+                              "description": {
+                                "type": "string",
+                                "description": "What the task should accomplish."
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "in_progress",
+                                  "succeeded",
+                                  "failed",
+                                  "skipped"
+                                ],
+                                "description": "Lifecycle status of the task."
+                              },
+                              "result": {
+                                "type": "string",
+                                "description": "Result text once the task finished."
+                              },
+                              "startedAt": {
+                                "type": "string",
+                                "description": "ISO-8601 start timestamp."
+                              },
+                              "finishedAt": {
+                                "type": "string",
+                                "description": "ISO-8601 finish timestamp."
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "description",
+                              "status"
+                            ]
+                          },
+                          "description": "Tasks planned for the goal."
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "idle",
+                            "planning",
+                            "executing",
+                            "reflecting",
+                            "done"
+                          ],
+                          "description": "Current phase of the agent lifecycle."
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "description": "ISO-8601 creation timestamp."
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "description": "ISO-8601 last-update timestamp."
+                        }
+                      },
+                      "required": [
+                        "goal",
+                        "tasks",
+                        "status",
+                        "createdAt",
+                        "updatedAt"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/agent/{id}/reflect": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Reflection triggered."
+          }
+        }
+      }
+    },
+    "/ai/history": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "size",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Decision history page."
+          }
+        }
+      }
+    }
+  }
+}

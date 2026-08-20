@@ -1,0 +1,34 @@
+# Gateway Worker — public entry point.
+#
+# Deployed via Cloudflare Workers Builds (Git-connected). The CI pipeline
+# runs `pnpm turbo run build` then `wrangler deploy`. Secrets (JWT_SECRET,
+# internal service URLs) are configured in the Cloudflare dashboard.
+name = "decision-gateway"
+main = "dist/index.js"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Workers Builds: connect this directory to the repository in the
+# Cloudflare dashboard. Build configuration lives in `apps/api/gateway/`.
+[build]
+command = "pnpm turbo run build --filter=@ontodecide/gateway"
+cwd = "apps/api/gateway"
+
+[build.upload]
+format = "modules"
+dir = "dist"
+main = "./index.js"
+
+# Public routes; downstream service workers are *not* exposed directly.
+[vars]
+AI_DEFAULT_PROVIDER = "workers-ai"
+
+[[kv_namespaces]]
+binding = "JWT_BLACKLIST"
+id = "REPLACE_WITH_KV_ID"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "REPLACE_WITH_KV_ID"
+
+# Cron trigger is owned by the Cleanup Worker; see apps/api/cleanup/wrangler.toml.

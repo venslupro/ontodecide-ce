@@ -1,0 +1,60 @@
+# ============================================================
+# Continuous Integration (CI) Workflow
+#
+# Runs on every push and pull request to ensure the codebase
+# compiles, lints cleanly, and all tests pass.
+#
+# This workflow is fully automated — no manual approval needed.
+# ============================================================
+
+name: CI
+
+on:
+  push:
+    branches-ignore:
+      - main   # main is covered by the deploy workflow
+  pull_request:
+    branches:
+      - main
+      - staging
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build · Lint · Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Install pnpm using the EXACT version declared in package.json
+      # ("packageManager" field, Node.js corepack standard). DO NOT add a
+      # `version` key here — specifying pnpm in BOTH places triggers
+      # ERR_PNPM_BAD_PM_VERSION "Multiple versions of pnpm specified".
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        # No `with.version` — version comes from package.json#packageManager
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Lint
+        run: pnpm -r lint
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Test
+        run: pnpm test

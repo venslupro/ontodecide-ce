@@ -1,0 +1,36 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    // ----------------------------------------------------------------
+    // Source-resolution monorepo mode — deliberately NOT using
+    // composite / references / rootDir / tsBuildInfoFile:
+    //   • We resolve @ontodecide/shared to source files (not .d.ts)
+    //     via the paths mapping below.
+    //   • Removing rootDir and adding ../../../apps/shared/src/**/*
+    //     to include makes TS6059 / TS6307 go away (shared source is
+    //     now part of this program).
+    //   • composite is disabled because it requires a strict 1:1
+    //     project-to-project reference chain with built state files
+    //     for every dependency, which we deliberately avoid.
+    //
+    // The pnpm / turbo pipeline still runs shared.build first, but
+    // the final Worker bundler (wrangler/esbuild) does not consume
+    // shared/dist — it walks the same source-path resolution graph
+    // that tsc uses for typecheck.
+    // ----------------------------------------------------------------
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "baseUrl": ".",
+    "paths": {
+      "@ontodecide/shared":     ["../../../apps/shared/src/index.ts"],
+      "@ontodecide/shared/*":   ["../../../apps/shared/src/*"]
+    }
+  },
+  "include": [
+    "src/**/*",
+    "../../../apps/shared/src/**/*"
+  ],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}

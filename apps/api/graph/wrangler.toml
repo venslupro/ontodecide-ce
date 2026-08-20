@@ -1,0 +1,27 @@
+# Graph Service Worker — Neo4j AuraDB-backed knowledge graph.
+#
+# Neo4j connection details are stored as Secrets (set via the dashboard or
+# `wrangler secret put NEO4J_PASSWORD`). The HTTP transaction endpoint is
+# used because Workers cannot open raw TCP sockets.
+name = "decision-graph-service"
+main = "dist/index.js"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[build]
+command = "pnpm turbo run build --filter=@ontodecide/graph"
+cwd = "apps/api/graph"
+
+[build.upload]
+format = "modules"
+dir = "dist"
+main = "./index.js"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+[vars]
+NEO4J_URL = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
+NEO4J_USER = "neo4j"
+# NEO4J_PASSWORD is set as a secret; never commit it.

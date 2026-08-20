@@ -1,0 +1,1403 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Ingestion Service API",
+    "version": "0.1.0",
+    "description": "Sync, async and webhook ingestion for OntoDecide."
+  },
+  "servers": [
+    {
+      "url": "http://localhost"
+    }
+  ],
+  "components": {
+    "schemas": {},
+    "parameters": {}
+  },
+  "paths": {
+    "/ingest/sync": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tenant_id": {
+                    "type": "string",
+                    "description": "Owning tenant id."
+                  },
+                  "entities": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "Stable entity id."
+                        },
+                        "tenant_id": {
+                          "type": "string",
+                          "description": "Owning tenant id."
+                        },
+                        "type": {
+                          "type": "string",
+                          "description": "Ontology type label of the entity."
+                        },
+                        "attributes": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          },
+                          "description": "Arbitrary key/value attributes of the entity."
+                        },
+                        "source": {
+                          "type": "string",
+                          "description": "Source identifier that produced the entity."
+                        },
+                        "confidence": {
+                          "type": "number",
+                          "description": "Confidence score of the entity (0..1)."
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "description": "ISO-8601 timestamp of the entity."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "tenant_id",
+                        "type",
+                        "attributes",
+                        "source",
+                        "confidence",
+                        "timestamp"
+                      ]
+                    },
+                    "description": "Entities to upsert."
+                  },
+                  "relations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "description": "Edge type label, e.g. LOCATED_AT."
+                        },
+                        "source": {
+                          "type": "string",
+                          "description": "Source entity id."
+                        },
+                        "target": {
+                          "type": "string",
+                          "description": "Target entity id."
+                        },
+                        "properties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          },
+                          "description": "Optional edge properties."
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "source",
+                        "target"
+                      ]
+                    },
+                    "description": "Relations to upsert."
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "Source identifier (webhook id, file name, etc.)."
+                  }
+                },
+                "required": [
+                  "tenant_id",
+                  "entities",
+                  "relations",
+                  "source"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync ingestion result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "accepted": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Number of records accepted."
+                        },
+                        "rejected": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Number of records rejected."
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Per-record rejection reasons, when present."
+                        }
+                      },
+                      "required": [
+                        "accepted",
+                        "rejected"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ingest/file": {
+      "post": {
+        "responses": {
+          "202": {
+            "description": "Async job enqueued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "jobId": {
+                          "type": "string",
+                          "description": "Id of the enqueued ingestion job."
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "queued"
+                          ],
+                          "description": "Initial job status."
+                        }
+                      },
+                      "required": [
+                        "jobId",
+                        "status"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ingest/webhook": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tenant_id": {
+                    "type": "string",
+                    "description": "Owning tenant id."
+                  },
+                  "entities": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "Stable entity id."
+                        },
+                        "tenant_id": {
+                          "type": "string",
+                          "description": "Owning tenant id."
+                        },
+                        "type": {
+                          "type": "string",
+                          "description": "Ontology type label of the entity."
+                        },
+                        "attributes": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          },
+                          "description": "Arbitrary key/value attributes of the entity."
+                        },
+                        "source": {
+                          "type": "string",
+                          "description": "Source identifier that produced the entity."
+                        },
+                        "confidence": {
+                          "type": "number",
+                          "description": "Confidence score of the entity (0..1)."
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "description": "ISO-8601 timestamp of the entity."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "tenant_id",
+                        "type",
+                        "attributes",
+                        "source",
+                        "confidence",
+                        "timestamp"
+                      ]
+                    },
+                    "description": "Entities to upsert."
+                  },
+                  "relations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "description": "Edge type label, e.g. LOCATED_AT."
+                        },
+                        "source": {
+                          "type": "string",
+                          "description": "Source entity id."
+                        },
+                        "target": {
+                          "type": "string",
+                          "description": "Target entity id."
+                        },
+                        "properties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          },
+                          "description": "Optional edge properties."
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "source",
+                        "target"
+                      ]
+                    },
+                    "description": "Relations to upsert."
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "Source identifier (webhook id, file name, etc.)."
+                  }
+                },
+                "required": [
+                  "tenant_id",
+                  "entities",
+                  "relations",
+                  "source"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook ingestion result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "accepted": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Number of records accepted."
+                        },
+                        "rejected": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Number of records rejected."
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Per-record rejection reasons, when present."
+                        }
+                      },
+                      "required": [
+                        "accepted",
+                        "rejected"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ingest/jobs/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status record.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "jobId": {
+                          "type": "string",
+                          "description": "Id of the ingestion job."
+                        },
+                        "tenantId": {
+                          "type": "string",
+                          "description": "Owning tenant id."
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "queued",
+                            "running",
+                            "succeeded",
+                            "failed"
+                          ],
+                          "description": "Current lifecycle status of the job."
+                        },
+                        "format": {
+                          "type": "string",
+                          "description": "Source format of the file."
+                        },
+                        "ontologyType": {
+                          "type": "string",
+                          "description": "Ontology type the records map onto."
+                        },
+                        "objectKey": {
+                          "type": "string",
+                          "description": "R2 object key of the staged file."
+                        },
+                        "accepted": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Number of records accepted."
+                        },
+                        "rejected": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Number of records rejected."
+                        },
+                        "error": {
+                          "type": "string",
+                          "description": "Error message on failure."
+                        },
+                        "startedAt": {
+                          "type": "string",
+                          "description": "ISO-8601 start timestamp."
+                        },
+                        "finishedAt": {
+                          "type": "string",
+                          "description": "ISO-8601 finish timestamp."
+                        }
+                      },
+                      "required": [
+                        "jobId",
+                        "tenantId",
+                        "status",
+                        "format",
+                        "ontologyType",
+                        "objectKey"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request succeeded."
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Response payload on success."
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable error code, e.g. AUTH_INVALID_CREDENTIALS."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable message in the user locale."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional field-level validation details."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Error details on failure."
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Server-side trace id, useful for debugging."
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
