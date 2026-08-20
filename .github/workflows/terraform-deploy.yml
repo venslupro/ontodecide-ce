@@ -138,18 +138,34 @@ jobs:
       # ---- Terraform init with R2 remote backend ----
       #
       # The backend "s3" block in main.tf is left intentionally
-      # partial — we inject the real R2 credentials here via the
-      # standard `-backend-config` CLI flags so that no access key
-      # is ever written to a tracked file.
+      # partial — we inject the real R2 credentials HERE via the
+      # STANDARD AWS SDK environment variables AWS_ACCESS_KEY_ID /
+      # AWS_SECRET_ACCESS_KEY. This is the OFFICIAL recommended
+      # mechanism per Cloudflare R2 docs and places the credentials
+      # at the very TOP of the AWS credential provider chain (so
+      # the SDK never falls through to EC2 IMDS / metadata lookups,
+      # which is what caused the previous "no valid credential
+      # sources" error).
+      #
+      # Non-secret backend options (bucket, key, endpoints.s3) are
+      # still passed via `-backend-config` CLI flags. We use the
+      # dotted-attribute form `-backend-config endpoints.s3=URL`
+      # instead of an HCL map literal `endpoints={s3="..."}` because
+      # bash quoting of the map literal is unreliable in CI.
       - name: Terraform Init (R2 backend)
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           # Cloudflare provider auth (official env var name)
           CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # R2 state backend credentials (via -backend-config)
-          R2_ACCESS_KEY:  ${{ secrets.TF_R2_ACCESS_KEY }}
-          R2_SECRET_KEY:  ${{ secrets.TF_R2_SECRET_KEY }}
+          # ---- R2 remote backend credentials ----
+          # These are the STANDARD AWS SDK credential env vars.
+          # Terraform's "s3" backend consults them as the very FIRST
+          # credential source — so no EC2 IMDS fallback can occur.
+          AWS_ACCESS_KEY_ID:     ${{ secrets.TF_R2_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_R2_SECRET_KEY }}
+          AWS_DEFAULT_REGION:    auto
+          # Non-secret init inputs (shell variables used in run block)
           R2_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ENV:            ${{ github.event.inputs.environment || 'production' }}
         run: |
@@ -160,9 +176,7 @@ jobs:
             -input=false \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
             -backend-config="key=${STATE_KEY}" \
-            -backend-config="access_key=${R2_ACCESS_KEY}" \
-            -backend-config="secret_key=${R2_SECRET_KEY}" \
-            -backend-config="endpoints={s3=\"${R2_ENDPOINT}\"}"
+            -backend-config="endpoints.s3=${R2_ENDPOINT}"
 
       # ---- Terraform validate ----
       - name: Terraform Validate
@@ -275,13 +289,20 @@ jobs:
           terraform_wrapper: true
 
       # Reconnect to the R2 backend before we can use the saved plan.
+      # Same credential/env mechanism as the "plan" job's init step:
+      #   • credentials via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+      #     (standard SDK env vars — top of provider chain)
+      #   • non-secret options via dotted -backend-config flags
       - name: Terraform Init (R2 backend)
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           CLOUDFLARE_API_TOKEN:    ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID:   ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          R2_ACCESS_KEY:  ${{ secrets.TF_R2_ACCESS_KEY }}
-          R2_SECRET_KEY:  ${{ secrets.TF_R2_SECRET_KEY }}
+          # R2 backend auth via standard AWS SDK env vars
+          AWS_ACCESS_KEY_ID:     ${{ secrets.TF_R2_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_R2_SECRET_KEY }}
+          AWS_DEFAULT_REGION:    auto
+          # Non-secret init inputs
           R2_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ENV:            ${{ github.event.inputs.environment || 'production' }}
         run: |
@@ -292,9 +313,7 @@ jobs:
             -input=false \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
             -backend-config="key=${STATE_KEY}" \
-            -backend-config="access_key=${R2_ACCESS_KEY}" \
-            -backend-config="secret_key=${R2_SECRET_KEY}" \
-            -backend-config="endpoints={s3=\"${R2_ENDPOINT}\"}"
+            -backend-config="endpoints.s3=${R2_ENDPOINT}"
 
       # Download the binary plan saved by the "plan" job.
       - name: Download plan artifact

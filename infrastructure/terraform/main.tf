@@ -25,15 +25,33 @@
 #
 #   3. Initialize Terraform with backend credentials:
 #
-#        terraform init \
-#          -backend-config="bucket=ontodecide-terraform-state" \
-#          -backend-config="key=production/terraform.tfstate" \
-#          -backend-config="access_key=<YOUR_R2_ACCESS_KEY_ID>" \
-#          -backend-config="secret_key=<YOUR_R2_SECRET_ACCESS_KEY>" \
-#          -backend-config="endpoints={s3=https://<YOUR_ACCOUNT_ID>.r2.cloudflarestorage.com}"
+#      # --- OFFICIAL RECOMMENDED PATTERN per Cloudflare R2 docs ---
+#      # Set the standard AWS SDK credential env vars FIRST
+#      # (top of the provider chain, IMDS fallback never happens):
+#      export AWS_ACCESS_KEY_ID="<YOUR_R2_ACCESS_KEY_ID>"
+#      export AWS_SECRET_ACCESS_KEY="<YOUR_R2_SECRET_ACCESS_KEY>"
+#      export AWS_DEFAULT_REGION="auto"
 #
-#      For CI/CD (GitHub Actions), the same flags are passed via
-#      TF_CLI_ARGS_init or inline arguments to `terraform init`.
+#      # Then init — pass only NON-SECRET options via -backend-config.
+#      # Use the dotted `endpoints.s3=...` form (NOT the HCL map literal
+#      # `endpoints={s3="..."}`) — bash quoting of the map literal is
+#      # unreliable in CI and caused the previous init failure.
+#      terraform init \
+#        -backend-config="bucket=ontodecide-terraform-state" \
+#        -backend-config="key=production/terraform.tfstate" \
+#        -backend-config="endpoints.s3=https://<YOUR_ACCOUNT_ID>.r2.cloudflarestorage.com"
+#
+#      LOCAL TIP: If you need to run init from your laptop you can also
+#      place these three env vars plus CLOUDFLARE_API_TOKEN in a
+#      `.env` file and source it before `terraform init`.
+#
+#      DO NOT use -backend-config="access_key=.../secret_key=..." —
+#      those backend attributes are lower-priority for the AWS SDK
+#      credential provider chain and frequently fall through to the
+#      EC2 IMDS lookup on non-AWS runners, producing:
+#        "No valid credential sources found ... no EC2 IMDS role found".
+#      Using AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY avoids this
+#      entirely and matches Cloudflare's official sample code.
 #
 #   4. Migrating from local state: If you previously used backend "local",
 #      replace this block and run `terraform init -reconfigure` with the
