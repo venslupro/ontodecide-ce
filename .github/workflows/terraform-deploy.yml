@@ -33,16 +33,25 @@
 name: Terraform Deploy
 
 on:
+  # ------------------------------------------------------------------
+  # NEW RULE per latest requirement:
+  #   • terraform PLAN  → may run on EVERY branch (for PR authors to
+  #                        preview resource changes before merging).
+  #   • terraform APPLY → still restricted to the main branch ONLY
+  #                      (the job-level gate enforces that separately).
+  # ------------------------------------------------------------------
   push:
+    # Every branch (feature / hotfix / main) → auto run Plan so PRs
+    # can show what infrastructure impact the code has.
     branches:
-      - main
+      - '**'
+    tags-ignore:
+      - '**'
   workflow_dispatch:
-    # Manual trigger is ONLY permitted on the main branch. This matches
-    # the "terraform pipeline can only run on the main branch" requirement
-    # and prevents accidental destruction of the production state file
-    # triggered from a feature branch.
-    branches:
-      - main
+    # Manual trigger open to every branch so contributors can rerun
+    # Plan from any feature branch. Apply will still be gated to main
+    # by its own job-level `if` assertion, so no credentials or
+    # production state are ever modified from a non-main ref.
     inputs:
       environment:
         description: "Target environment name (sets the R2 state key prefix)."
@@ -127,12 +136,15 @@ jobs:
   plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
-    # DOUBLE-GATE: on.push.branches already restricts triggers to main, but
-    # we ALSO assert it here at job level. Without this, a user could edit
-    # the workflow file locally on a feature branch to remove the on-level
-    # restriction and manually dispatch terraform against production
-    # state. Both assertions must pass before any terraform command runs.
-    if: github.ref == 'refs/heads/main'
+    # --------------------------------------------------------------
+    # Plan may run on ANY branch. This lets contributors preview
+    # infrastructure diffs during code review (a plan produces a
+    # read-only view of the R2 state file, so there is no safety
+    # concern in allowing it from feature branches).
+    #
+    # The previous "github.ref == refs/heads/main" gate was removed
+    # on purpose to satisfy the new requirement.
+    # --------------------------------------------------------------
     outputs:
       plan-artifact: tfplan-${{ github.sha }}
       changed: ${{ steps.plan-summary.outputs.changed }}
