@@ -184,11 +184,22 @@ jobs:
           STATE_KEY="${ENV}/terraform.tfstate"
           R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
+          # Terraform's -backend-config does NOT accept the dotted-attribute
+          # form "endpoints.s3=..."; it only accepts TOP-LEVEL backend
+          # attributes. For nested objects (endpoints is an object of the
+          # shape { s3 = "..." }) we must pass the complete HCL map literal.
+          #
+          # Build the exact HCL string first into an intermediate bash
+          # variable — this avoids every backslash/quote/dollar escape pitfall
+          # of inlining it directly into the terraform init command line.
+          # Ref: hashicorp/terraform internal backendConfigFlagHCL parsing.
+          HCL_ENDPOINTS="endpoints = { s3 = \"${R2_ENDPOINT}\" }"
+
           terraform init \
             -input=false \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
             -backend-config="key=${STATE_KEY}" \
-            -backend-config="endpoints.s3=${R2_ENDPOINT}"
+            -backend-config="${HCL_ENDPOINTS}"
 
       # ---- Terraform validate ----
       - name: Terraform Validate
@@ -331,11 +342,22 @@ jobs:
           STATE_KEY="${ENV}/terraform.tfstate"
           R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
+          # Terraform's -backend-config does NOT accept the dotted-attribute
+          # form "endpoints.s3=..."; it only accepts TOP-LEVEL backend
+          # attributes. For nested objects (endpoints is an object of the
+          # shape { s3 = "..." }) we must pass the complete HCL map literal.
+          #
+          # Build the exact HCL string first into an intermediate bash
+          # variable — this avoids every backslash/quote/dollar escape pitfall
+          # of inlining it directly into the terraform init command line.
+          # Ref: hashicorp/terraform internal backendConfigFlagHCL parsing.
+          HCL_ENDPOINTS="endpoints = { s3 = \"${R2_ENDPOINT}\" }"
+
           terraform init \
             -input=false \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
             -backend-config="key=${STATE_KEY}" \
-            -backend-config="endpoints.s3=${R2_ENDPOINT}"
+            -backend-config="${HCL_ENDPOINTS}"
 
       # Download the binary plan saved by the "plan" job.
       - name: Download plan artifact

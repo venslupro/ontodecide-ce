@@ -31,19 +31,28 @@
 #      export AWS_ACCESS_KEY_ID="<YOUR_R2_ACCESS_KEY_ID>"
 #      export AWS_SECRET_ACCESS_KEY="<YOUR_R2_SECRET_ACCESS_KEY>"
 #      export AWS_DEFAULT_REGION="auto"
+#      export CF_ACCOUNT_ID="<YOUR_CLOUDFLARE_ACCOUNT_ID>"
 #
 #      # Then init — pass only NON-SECRET options via -backend-config.
-#      # Use the dotted `endpoints.s3=...` form (NOT the HCL map literal
-#      # `endpoints={s3="..."}`) — bash quoting of the map literal is
-#      # unreliable in CI and caused the previous init failure.
+#      #
+#      # IMPORTANT: endpoints is a NESTED OBJECT ({ s3 = "..." }) and
+#      # Terraform's `-backend-config` CLI only accepts TOP-LEVEL
+#      # attributes. Dotted form ("endpoints.s3=...") is NOT supported.
+#      # You must pass the complete HCL map literal.
+#      #
+#      # To avoid every bash quote/escape pitfall, build the value into
+#      # a temp bash variable first, then reference it:
+#      R2_ENDPOINT="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+#      HCL_ENDPOINTS="endpoints = { s3 = \"${R2_ENDPOINT}\" }"
+#
 #      terraform init \
 #        -backend-config="bucket=ontodecide-terraform-state" \
 #        -backend-config="key=production/terraform.tfstate" \
-#        -backend-config="endpoints.s3=https://<YOUR_ACCOUNT_ID>.r2.cloudflarestorage.com"
+#        -backend-config="${HCL_ENDPOINTS}"
 #
 #      LOCAL TIP: If you need to run init from your laptop you can also
-#      place these three env vars plus CLOUDFLARE_API_TOKEN in a
-#      `.env` file and source it before `terraform init`.
+#      place these four env vars plus CLOUDFLARE_API_TOKEN in a
+#      `.env` file and source it before running the snippet above.
 #
 #      DO NOT use -backend-config="access_key=.../secret_key=..." —
 #      those backend attributes are lower-priority for the AWS SDK
@@ -52,6 +61,13 @@
 #        "No valid credential sources found ... no EC2 IMDS role found".
 #      Using AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY avoids this
 #      entirely and matches Cloudflare's official sample code.
+#
+#      DO NOT use -backend-config="endpoints.s3=..." either. That
+#      dotted attribute form is silently rejected by Terraform:
+#        "Invalid backend configuration argument ... is not expected
+#         for the selected backend type".
+#      Only the full HCL map literal (shown above) is accepted for
+#      object-typed backend settings.
 #
 #   4. Migrating from local state: If you previously used backend "local",
 #      replace this block and run `terraform init -reconfigure` with the
