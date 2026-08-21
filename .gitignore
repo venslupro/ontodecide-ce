@@ -48,3 +48,6 @@ crash.*.log
 # Test coverage
 coverage/
 .nyc_output/
+
+# TRAE IDE — local internal work directory
+.trae/
