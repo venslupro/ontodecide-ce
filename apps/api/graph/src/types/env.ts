@@ -12,6 +12,8 @@ export interface GraphEnv extends BaseEnv {
   NEO4J_USER: string;
   /** Neo4j password (set as a Wrangler secret in production). */
   NEO4J_PASSWORD: string;
+  /** Neo4j database name (single shared DB for all tenants). */
+  NEO4J_DATABASE: string;
 }
 
 /** Shape of a Neo4j HTTP transactional response. */

@@ -68,15 +68,15 @@ id = "REPLACE_WITH_KV_ID"
 [vars]
 NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
 NEO4J_USER = "neo4j"
+NEO4J_DATABASE = "neo4j"
 
 B2_REGION           = "us-west-004"
 B2_INGESTION_BUCKET = "ontodecide-ingestion-staging-production"
 B2_ARCHIVE_BUCKET   = "ontodecide-tenant-archive-production"
 
 # Secrets (Dashboard → Secrets, CI, or `wrangler secret put`):
-#   NEO4J_PASSWORD   — Password for NEO4J_USER; cluster /db/system role
-#                      MUST have the "Create database" / "Drop database"
-#                      privileges for per-tenant logical DBs.
+#   NEO4J_PASSWORD   — Password for NEO4J_USER on the shared database.
+#                      Used for DETACH DELETE tenant cleanup queries.
 #   B2_KEY_ID        — B2 Application Key keyID with R/W on BOTH the
 #                      ingestion staging + tenant archive buckets.
 #   B2_KEY           — B2 Application Key secret paired with B2_KEY_ID.

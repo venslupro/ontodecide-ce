@@ -32,18 +32,17 @@ id = "REPLACE_WITH_KV_ID"
 
 [vars]
 AI_DEFAULT_PROVIDER = "workers-ai"
-NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
-NEO4J_USER = "neo4j"
 EMAIL_FROM = "venslu.pro@gmail.com"
 
 # Secrets (Dashboard → Secrets, CI, or `wrangler secret put`):
 #   JWT_SECRET     — HMAC signing secret.
 #                    **Required** here (signs tokens) and in the Gateway
 #                    (verifies tokens); NOT required in downstream workers.
-#   NEO4J_PASSWORD — Password for NEO4J_USER. The Neo4j system role
-#                    MUST grant "Create database" / "Drop database" so
-#                    per-tenant logical DBs work.
 #   EMAIL_API_KEY  — Resend (or compatible) API key for sending
 #                    transactional emails (account credentials).
 #                    Optional: when unset, emails are skipped and the
 #                    temporary password is returned in the API response.
+#
+# NOTE: This service no longer needs Neo4j credentials. Tenant data
+# isolation is handled by the Graph Service via property isolation
+# (tenant_id on every node), using a single shared Neo4j database.

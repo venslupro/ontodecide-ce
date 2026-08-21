@@ -20,7 +20,6 @@ import {
   tenantId,
   nowIso,
   nowEpochSeconds,
-  createTenantDbStatement,
   sendEmail,
   buildCredentialEmail,
   DEFAULT_EMAIL_FROM,
@@ -129,9 +128,6 @@ export class UserManagementService {
       mustChangePassword: true,
       expiresAt,
     });
-    // Create the tenant's Neo4j logical database BEFORE saving the
-    // user to D1. If database provisioning fails we roll back cleanly.
-    await this.createNeo4jDatabase(user.tenantId);
     await this.users.save(user);
     await this.recordAudit(ctx, {
       action: 'create_user',
@@ -194,7 +190,6 @@ export class UserManagementService {
       mustChangePassword: true,
       expiresAt,
     });
-    await this.createNeo4jDatabase(user.tenantId);
     await this.users.save(user);
     await this.recordAudit(ctx, {
       action: 'create_user',
@@ -203,50 +198,6 @@ export class UserManagementService {
       tenantId: user.tenantId,
     });
     return {user, temporaryPassword};
-  }
-
-  /**
-   * Issue a `CREATE DATABASE` command to the Neo4j system database.
-   *
-   * Uses IF NOT EXISTS for idempotency (safe if the command is
-   * retried by the caller). The endpoint path is /db/system/tx/commit.
-   *
-   * Graceful no-op if the env binding was not provided (unit-test / local
-   * dev scenarios without a real Neo4j cluster).
-   */
-  private async createNeo4jDatabase(tenantId: string): Promise<void> {
-    if (!this.env) return;
-    const {NEO4J_URL, NEO4J_USER, NEO4J_PASSWORD} = this.env;
-    if (!NEO4J_URL || !NEO4J_USER || !NEO4J_PASSWORD) return;
-    const base = NEO4J_URL.replace(/\/$/, '');
-    const endpoint = `${base}/db/system/tx/commit`;
-    const auth = 'Basic ' + btoa(`${NEO4J_USER}:${NEO4J_PASSWORD}`);
-    const body = JSON.stringify({
-      statements: [{statement: createTenantDbStatement(tenantId)}],
-    });
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Authorization': auth,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json;charset=UTF-8',
-      },
-      body,
-    });
-    if (!response.ok) {
-      throwError(
-          ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-          `Failed to provision Neo4j tenant DB: HTTP ${response.status} ${await response.text()}`,
-      );
-    }
-    const data = (await response.json()) as {errors?: Array<{code: string; message: string}>};
-    if (data.errors && data.errors.length > 0) {
-      const first = data.errors[0];
-      throwError(
-          ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-          `Failed to provision Neo4j tenant DB: ${first.code}: ${first.message}`,
-      );
-    }
   }
 
   /**

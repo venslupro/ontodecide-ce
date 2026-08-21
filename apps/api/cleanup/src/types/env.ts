@@ -32,6 +32,8 @@ export interface CleanupEnv extends BaseEnv {
   NEO4J_USER: string;
   /** Neo4j password (secret). */
   NEO4J_PASSWORD: string;
+  /** Neo4j database name (single shared DB for all tenants). */
+  NEO4J_DATABASE: string;
 }
 
 /** Message published to the cleanup queue. */

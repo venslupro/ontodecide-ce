@@ -13,10 +13,6 @@ export interface UserEnv extends BaseEnv, JwtEnv {
   DB: D1Database;
   /** KV cache namespace. */
   CACHE: KVNamespace;
-  /** Neo4j AuraDB connection — used to create per-tenant databases. */
-  NEO4J_URL: string;
-  NEO4J_USER: string;
-  NEO4J_PASSWORD: string;
   /** Resend (or compatible) API key for sending transactional emails. */
   EMAIL_API_KEY?: string;
   /** Sender email address for credential notifications. */

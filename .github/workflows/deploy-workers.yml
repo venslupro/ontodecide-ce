@@ -39,7 +39,7 @@
 #   + Per-Worker runtime secrets (pushed by each matrix job via
 #     `wrangler secret put` — set once, survives re-deploys):
 #     JWT_SECRET        — HMAC signing key.  **Gateway + User only.**
-#     NEO4J_PASSWORD    — AuraDB password (user/graph/cleanup only).
+#     NEO4J_PASSWORD    — AuraDB password (graph/cleanup only).
 #     B2_KEY_ID         — Backblaze B2 Application Key keyID
 #                         (ingestion/cleanup only).
 #     B2_KEY            — Backblaze B2 Application Key secret
@@ -81,7 +81,6 @@ jobs:
             package: '@ontodecide/user'
             secrets: |
               JWT_SECRET=${{ secrets.JWT_SECRET }}
-              NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
               EMAIL_API_KEY=${{ secrets.EMAIL_API_KEY }}
           - name: 'graph'
             config: 'apps/api/graph/wrangler.toml'

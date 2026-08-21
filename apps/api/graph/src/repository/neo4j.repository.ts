@@ -5,15 +5,12 @@
  * transactional endpoint which accepts a JSON body of Cypher
  * statements.
  *
- * Per-tenant logical database isolation: each tenant gets their own
- * Neo4j database (created by the User Service at signup). The
- * endpoint URL is dynamic — `/db/<tenantDbName>/tx/commit` — so
- * all Cypher statements are automatically isolated at the database
- * level. No `WHERE n.tenant_id = $tid` clause is needed anymore.
- *
- * Database lifecycle:
- *   - Created: User Service calls CREATE DATABASE on /db/system
- *   - Dropped:  Cleanup Service calls DROP DATABASE on /db/system
+ * Property isolation: ALL tenants share a single Neo4j database
+ * (configured via `NEO4J_DATABASE`). Every node and relationship
+ * carries a `tenant_id` property, and every Cypher query explicitly
+ * filters by it — e.g. `MATCH (e:Entity {tenant_id: $tenantId})`.
+ * This provides strong isolation without requiring per-tenant
+ * database creation/deletion.
  */
 import {
   EntityNode,
@@ -22,7 +19,6 @@ import {
   OntologyType,
   SituationNode,
   throwError,
-  tenantDbName,
 } from '@ontodecide/shared';
 import type {GraphEnv, Neo4jResponse} from '../types/env.js';
 import type {EntityRelation, IGraphRepository} from './graph.repository.js';
@@ -34,21 +30,22 @@ interface Neo4jRow {
 export class Neo4jRepository implements IGraphRepository {
   private readonly baseUrl: string;
   private readonly authHeader: string;
+  private readonly database: string;
 
   constructor(env: GraphEnv) {
     this.baseUrl = env.NEO4J_URL.replace(/\/$/, '');
     const credentials = `${env.NEO4J_USER}:${env.NEO4J_PASSWORD}`;
     this.authHeader = 'Basic ' + btoa(credentials);
+    this.database = env.NEO4J_DATABASE;
   }
 
   /**
-   * Build the transactional endpoint URL for a given tenant's
-   * database. Each tenant has their own logical database created
-   * at signup; all queries are routed there automatically.
+   * Build the transactional endpoint URL for the shared database.
+   * All tenants use the same database; isolation is enforced via
+   * `tenant_id` properties in Cypher queries.
    */
-  private endpointFor(tenantId: string): string {
-    const db = tenantDbName(tenantId);
-    return `${this.baseUrl}/db/${db}/tx/commit`;
+  private endpointFor(): string {
+    return `${this.baseUrl}/db/${this.database}/tx/commit`;
   }
 
   public async upsertOntology(tenantId: string, type: OntologyType): Promise<void> {
@@ -59,7 +56,7 @@ export class Neo4jRepository implements IGraphRepository {
           ot.relations = $relations,
           ot.created_at = datetime()
     `;
-    await this.execute(tenantId, statement, {
+    await this.execute(statement, {
       id: type.id,
       tenantId,
       name: type.name,
@@ -73,7 +70,7 @@ export class Neo4jRepository implements IGraphRepository {
       MATCH (ot:OntologyType {tenant_id: $tenantId})
       RETURN ot.id, ot.name, ot.properties, ot.relations
     `;
-    const rows = await this.execute(tenantId, statement, {tenantId});
+    const rows = await this.execute(statement, {tenantId});
     return rows.map((row) => this.decodeOntology(row));
   }
 
@@ -127,7 +124,7 @@ export class Neo4jRepository implements IGraphRepository {
       };
     });
     const statements = [...entityStatements, ...relationStatements];
-    await this.executeBatch(payload.tenant_id, statements);
+    await this.executeBatch(statements);
     return {accepted: payload.entities.length};
   }
 
@@ -143,7 +140,7 @@ export class Neo4jRepository implements IGraphRepository {
       RETURN e.id, e.type, e.attributes, e.source, e.confidence, e.timestamp
       LIMIT $limit
     `;
-    const rows = await this.execute(tenantId, statement, {
+    const rows = await this.execute(statement, {
       tenantId,
       type: filter.type,
       limit,
@@ -157,7 +154,7 @@ export class Neo4jRepository implements IGraphRepository {
       RETURN e.id, e.type, e.attributes, e.source, e.confidence, e.timestamp
       LIMIT 1
     `;
-    const rows = await this.execute(tenantId, statement, {tenantId, id: entityId});
+    const rows = await this.execute(statement, {tenantId, id: entityId});
     if (rows.length === 0) return null;
     return this.decodeEntity(rows[0], tenantId);
   }
@@ -168,7 +165,7 @@ export class Neo4jRepository implements IGraphRepository {
       DETACH DELETE e
       RETURN count(e) as deleted
     `;
-    const rows = await this.execute(tenantId, statement, {tenantId, id: entityId});
+    const rows = await this.execute(statement, {tenantId, id: entityId});
     const row = rows[0]?.row as unknown[];
     return Number(row?.[0] ?? 0);
   }
@@ -187,7 +184,7 @@ export class Neo4jRepository implements IGraphRepository {
         target: {id: n.id, type: n.type, attributes: n.attributes}
       }) as relations
     `;
-    const rows = await this.execute(tenantId, statement, {tenantId, id: rootId});
+    const rows = await this.execute(statement, {tenantId, id: rootId});
     if (rows.length === 0) {
       throwError(ERROR_CODES.GRAPH_ENTITY_NOT_FOUND, `Entity ${rootId} not found.`);
     }
@@ -228,7 +225,7 @@ export class Neo4jRepository implements IGraphRepository {
         id: n.id, type: n.type, attributes: n.attributes
       }}) as relations
     `;
-    const rows = await this.execute(tenantId, statement, {
+    const rows = await this.execute(statement, {
       tenantId,
       id: rootId,
       relationTypes: relationTypes ?? [],
@@ -271,7 +268,7 @@ export class Neo4jRepository implements IGraphRepository {
       statement :
       `${statement.replace(/;$/, '')} LIMIT $limit`;
     const params = {...parameters, tenantId, limit};
-    const rows = await this.execute(tenantId, safeStatement, params);
+    const rows = await this.execute(safeStatement, params);
     return rows.map((row) => {
       const obj: Record<string, unknown> = {};
       const values = row.row as unknown[];
@@ -283,48 +280,30 @@ export class Neo4jRepository implements IGraphRepository {
   }
 
   /**
-   * Drop the tenant's entire Neo4j database.
+   * Delete all tenant-owned nodes and relationships via property
+   * isolation.
    *
-   * This is a system-level command sent to /db/system/tx/commit.
-   * It instantly removes ALL nodes, relationships, indexes, and
-   * constraints for the tenant — far faster than node-by-node
-   * DETACH DELETE, and with zero risk of partial deletion.
-   *
-   * The database is created by the User Service at signup; here we
-   * only drop it.
+   * Uses `MATCH (n {tenant_id: $tenantId}) DETACH DELETE n` on the
+   * shared database — removes every node (and its relationships)
+   * that belongs to this tenant in a single atomic operation.
    */
   public async deleteTenant(tenantId: string): Promise<number> {
-    const {dropTenantDbStatement} = await import('@ontodecide/shared');
-    const systemEndpoint = `${this.baseUrl}/db/system/tx/commit`;
-    const body = JSON.stringify({
-      statements: [{statement: dropTenantDbStatement(tenantId)}],
-    });
-    const response = await fetch(systemEndpoint, {
-      method: 'POST',
-      headers: {
-        'Authorization': this.authHeader,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json;charset=UTF-8',
-      },
-      body,
-    });
-    if (!response.ok) {
-      throwError(
-          ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-          `Neo4j DROP DATABASE HTTP ${response.status}: ${await response.text()}`,
-      );
-    }
-    // DROP DATABASE doesn't return a count; return 1 for success.
-    return 1;
+    const statement = `
+      MATCH (n {tenant_id: $tenantId})
+      DETACH DELETE n
+      RETURN count(n) as deleted
+    `;
+    const rows = await this.execute(statement, {tenantId});
+    const row = rows[0]?.row as unknown[];
+    return Number(row?.[0] ?? 0);
   }
 
-  /** Execute a single Cypher statement on the tenant's database. */
+  /** Execute a single Cypher statement on the shared database. */
   private async execute(
-      tenantId: string,
       statement: string,
       parameters: Record<string, unknown>,
   ): Promise<Neo4jRow[]> {
-    const endpoint = this.endpointFor(tenantId);
+    const endpoint = this.endpointFor();
     const body = JSON.stringify({
       statements: [{statement, parameters}],
     });
@@ -353,10 +332,9 @@ export class Neo4jRepository implements IGraphRepository {
 
   /** Execute multiple Cypher statements in one HTTP round-trip. */
   private async executeBatch(
-      tenantId: string,
       statements: Array<{statement: string; parameters: Record<string, unknown>}>,
   ): Promise<Neo4jRow[]> {
-    const endpoint = this.endpointFor(tenantId);
+    const endpoint = this.endpointFor();
     const body = JSON.stringify({statements});
     const response = await fetch(endpoint, {
       method: 'POST',

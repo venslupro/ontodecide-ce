@@ -4,7 +4,8 @@
  * Drives the purge pipeline described in the design doc §4.6:
  *   1. Archive user metadata to B2 tenant-archive bucket (backup).
  *      Includes: user record, audit logs, decisions, config snapshots.
- *   2. Neo4j:   `MATCH (n {tenant_id}) DETACH DELETE n`
+ *   2. Neo4j:   `MATCH (n {tenant_id: $tid}) DETACH DELETE n` on the
+ *      shared database (property isolation — no per-tenant DB to drop).
  *   3. D1:      delete decisions / audit_logs / refresh_tokens rows
  *   4. KV:      delete all `tenant:{tid}:*` keys across every namespace
  *   5. B2:      delete `{tid}/*` objects from the ingestion staging bucket
@@ -27,7 +28,6 @@ import {
   type B2Client,
   createArchiveB2Client,
   createIngestionB2Client,
-  dropTenantDbStatement,
 } from '@ontodecide/shared';
 import type {CleanupEnv} from '../types/env.js';
 import {drizzle} from 'drizzle-orm/d1';
@@ -172,23 +172,25 @@ async function archiveUserMetadata(
 }
 
 /**
- * Drop the tenant's entire Neo4j logical database.
+ * Delete all tenant-owned nodes and relationships via property isolation.
  *
- * This is a SINGLE SYSTEM-LEVEL command (DROP DATABASE) — it removes
- * ALL nodes, relationships, indexes, and constraints belonging to
- * the tenant in one atomic operation. Far faster and cleaner than
- * the previous `MATCH (n {tenant_id}) DETACH DELETE n` node-by-node
- * approach, which was vulnerable to partial deletes and
- * OOMs on large tenant graphs.
- *
- * Database names follow the convention in shared/utils/neo4j-db.ts
- * (tenant_<sanitized_tenantId>).
+ * Uses `MATCH (n {tenant_id: $tenantId}) DETACH DELETE n` on the shared
+ * Neo4j database. This removes every node (and its relationships) that
+ * belongs to the tenant in a single atomic Cypher operation — no
+ * per-tenant database creation/deletion needed.
  */
 async function deleteNeo4jTenant(tenantId: string, env: CleanupEnv): Promise<number> {
-  const endpoint = `${env.NEO4J_URL.replace(/\/$/, '')}/db/system/tx/commit`;
+  const endpoint = `${env.NEO4J_URL.replace(/\/$/, '')}/db/${env.NEO4J_DATABASE}/tx/commit`;
   const auth = 'Basic ' + btoa(`${env.NEO4J_USER}:${env.NEO4J_PASSWORD}`);
   const body = JSON.stringify({
-    statements: [{statement: dropTenantDbStatement(tenantId)}],
+    statements: [{
+      statement: `
+        MATCH (n {tenant_id: $tenantId})
+        DETACH DELETE n
+        RETURN count(n) as deleted
+      `,
+      parameters: {tenantId},
+    }],
   });
   try {
     const response = await fetch(endpoint, {
@@ -203,22 +205,25 @@ async function deleteNeo4jTenant(tenantId: string, env: CleanupEnv): Promise<num
     if (!response.ok) {
       throwError(
           ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-          `Neo4j DROP DATABASE HTTP ${response.status}: ${await response.text()}`,
+          `Neo4j DETACH DELETE HTTP ${response.status}: ${await response.text()}`,
       );
     }
-    const data = (await response.json()) as {errors?: Array<{code: string; message: string}>};
+    const data = (await response.json()) as {
+      errors?: Array<{code: string; message: string}>;
+      results?: Array<{data: Array<{row: unknown[]}>}>;
+    };
     if (data.errors && data.errors.length > 0) {
       throwError(ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-          `Neo4j DROP DATABASE errors: ${JSON.stringify(data.errors)}`);
+          `Neo4j DETACH DELETE errors: ${JSON.stringify(data.errors)}`);
     }
-    // DROP DATABASE doesn't return a row count; return 1 for success.
-    return 1;
+    const deleted = data.results?.[0]?.data?.[0]?.row?.[0];
+    return Number(deleted ?? 0);
   } catch (err) {
     // Neo4j unreachable — propagate; the consumer will mark this
     // tenant as failed, and the next cron run will retry.
     throwError(
         ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-        `Neo4j cleanup (DROP DATABASE) failed: ${err instanceof Error ? err.message : String(err)}`,
+        `Neo4j cleanup (DETACH DELETE) failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
