@@ -71,7 +71,7 @@ const REQUIRED_KEYS: ConfigKey[] = [
   configKey('INGESTION_JOBS', 'KV namespace for ingestion jobs'),
   configKey('AI_CACHE', 'KV namespace for AI cache'),
   configKey('CLEANUP_JOBS', 'KV namespace for cleanup jobs'),
-  configKey('NEO4J_URL', 'Neo4j AuraDB connection URL', validators.url),
+  configKey('NEO4J_URL', 'Neo4j AuraDB connection URL', validators.neo4jUrl),
   configKey('NEO4J_USER', 'Neo4j username', validators.nonEmpty),
   configKey('NEO4J_PASSWORD', 'Neo4j password', validators.minLength(1)),
   configKey('NEO4J_DATABASE', 'Neo4j database name', validators.nonEmpty),

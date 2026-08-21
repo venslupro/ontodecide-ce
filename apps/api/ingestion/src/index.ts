@@ -106,7 +106,7 @@ const REQUIRED_KEYS: ConfigKey[] = [
   configKey('GRAPH_SERVICE', 'Service Binding to Graph Worker'),
 ];
 const OPTIONAL_KEYS: ConfigKey[] = [
-  configKey('GRAPH_SERVICE_URL', 'Fallback URL for Graph Service (dev only)', validators.url),
+  configKey('GRAPH_SERVICE_URL', 'Fallback URL for Graph Service (dev only)', validators.url()),
 ];
 
 // Config validation middleware — runs once per Worker instance.

@@ -68,7 +68,7 @@ let configValidated = false;
 
 const REQUIRED_KEYS = [
   configKey('CACHE', 'KV cache namespace for ontology + entity caches'),
-  configKey('NEO4J_URL', 'Neo4j AuraDB connection URL', validators.url),
+  configKey('NEO4J_URL', 'Neo4j AuraDB connection URL', validators.neo4jUrl),
   configKey('NEO4J_USER', 'Neo4j username (usually "neo4j")', validators.nonEmpty),
   configKey('NEO4J_PASSWORD', 'Neo4j password', validators.minLength(1)),
   configKey('NEO4J_DATABASE', 'Neo4j database name', validators.nonEmpty),

@@ -66,17 +66,67 @@ export const validators = {
     return null;
   },
 
-  /** String must be a valid URL (http or https). */
-  url: (value: unknown): string | null => {
+  /**
+   * String must be a valid URL.
+   * Accepts http, https, or custom protocols like `neo4j:`.
+   *
+   * @param allowedProtocols Allowed protocol prefixes (without `:`).
+   *                         Defaults to `['http', 'https']`.
+   *
+   * @example
+   * // Basic HTTP/HTTPS URL
+   * validators.url()
+   *
+   * // Neo4j connection URL (accepts neo4j:, neo4j+s:, neo4j+ssc:, http:, https:)
+   * validators.url(['http', 'https', 'neo4j', 'neo4j+s', 'neo4j+ssc'])
+   */
+  url: (allowedProtocols: string[] = ['http', 'https']) =>
+    (value: unknown): string | null => {
+      if (typeof value !== 'string') return `must be a string`;
+      try {
+        const parsed = new URL(value);
+        const proto = parsed.protocol.replace(/:$/, '');
+        if (!allowedProtocols.includes(proto)) {
+          return `must use one of [${allowedProtocols.join(', ')}] protocol (got: ${proto})`;
+        }
+        return null;
+      } catch {
+        return `must be a valid URL (got: ${JSON.stringify(value)})`;
+      }
+    },
+
+  /**
+   * Neo4j AuraDB / community connection URL.
+   * Accepts:
+   *   - HTTPS  (HTTP transactional API, used by Cloudflare Workers)
+   *   - HTTP   (local development, e.g. http://localhost:7474)
+   *   - neo4j:  (Bolt direct, e.g. neo4j://localhost:7687)
+   *   - neo4j+s: (Bolt+TLS, AuraDB default, e.g. neo4j+s://host:7687)
+   *   - neo4j+ssc: (Bolt+self-signed cert)
+   *
+   * Optionally validates the hostname for AuraDB pattern (ends with
+   * `.databases.neo4j.io`).
+   */
+  neo4jUrl: (value: unknown): string | null => {
     if (typeof value !== 'string') return `must be a string`;
+    const allowed = ['http', 'https', 'neo4j', 'neo4j+s', 'neo4j+ssc'];
     try {
       const parsed = new URL(value);
-      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-        return `must use http or https protocol (got: ${parsed.protocol})`;
+      const proto = parsed.protocol.replace(/:$/, '');
+      if (!allowed.includes(proto)) {
+        return `Neo4j URL must use one of [${allowed.join(', ')}] protocol (got: ${proto})`;
+      }
+      // If it looks like an AuraDB URL, verify the hostname pattern.
+      if (parsed.hostname.endsWith('.databases.neo4j.io')) {
+        // AuraDB instance IDs are 36-char hex-like strings with hyphens.
+        const instanceId = parsed.hostname.replace('.databases.neo4j.io', '');
+        if (!/^[a-f0-9-]+$/i.test(instanceId) || instanceId.length < 8) {
+          return `Neo4j AuraDB URL has suspicious instance id: "${instanceId}"`;
+        }
       }
       return null;
     } catch {
-      return `must be a valid URL (got: ${JSON.stringify(value)})`;
+      return `must be a valid Neo4j connection URL (got: ${JSON.stringify(value)})`;
     }
   },
 
