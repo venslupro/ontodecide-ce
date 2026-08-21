@@ -136,30 +136,57 @@ jobs:
       - name: Build ${{ matrix.service.name }}
         run: pnpm turbo run build --filter=${{ matrix.service.package }}
 
-      # Upload secrets + deploy Worker.
-      # wrangler-action expects `secrets` as a list of SECRET NAMES
-      # (one per line). It reads values from process.env, so we
-      # map all GitHub Secrets → job-level env (above) and pass
-      # only the secret names here.
-      # Empty lines from conditional expressions are filtered out
-      # by @actions/core getMultilineInput().
+      # Build the secrets list for the current service.
+      # wrangler-action expects secret NAMES (one per line), not
+      # NAME=VALUE pairs. It reads values from process.env, which
+      # we populate via the job-level env: mapping above.
+      # We use a shell step to avoid GitHub Actions expression
+      # limitations (no ternary ? : operator).
+      - name: Prepare secrets for ${{ matrix.service.name }}
+        id: prepare_secrets
+        shell: bash
+        run: |
+          names=""
+          case "${{ matrix.service.name }}" in
+            gateway)
+              names="JWT_SECRET" ;;
+            user)
+              names="JWT_SECRET
+EMAIL_API_KEY" ;;
+            graph)
+              names="NEO4J_PASSWORD" ;;
+            ingestion)
+              names="B2_KEY_ID
+B2_KEY" ;;
+            ai)
+              names="OPENAI_API_KEY
+ANTHROPIC_API_KEY
+GOOGLE_API_KEY
+OPENROUTER_API_KEY
+AI_GATEWAY_TOKEN" ;;
+            cleanup)
+              names="NEO4J_PASSWORD
+B2_KEY_ID
+B2_KEY" ;;
+          esac
+          echo "secrets<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$names" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      # Deploy Worker code AND push runtime secrets in one step.
+      # `secrets` input is written by wrangler-action@v3 via
+      # `wrangler secret put <NAME>` — values come from the
+      # job-level env (mapped from GitHub Secrets above).
+      # Resource IDs (D1 / KV / Queue names / Service Bindings)
+      # come from either wrangler.toml defaults or (preferred)
+      # Dashboard Variables overrides — NOT managed by this CI.
       - name: Deploy ${{ matrix.service.name }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           command: deploy --config ${{ matrix.service.config }}
-          secrets: |
-            ${{ matrix.service.name == 'gateway' || matrix.service.name == 'user' ? 'JWT_SECRET' : '' }}
-            ${{ matrix.service.name == 'user' ? 'EMAIL_API_KEY' : '' }}
-            ${{ matrix.service.name == 'graph' || matrix.service.name == 'cleanup' ? 'NEO4J_PASSWORD' : '' }}
-            ${{ matrix.service.name == 'ingestion' || matrix.service.name == 'cleanup' ? 'B2_KEY_ID' : '' }}
-            ${{ matrix.service.name == 'ingestion' || matrix.service.name == 'cleanup' ? 'B2_KEY' : '' }}
-            ${{ matrix.service.name == 'ai' ? 'OPENAI_API_KEY' : '' }}
-            ${{ matrix.service.name == 'ai' ? 'ANTHROPIC_API_KEY' : '' }}
-            ${{ matrix.service.name == 'ai' ? 'GOOGLE_API_KEY' : '' }}
-            ${{ matrix.service.name == 'ai' ? 'OPENROUTER_API_KEY' : '' }}
-            ${{ matrix.service.name == 'ai' ? 'AI_GATEWAY_TOKEN' : '' }}
+          secrets: ${{ steps.prepare_secrets.outputs.secrets }}
 
   # ---------------------------------------------------------------
   # Post-deploy: apply D1 migrations to the shared decision-db.
