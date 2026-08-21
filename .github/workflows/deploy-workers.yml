@@ -143,25 +143,32 @@ jobs:
       # CLOUDFLARE_ACCOUNT_ID (NOT CF_API_TOKEN / CF_ACCOUNT_ID).
       # We export the mapped names so direct `wrangler` shell commands
       # (queues create, d1 create) are authenticated.
+      #
+      # Queue creation runs from REPO ROOT (not the worker directory)
+      # so wrangler does NOT pick up the worker's wrangler.toml which
+      # references the queue being created (circular dependency when
+      # the DLQ doesn't exist yet).
       - name: Ensure Cloudflare resources for ${{ matrix.service.name }}
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
-          W="pnpm --filter=@ontodecide/${{ matrix.service.name }} exec wrangler"
+          cd "${GITHUB_WORKSPACE}"
           #
           # Ensure D1 database exists (shared by user + ai + cleanup)
           # Best-effort: D1 is auto-created on first deploy, so we
           # don't fail if the pre-create step errors.
+          # Note: wrangler 3.114+ does NOT support --remote for D1;
+          # it defaults to remote in non-local mode.
           #
           DB_NAME="ontodecide-decision-db-production"
           case "${{ matrix.service.name }}" in
             user|ai|cleanup)
               set +e
-              if ! $W d1 list --remote 2>/dev/null | grep -q "$DB_NAME"; then
+              if ! npx wrangler d1 list 2>/dev/null | grep -q "$DB_NAME"; then
                 echo "Creating D1 database: $DB_NAME"
-                $W d1 create "$DB_NAME" --remote
+                npx wrangler d1 create "$DB_NAME"
               else
                 echo "D1 database $DB_NAME already exists"
               fi
@@ -169,37 +176,55 @@ jobs:
               ;;
           esac
           #
-          # Ensure Queues exist (ingestion + cleanup)
+          # Ensure Queues exist (ingestion + cleanup).
           # MUST succeed: wrangler deploy fails if referenced queues
-          # don't exist.  We use set -e so queue creation errors are
-          # surfaced immediately, not silently swallowed.
+          # don't exist.  We create DLQs FIRST (no DLQ dependency),
+          # then the main queues (which reference the DLQ).
           #
           case "${{ matrix.service.name }}" in
             ingestion)
-              for q in ontodecide-ingestion-production ontodecide-ingestion-dlq-production; do
-                set +e
-                if ! $W queues list 2>/dev/null | grep -q "$q"; then
-                  set -e
-                  echo "Creating Queue: $q"
-                  $W queues create "$q"
-                else
-                  set -e
-                  echo "Queue $q already exists"
-                fi
-              done
+              # 1) Create DLQ first (no DLQ dependency)
+              set +e
+              if ! npx wrangler queues list 2>/dev/null | grep -q "ontodecide-ingestion-dlq-production"; then
+                set -e
+                echo "Creating DLQ: ontodecide-ingestion-dlq-production"
+                npx wrangler queues create "ontodecide-ingestion-dlq-production"
+              else
+                set -e
+                echo "DLQ ontodecide-ingestion-dlq-production already exists"
+              fi
+              # 2) Create main queue (references the DLQ above)
+              set +e
+              if ! npx wrangler queues list 2>/dev/null | grep -q "ontodecide-ingestion-production"; then
+                set -e
+                echo "Creating Queue: ontodecide-ingestion-production"
+                npx wrangler queues create "ontodecide-ingestion-production"
+              else
+                set -e
+                echo "Queue ontodecide-ingestion-production already exists"
+              fi
               ;;
             cleanup)
-              for q in ontodecide-cleanup-production ontodecide-cleanup-dlq-production; do
-                set +e
-                if ! $W queues list 2>/dev/null | grep -q "$q"; then
-                  set -e
-                  echo "Creating Queue: $q"
-                  $W queues create "$q"
-                else
-                  set -e
-                  echo "Queue $q already exists"
-                fi
-              done
+              # 1) Create DLQ first (no DLQ dependency)
+              set +e
+              if ! npx wrangler queues list 2>/dev/null | grep -q "ontodecide-cleanup-dlq-production"; then
+                set -e
+                echo "Creating DLQ: ontodecide-cleanup-dlq-production"
+                npx wrangler queues create "ontodecide-cleanup-dlq-production"
+              else
+                set -e
+                echo "DLQ ontodecide-cleanup-dlq-production already exists"
+              fi
+              # 2) Create main queue (references the DLQ above)
+              set +e
+              if ! npx wrangler queues list 2>/dev/null | grep -q "ontodecide-cleanup-production"; then
+                set -e
+                echo "Creating Queue: ontodecide-cleanup-production"
+                npx wrangler queues create "ontodecide-cleanup-production"
+              else
+                set -e
+                echo "Queue ontodecide-cleanup-production already exists"
+              fi
               ;;
           esac
           #

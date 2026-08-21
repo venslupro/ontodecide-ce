@@ -17,9 +17,9 @@ compatibility_flags = ["nodejs_compat"]
 command = "pnpm --filter=@ontodecide/graph exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
 cwd = "apps/api/graph"
 
+# KV — wrangler auto-creates on first deploy.
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"
 
 [vars]
 NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"

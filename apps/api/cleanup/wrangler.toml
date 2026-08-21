@@ -38,32 +38,26 @@ max_batch_timeout = 30
 max_retries       = 3
 dead_letter_queue = "ontodecide-cleanup-dlq-production"
 
-# D1: shared decision-db.
+# D1: shared decision-db. wrangler auto-creates on first deploy.
 [[d1_databases]]
 binding        = "DB"
 database_name  = "ontodecide-decision-db-production"
-database_id    = "REPLACE_WITH_D1_ID"
 
-# KV namespaces: caches + job-status stores that Cleanup touches.
+# KV — wrangler auto-creates on first deploy.
 [[kv_namespaces]]
 binding = "USER_CACHE"
-id = "REPLACE_WITH_KV_ID"
 
 [[kv_namespaces]]
 binding = "GRAPH_CACHE"
-id = "REPLACE_WITH_KV_ID"
 
 [[kv_namespaces]]
 binding = "INGESTION_JOBS"
-id = "REPLACE_WITH_KV_ID"
 
 [[kv_namespaces]]
 binding = "AI_CACHE"
-id = "REPLACE_WITH_KV_ID"
 
 [[kv_namespaces]]
 binding = "CLEANUP_JOBS"
-id = "REPLACE_WITH_KV_ID"
 
 [vars]
 NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"

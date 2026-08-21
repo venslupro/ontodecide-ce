@@ -22,16 +22,16 @@ cwd = "apps/api/ai"
 binding = "AI"
 
 # D1: decisions / recommendations tables (shares decision-db).
+# wrangler auto-creates on first deploy.
 [[d1_databases]]
 binding        = "DB"
 database_name  = "ontodecide-decision-db-production"
-database_id    = "REPLACE_WITH_D1_ID"
 migrations_dir = "src/migrations"
 
 # Inference cache + neuron-budget counter.
+# wrangler auto-creates KV on first deploy.
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"
 
 # Durable Object: planning agent.
 [[durable_objects.bindings]]

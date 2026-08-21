@@ -65,11 +65,11 @@ service = "decision-cleanup-service"
 #                          **ONLY Gateway + User Service hold this secret.**
 #                          Downstream services rely on injected headers.
 
-# KV bindings. IDs from Dashboard Variables & Secrets take precedence.
+# KV bindings — wrangler auto-creates namespaces on first deploy.
+# After first deploy, find the assigned IDs in Dashboard → Workers →
+# decision-gateway → Settings → Variables and Secrets → KV Namespaces.
 [[kv_namespaces]]
 binding = "JWT_BLACKLIST"
-id = "REPLACE_WITH_KV_ID"
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "REPLACE_WITH_KV_ID"

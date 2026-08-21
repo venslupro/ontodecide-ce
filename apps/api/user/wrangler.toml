@@ -20,15 +20,17 @@ command = "pnpm --filter=@ontodecide/user exec tsc -p tsconfig.json --noEmit && 
 cwd = "apps/api/user"
 
 # Shared D1: users / audit_logs / refresh_tokens / system_config.
+# wrangler auto-creates the database on first deploy.
+# After first deploy, find the assigned ID in Dashboard → Workers →
+# decision-user-service → Settings → Variables and Secrets → D1 Databases.
 [[d1_databases]]
 binding       = "DB"
 database_name = "ontodecide-decision-db-production"
-database_id   = "REPLACE_WITH_D1_ID"
 migrations_dir = "src/migrations"
 
+# KV — wrangler auto-creates on first deploy.
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"
 
 [vars]
 AI_DEFAULT_PROVIDER = "workers-ai"
