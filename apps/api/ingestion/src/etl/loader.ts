@@ -1,10 +1,12 @@
 /**
  * Loader: push transformed entity batches into the Graph Service.
  *
- * The Graph Service exposes `POST /entities` (after the Gateway strips the
- * `/api` prefix). The Loader calls that endpoint directly via the Worker
- * service URL, propagating the identity headers and the internal-call
- * marker so the Graph Worker accepts the request.
+ * Calls the Graph Worker via a **Service Binding** (`Fetcher`) — zero-cost,
+ * in-account routing with no external-request billing. The Graph endpoint
+ * is `POST /entities` (after the Gateway strips the `/api` prefix).
+ * Identity/tenant headers and the internal-call marker are set so the
+ * Graph Worker accepts the request directly from Ingestion (no round-trip
+ * through the Gateway).
  *
  * Batches are chunked at 50 entities per request to keep each Cypher
  * transaction under the 10ms CPU budget. A single `POST /entities` call
@@ -18,6 +20,8 @@ import {
 } from '@ontodecide/shared';
 
 const CHUNK_SIZE = 50;
+/** Dummy origin used for Service Binding calls (host is ignored). */
+const INTERNAL_ORIGIN = 'https://internal';
 
 /** Result reported back to the Ingestion orchestrator. */
 export interface LoadResult {
@@ -27,14 +31,14 @@ export interface LoadResult {
 }
 
 /**
- * Push entities + relations into the Graph Service.
+ * Push entities + relations into the Graph Service via a Service Binding.
  *
- * @param url Base URL of the Graph Service (no trailing slash).
- * @param payload Tenant-scoped entity batch.
- * @param traceId Trace id propagated from the original request.
+ * @param graphBinding  `GRAPH_SERVICE` Service Binding Fetcher.
+ * @param payload       Tenant-scoped entity batch.
+ * @param traceId       Trace id propagated from the original request.
  */
 export async function load(
-    url: string,
+    graphBinding: Fetcher,
     payload: IngestPayload,
     traceId: string,
 ): Promise<LoadResult> {
@@ -54,7 +58,7 @@ export async function load(
       source: payload.source,
     };
     try {
-      const response = await fetch(`${url.replace(/\/$/, '')}/entities`, {
+      const response = await graphBinding.fetch(`${INTERNAL_ORIGIN}/entities`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

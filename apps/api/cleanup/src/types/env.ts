@@ -78,4 +78,5 @@ export interface TenantRow {
   last_cleanup_at: string | null;
   data_retention_days: number;
   data_size_estimate: number;
+  expires_at: string | null;
 }

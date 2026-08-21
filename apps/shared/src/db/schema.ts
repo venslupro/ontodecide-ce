@@ -27,6 +27,8 @@ export const users = sqliteTable('users', {
   role: text('role').notNull().default('analyst'),
   is_active: integer('is_active').notNull().default(1),
   is_data_cleared: integer('is_data_cleared').notNull().default(0),
+  must_change_password: integer('must_change_password').notNull().default(0),
+  expires_at: text('expires_at'),
   created_by: text('created_by'),
   created_at: text('created_at').notNull().default(sql`(datetime('now'))`),
   last_login_at: text('last_login_at'),
@@ -38,6 +40,7 @@ export const users = sqliteTable('users', {
   check('users_role_check', sql`role IN ('admin', 'analyst', 'viewer')`),
   check('users_is_active_check', sql`is_active IN (0, 1)`),
   check('users_is_data_cleared_check', sql`is_data_cleared IN (0, 1)`),
+  check('users_must_change_password_check', sql`must_change_password IN (0, 1)`),
 ]);
 
 /**
@@ -56,7 +59,7 @@ export const auditLogs = sqliteTable('audit_logs', {
   created_at: text('created_at').notNull().default(sql`(datetime('now'))`),
 }, () => [
   // eslint-disable-next-line max-len
-  check('audit_logs_action_check', sql`action IN ('create_user', 'disable_user', 'enable_user', 'reset_password', 'cleanup_data', 'login', 'logout', 'delete_user')`),
+  check('audit_logs_action_check', sql`action IN ('create_user', 'disable_user', 'enable_user', 'reset_password', 'change_password', 'cleanup_data', 'login', 'logout', 'delete_user')`),
 ]);
 
 /**

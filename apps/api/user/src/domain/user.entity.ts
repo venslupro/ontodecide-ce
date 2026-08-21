@@ -24,6 +24,8 @@ export interface UserSnapshot {
   role: UserRole;
   isActive: boolean;
   isDataCleared: boolean;
+  mustChangePassword: boolean;
+  expiresAt: string | null;
   state: UserState;
   createdAt: string;
   lastLoginAt: string | null;
@@ -47,6 +49,8 @@ export class User {
   public role: UserRole;
   private active: boolean;
   private dataCleared: boolean;
+  private mustChangePassword: boolean;
+  public expiresAt: string | null;
   public readonly createdAt: string;
   public lastLoginAt: string | null;
   public lastCleanupAt: string | null;
@@ -62,6 +66,8 @@ export class User {
     this.role = row.role;
     this.active = row.is_active === 1;
     this.dataCleared = row.is_data_cleared === 1;
+    this.mustChangePassword = row.must_change_password === 1;
+    this.expiresAt = row.expires_at ?? null;
     this.createdAt = row.created_at;
     this.lastLoginAt = row.last_login_at;
     this.lastCleanupAt = row.last_cleanup_at;
@@ -83,6 +89,8 @@ export class User {
     email: string | null;
     role: UserRole;
     dataRetentionDays: number;
+    mustChangePassword?: boolean;
+    expiresAt?: string | null;
   }): User {
     const now = new Date().toISOString();
     return new User({
@@ -94,6 +102,8 @@ export class User {
       role: params.role,
       is_active: 1,
       is_data_cleared: 0,
+      must_change_password: params.mustChangePassword ? 1 : 0,
+      expires_at: params.expiresAt ?? null,
       created_by: null,
       created_at: now,
       last_login_at: null,
@@ -114,6 +124,8 @@ export class User {
       role: this.role,
       isActive: this.active,
       isDataCleared: this.dataCleared,
+      mustChangePassword: this.mustChangePassword,
+      expiresAt: this.expiresAt,
       state: this.state(),
       createdAt: this.createdAt,
       lastLoginAt: this.lastLoginAt,
@@ -137,9 +149,29 @@ export class User {
     return verifyPassword(plaintext, this.passwordHash);
   }
 
-  /** Set a new password hash (after admin reset). */
+  /** Set a new password hash (after admin reset or self-service change). */
   public setPasswordHash(hash: string): void {
     this.passwordHash = hash;
+  }
+
+  /** Whether the user must change their password before using the system. */
+  public get requiresPasswordChange(): boolean {
+    return this.mustChangePassword;
+  }
+
+  /**
+   * Change the password and clear the must-change flag (activation).
+   * Called by the self-service change-password handler on first login.
+   */
+  public changePassword(newHash: string): void {
+    this.passwordHash = newHash;
+    this.mustChangePassword = false;
+  }
+
+  /** Check whether the account has expired. */
+  public isExpired(now: Date = new Date()): boolean {
+    if (!this.expiresAt) return false;
+    return now.getTime() >= new Date(this.expiresAt).getTime();
   }
 
   /** Record a successful login (called by the auth handler). */
@@ -190,6 +222,8 @@ export class User {
       role: this.role,
       is_active: this.active ? 1 : 0,
       is_data_cleared: this.dataCleared ? 1 : 0,
+      must_change_password: this.mustChangePassword ? 1 : 0,
+      expires_at: this.expiresAt,
       created_by: null,
       created_at: this.createdAt,
       last_login_at: this.lastLoginAt,

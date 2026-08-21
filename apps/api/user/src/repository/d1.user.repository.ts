@@ -5,7 +5,7 @@
  * type-safe database access. Complex business logic lives in the
  * domain service.
  */
-import {count, eq, sql} from 'drizzle-orm';
+import {and, count, eq, sql} from 'drizzle-orm';
 import {drizzle} from 'drizzle-orm/d1';
 import {users, auditLogs, systemConfig, refreshTokens} from '@ontodecide/shared/db';
 import type {
@@ -83,6 +83,8 @@ export class D1UserRepository implements IUserRepository {
           role: row.role,
           is_active: row.is_active ? 1 : 0,
           is_data_cleared: row.is_data_cleared ? 1 : 0,
+          must_change_password: row.must_change_password ? 1 : 0,
+          expires_at: row.expires_at,
           created_by: row.created_by,
           created_at: row.created_at,
           last_login_at: row.last_login_at,
@@ -99,6 +101,8 @@ export class D1UserRepository implements IUserRepository {
             role: row.role,
             is_active: row.is_active ? 1 : 0,
             is_data_cleared: row.is_data_cleared ? 1 : 0,
+            must_change_password: row.must_change_password ? 1 : 0,
+            expires_at: row.expires_at,
             last_login_at: row.last_login_at,
             last_cleanup_at: row.last_cleanup_at,
             data_retention_days: row.data_retention_days,
@@ -117,6 +121,18 @@ export class D1UserRepository implements IUserRepository {
     const row = await this.db.select({total: count()})
         .from(users)
         .where(sql`${users.role} != 'admin'`)
+        .get();
+    return row?.total ?? 0;
+  }
+
+  public async countActive(): Promise<number> {
+    const row = await this.db.select({total: count()})
+        .from(users)
+        .where(and(
+            sql`${users.role} != 'admin'`,
+            eq(users.is_active, 1),
+            eq(users.is_data_cleared, 0),
+        ))
         .get();
     return row?.total ?? 0;
   }

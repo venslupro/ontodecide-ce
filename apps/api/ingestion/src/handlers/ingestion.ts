@@ -165,7 +165,7 @@ async function runSyncIngest(
     source: body.source,
   };
   const traceId = c.req.header(HEADERS.TRACE_ID) ?? 'no-trace';
-  const result = await load(env.GRAPH_SERVICE_URL, payload, traceId);
+  const result = await load(env.GRAPH_SERVICE, payload, traceId);
   const syncResult: IngestSyncResult = {
     accepted: result.accepted,
     rejected: result.rejected,

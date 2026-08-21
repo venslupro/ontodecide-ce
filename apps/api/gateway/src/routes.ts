@@ -15,6 +15,10 @@ import {
   loginSchema,
   refreshSchema,
   authTokensSchema,
+  authTokensWithActivationSchema,
+  accountApplicationSchema,
+  applicationResultSchema,
+  changePasswordSchema,
   userPublicSchema,
   createUserSchema,
   credentialResultSchema,
@@ -44,8 +48,12 @@ import type {GatewayEnv} from './types/env.js';
 export interface RouteTarget {
   /** URL prefix matched against `request.pathname`. */
   prefix: string;
-  /** Base URL of the downstream Worker. */
-  baseUrl: (env: GatewayEnv) => string;
+  /**
+   * Resolve the downstream Service Binding.
+   * Gateway uses Worker Service Bindings for zero-cost, in-account calls —
+   * no public DNS, no external-request billing, implicit trust.
+   */
+  binding: (env: GatewayEnv) => Fetcher;
 }
 
 /**
@@ -54,30 +62,33 @@ export interface RouteTarget {
  */
 export const ROUTES: readonly RouteTarget[] = [
   // Public auth routes — no JWT required, but they are rate-limited.
-  {prefix: '/api/auth/', baseUrl: (env) => env.USER_SERVICE_URL},
+  {prefix: '/api/auth/', binding: (env) => env.USER_SERVICE},
+  // Public account application — no JWT required, rate-limited.
+  {prefix: '/api/applications', binding: (env) => env.USER_SERVICE},
   // Admin operations: cleanup routes belong to Cleanup service.
-  {prefix: '/api/admin/cleanup', baseUrl: (env) => env.CLEANUP_SERVICE_URL},
+  {prefix: '/api/admin/cleanup', binding: (env) => env.CLEANUP_SERVICE},
   // User admin routes belong to User service.
-  {prefix: '/api/admin/users', baseUrl: (env) => env.USER_SERVICE_URL},
+  {prefix: '/api/admin/users', binding: (env) => env.USER_SERVICE},
   // Other admin routes (config, audit) also go to User service.
-  {prefix: '/api/admin/', baseUrl: (env) => env.USER_SERVICE_URL},
+  {prefix: '/api/admin/', binding: (env) => env.USER_SERVICE},
   // Graph service handles all `/api/graph/*` and `/api/ontology*` calls.
-  {prefix: '/api/graph', baseUrl: (env) => env.GRAPH_SERVICE_URL},
-  {prefix: '/api/ontology', baseUrl: (env) => env.GRAPH_SERVICE_URL},
-  {prefix: '/api/entities', baseUrl: (env) => env.GRAPH_SERVICE_URL},
-  {prefix: '/api/situation', baseUrl: (env) => env.GRAPH_SERVICE_URL},
+  {prefix: '/api/graph', binding: (env) => env.GRAPH_SERVICE},
+  {prefix: '/api/ontology', binding: (env) => env.GRAPH_SERVICE},
+  {prefix: '/api/entities', binding: (env) => env.GRAPH_SERVICE},
+  {prefix: '/api/situation', binding: (env) => env.GRAPH_SERVICE},
   // Ingestion service.
-  {prefix: '/api/ingest', baseUrl: (env) => env.INGESTION_SERVICE_URL},
+  {prefix: '/api/ingest', binding: (env) => env.INGESTION_SERVICE},
   // AI service.
-  {prefix: '/api/ai/', baseUrl: (env) => env.AI_SERVICE_URL},
+  {prefix: '/api/ai/', binding: (env) => env.AI_SERVICE},
   // User profile (self).
-  {prefix: '/api/user', baseUrl: (env) => env.USER_SERVICE_URL},
+  {prefix: '/api/user', binding: (env) => env.USER_SERVICE},
 ];
 
 /** Routes that bypass JWT verification (still rate-limited). */
 export const PUBLIC_PREFIXES: readonly string[] = [
   '/api/auth/login',
   '/api/auth/refresh',
+  '/api/applications',
 ];
 
 /** Routes that require the `admin` role. */
@@ -135,8 +146,9 @@ export function registerOpenApiSpec(
       body: {content: {'application/json': {schema: loginSchema}}},
     },
     responses: {
-      200: jsonOk(authTokensSchema, 'Tokens issued.'),
+      200: jsonOk(authTokensWithActivationSchema, 'Tokens issued (may require password change).'),
       401: jsonError('Invalid credentials.'),
+      403: jsonError('Account expired.'),
       429: jsonError('Rate limit exceeded.'),
     },
   });
@@ -166,6 +178,41 @@ export function registerOpenApiSpec(
     responses: {
       200: jsonOk(z.object({success: z.boolean()}), 'Logged out.'),
       401: jsonError('Authentication required.'),
+    },
+  });
+
+  registry.registerPath({
+    method: 'post',
+    path: '/api/auth/change-password',
+    tags: ['Auth'],
+    security: BEARER_AUTH,
+    summary: 'Change password (first-login activation)',
+    request: {
+      body: {content: {'application/json': {schema: changePasswordSchema}}},
+    },
+    responses: {
+      200: jsonOk(authTokensSchema, 'Password changed, full tokens issued.'),
+      400: jsonError('Validation failed.'),
+      401: jsonError('Current password incorrect.'),
+      403: jsonError('Missing identity headers.'),
+    },
+  });
+
+  // --- Public account application -----------------------------------------
+  registry.registerPath({
+    method: 'post',
+    path: '/api/applications',
+    tags: ['Auth'],
+    security: [],
+    summary: 'Submit an account application',
+    request: {
+      body: {content: {'application/json': {schema: accountApplicationSchema}}},
+    },
+    responses: {
+      201: jsonOk(applicationResultSchema, 'Account created.'),
+      400: jsonError('Validation failed.'),
+      409: jsonError('Email already registered or max users reached.'),
+      429: jsonError('Rate limit exceeded.'),
     },
   });
 

@@ -71,6 +71,15 @@ export async function authenticate(
   return {ok: true, ctx: {payload, traceId}};
 }
 
+/**
+ * Paths allowed when the JWT carries `pwd_change_required: true`.
+ * The user must change their password before accessing any other endpoint.
+ */
+const PWD_CHANGE_ALLOWED_PATHS: readonly string[] = [
+  '/api/auth/change-password',
+  '/api/auth/logout',
+];
+
 /** True when the path is allowed without authentication. */
 export function isPublicPath(pathname: string, publicPrefixes: readonly string[]): boolean {
   return publicPrefixes.some((p) => pathname === p || pathname.startsWith(p + '/') || pathname === p);
@@ -136,6 +145,18 @@ export const authMiddleware: MiddlewareHandler<{
     );
   }
   c.set('auth', result.ctx);
+
+  // When the JWT carries pwd_change_required, restrict the caller to
+  // only the change-password and logout endpoints.
+  if (result.ctx.payload.pwd_change_required &&
+      !PWD_CHANGE_ALLOWED_PATHS.includes(path)) {
+    return jsonFailResponse(
+        c,
+        ERROR_CODES.USER_PASSWORD_CHANGE_REQUIRED,
+        'Password change required before accessing this resource.',
+        403,
+    );
+  }
 
   if (isAdminPath(path, ADMIN_PREFIXES) && !authorizeAdmin(result.ctx.payload)) {
     return jsonFailResponse(

@@ -1,74 +1,49 @@
 # User Service Worker — authentication and account management.
 #
-# Deployed via Cloudflare Workers Builds (Git-connected, canonical
-# zero-config deploy path). Build settings mirror:
-#   .cloudflare/workers-builds.yaml → workers[decision-user-service]
+# Identity model:
+#   • This Worker **signs** JWTs (login/refresh) so it holds JWT_SECRET.
+#     It is one of only two services (Gateway + User) that know the secret.
+#   • All other routes (profile, admin users) accept identity from the
+#     Gateway via x-tenant-id / x-user-role / x-internal-call headers —
+#     enforced by `internalOnlyMiddleware(['/auth/'])`.
 #
-# Ownership split (keep in sync with infrastructure/terraform/workers.tf):
-#   HERE (wrangler.toml + Worker → Variables & Secrets):
-#     • Worker code uploaded by Workers Builds.
-#     • [build] / [build.upload] are LOCAL ONLY (Workers Builds ignores
-#       Custom Builds; use Dashboard Build settings).
-#     • Neo4j AuraDB: NEO4J_URL/NEO4J_USER in [vars]; NEO4J_PASSWORD as
-#       a Secret.
-#     • JWT_SECRET as a Secret (shared across workers).
-#     • D1/KV IDs: fill either in REPLACE_WITH_* placeholders OR
-#       (RECOMMENDED) through Dashboard Variables.
-#
-#   THERE (infrastructure/terraform/*.tf):
-#     • D1 decision-db resource itself (project=ontodecide, env suffix).
-#     • KV user-cache namespace itself.
-#     • Worker-level binding manifest + downstream Terraform deps.
+# Build & deploy: see gateway wrangler.toml; identical model.
 
 name = "decision-user-service"
-# NOTE: entry point is intentionally the TYPESCRIPT source file.
-# See apps/api/gateway/wrangler.toml for the full rationale; short
-# version: tsc output tree is nested (shared is inlined via tsconfig
-# includes) while Wrangler's internal esbuild bundles cleanly from
-# src and resolves @ontodecide/shared via package.json exports →
-# the Build command's shared/dist.
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
 
 # LOCAL-ONLY [build] block.
 [build]
-# Keep this command typecheck-only (see gateway wrangler.toml note).
-# Full emit is handled by Wrangler's bundler; tsc here catches type
-# errors + ensures the @ontodecide/shared dist is present.
 command = "pnpm --filter=@ontodecide/user exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
 cwd = "apps/api/user"
-# Note: Upload format/dir/main are inferred from top `main = "src/index.ts"`
-# automatically in wrangler >= 3.100.  Do NOT re-declare `[build.upload]`
-# + `main` — defining both is a fatal error.
 
 # Shared D1: users / audit_logs / refresh_tokens / system_config.
-# database_name MUST equal:
-#   terraform -chdir=infrastructure/terraform apply \
-#     cloudflare_d1_database.decision_db.name
-# which is `${project_name}-decision-db-${environment}`.
-# Dashboard override via Variables → d1_databases binding when env != production.
 [[d1_databases]]
 binding       = "DB"
-database_name = "ontodecide-decision-db-production"   # default: env=production
-database_id   = "REPLACE_WITH_D1_ID"                  # Terraform output key: d1_database_id
+database_name = "ontodecide-decision-db-production"
+database_id   = "REPLACE_WITH_D1_ID"
 migrations_dir = "src/migrations"
 
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"   # Terraform output key: kv_namespaces["user-cache"]
+id = "REPLACE_WITH_KV_ID"
 
 [vars]
 AI_DEFAULT_PROVIDER = "workers-ai"
-
-# Neo4j AuraDB connection. Each signup runs CREATE DATABASE against
-# the cluster's /db/system endpoint; each expiry runs DROP DATABASE.
-# Default host replaced from terraform var: TF_VAR_neo4j_url (or Dashboard var).
 NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
 NEO4J_USER = "neo4j"
+EMAIL_FROM = "venslu.pro@gmail.com"
 
-# Secrets (Dashboard → Secrets OR `wrangler secret put <NAME>`):
-#   JWT_SECRET     — HMAC signing secret (shared).
-#   NEO4J_PASSWORD — Password for NEO4J_USER.  The Neo4j system role
+# Secrets (Dashboard → Secrets, CI, or `wrangler secret put`):
+#   JWT_SECRET     — HMAC signing secret.
+#                    **Required** here (signs tokens) and in the Gateway
+#                    (verifies tokens); NOT required in downstream workers.
+#   NEO4J_PASSWORD — Password for NEO4J_USER. The Neo4j system role
 #                    MUST grant "Create database" / "Drop database" so
 #                    per-tenant logical DBs work.
+#   EMAIL_API_KEY  — Resend (or compatible) API key for sending
+#                    transactional emails (account credentials).
+#                    Optional: when unset, emails are skipped and the
+#                    temporary password is returned in the API response.

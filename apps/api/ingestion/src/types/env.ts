@@ -1,9 +1,16 @@
 /**
  * Environment bindings for the Ingestion Service.
+ *
+ * Downstream Graph calls go through a Service Binding (zero-cost) when
+ * available; `GRAPH_SERVICE_URL` is kept as a dev-only fallback (e.g.
+ * running ingestion against a remote Graph from a local `wrangler dev`).
+ *
+ * This Worker trusts Gateway-injected identity headers — it does NOT hold
+ * the JWT signing secret.
  */
-import type {BaseEnv} from '@ontodecide/shared';
+import type {BaseEnv, IngestionGraphBinding} from '@ontodecide/shared';
 
-export interface IngestionEnv extends BaseEnv {
+export interface IngestionEnv extends BaseEnv, IngestionGraphBinding {
   /** Backblaze B2 S3-compatible credentials + bucket for staging files. */
   B2_KEY_ID: string;
   B2_KEY: string;
@@ -13,8 +20,11 @@ export interface IngestionEnv extends BaseEnv {
   INGEST_QUEUE: Queue<IngestJobMessage>;
   /** KV namespace holding job-status records (polled by the client). */
   JOBS: KVNamespace;
-  /** Downstream Graph Service URL. */
-  GRAPH_SERVICE_URL: string;
+  /**
+   * Fallback URL for calling the Graph Service (dev only — production uses
+   * the `GRAPH_SERVICE` Service Binding).
+   */
+  GRAPH_SERVICE_URL?: string;
 }
 
 /** Message published to the ingestion queue. */
@@ -31,8 +41,8 @@ export interface IngestJobMessage {
   fieldMapping?: Record<string, string>;
   /** Trace id propagated from the original request. */
   traceId: string;
-  /** Internal call marker — propagates the Gateway's identity to Graph. */
-  internalCallSecret: string;
+  /** Unused (kept for backward message compat). */
+  internalCallSecret?: string;
 }
 
 /** Job-status record stored in KV under `ingest:job:<jobId>`. */

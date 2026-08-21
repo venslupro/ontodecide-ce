@@ -1,38 +1,30 @@
 # Graph Service Worker — Neo4j AuraDB-backed knowledge graph.
 #
-# Deployed via Cloudflare Workers Builds (Git-connected). Workers can't
-# open raw TCP sockets so we use the Neo4j HTTPS Transaction API.
+# Identity model:
+#   • This Worker does NOT hold JWT_SECRET. It trusts the Gateway-injected
+#     x-tenant-id / x-user-role / x-internal-call headers (enforced by
+#     `internalOnlyMiddleware`).  Direct public calls are rejected.
 #
-# Ownership split (keep in sync with infrastructure/terraform/workers.tf):
-#   HERE: Worker code + runtime vars/secrets. [build] is LOCAL ONLY.
-#   THERE (terraform): KV graph-cache namespace itself + bindings.
+# Build & deploy: see gateway wrangler.toml; identical model.
 
 name = "decision-graph-service"
-# NOTE: entry point is intentionally the TYPESCRIPT source file.
-# Wrangler bundles via its internal esbuild; the tsc-based
-# `turbo run build` step only typechecks and builds shared/dist.
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
 
-# LOCAL-ONLY [build] block (Workers Builds ignores Custom Builds;
-# authoritative build command lives in Dash + .cloudflare/workers-builds.yaml).
+# LOCAL-ONLY [build] block.
 [build]
 command = "pnpm --filter=@ontodecide/graph exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
 cwd = "apps/api/graph"
-# Note: Upload format/dir/main are inferred from top `main = "src/index.ts"`
-# automatically in wrangler >= 3.100.  Do NOT re-declare `[build.upload]`
-# + `main` — defining both is a fatal error.
 
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"   # Terraform output key: kv_namespaces["graph-cache"]
+id = "REPLACE_WITH_KV_ID"
 
 [vars]
-# Default host replaced from TF_VAR_neo4j_url (or Dashboard var).
 NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
 NEO4J_USER = "neo4j"
 
 # Secrets:
-#   JWT_SECRET     — shared across token-validating workers.
 #   NEO4J_PASSWORD — password for NEO4J_USER.
+#   (JWT_SECRET is NOT required here. Graph consumes identity via headers.)

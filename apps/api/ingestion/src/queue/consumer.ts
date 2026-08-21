@@ -67,7 +67,7 @@ async function processJob(message: IngestJobMessage, env: IngestionEnv): Promise
     relations: transformed.relations,
     source: message.objectKey,
   };
-  const result = await load(env.GRAPH_SERVICE_URL, payload, message.traceId);
+  const result = await load(env.GRAPH_SERVICE, payload, message.traceId);
   if (result.rejected > 0 && result.accepted === 0) {
     throw new Error(`All ${result.rejected} entities rejected: ${result.errors.join('; ')}`);
   }

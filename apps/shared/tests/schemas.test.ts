@@ -95,9 +95,14 @@ describe('createUserSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects a username with invalid characters', () => {
-    const result = createUserSchema.safeParse({username: 'bad name!'});
-    expect(result.success).toBe(false);
+  it('accepts an email as username', () => {
+    const result = createUserSchema.safeParse({username: 'user@example.com'});
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts omission of username (email will be used instead)', () => {
+    const result = createUserSchema.safeParse({email: 'user@example.com'});
+    expect(result.success).toBe(true);
   });
 
   it('rejects an invalid role', () => {
@@ -149,6 +154,8 @@ describe('userPublicSchema', () => {
     role: 'admin',
     is_active: true,
     is_data_cleared: false,
+    must_change_password: false,
+    expires_at: null,
     created_at: '2025-01-01T00:00:00Z',
     last_login_at: null,
     last_cleanup_at: null,

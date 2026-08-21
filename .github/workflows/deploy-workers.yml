@@ -20,6 +20,16 @@
 #                                            so resource IDs NEVER need
 #                                            to be written back to git.
 #
+# ************************  SECRET DISTRIBUTION (NEW)  *********************
+# JWT_SECRET is NO LONGER distributed to every Worker.  Per the DDD
+# boundary model:
+#   • GATEWAY  — verifies inbound JWTs → needs JWT_SECRET.
+#   • USER     — signs tokens on login/refresh → needs JWT_SECRET.
+#   • GRAPH / INGESTION / AI / CLEANUP  — consume identity via
+#     Gateway-injected headers (x-tenant-id, x-user-role, x-internal-call).
+#     They do NOT receive JWT_SECRET.
+# *************************************************************************
+#
 # Required GitHub Secrets (Repo → Settings → Secrets and variables):
 #   CF_API_TOKEN      — Cloudflare API Token with Workers Scripts Edit,
 #                       Workers KV Storage Edit, D1 Edit, Workers Routes
@@ -28,12 +38,17 @@
 #
 #   + Per-Worker runtime secrets (pushed by each matrix job via
 #     `wrangler secret put` — set once, survives re-deploys):
-#     JWT_SECRET        — HMAC signing key shared across all Workers.
+#     JWT_SECRET        — HMAC signing key.  **Gateway + User only.**
 #     NEO4J_PASSWORD    — AuraDB password (user/graph/cleanup only).
 #     B2_KEY_ID         — Backblaze B2 Application Key keyID
 #                         (ingestion/cleanup only).
 #     B2_KEY            — Backblaze B2 Application Key secret
 #                         (ingestion/cleanup only).
+#     OPENAI_API_KEY    — (optional) Third-party LLM (ai only).
+#     ANTHROPIC_API_KEY — (optional) Third-party LLM (ai only).
+#     GOOGLE_API_KEY    — (optional) Third-party LLM (ai only).
+#     OPENROUTER_API_KEY — (optional) Third-party LLM (ai only).
+#     AI_GATEWAY_TOKEN  — (optional) AI Gateway auth (ai only).
 # ============================================================
 
 name: Deploy Cloudflare Workers
@@ -67,29 +82,42 @@ jobs:
             secrets: |
               JWT_SECRET=${{ secrets.JWT_SECRET }}
               NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
+              EMAIL_API_KEY=${{ secrets.EMAIL_API_KEY }}
           - name: 'graph'
             config: 'apps/api/graph/wrangler.toml'
             package: '@ontodecide/graph'
+            # JWT_SECRET intentionally omitted — Graph trusts
+            # Gateway-injected identity headers (x-tenant-id + internal call
+            # marker), no JWT parsing needed at this layer.
             secrets: |
-              JWT_SECRET=${{ secrets.JWT_SECRET }}
               NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
           - name: 'ingestion'
             config: 'apps/api/ingestion/wrangler.toml'
             package: '@ontodecide/ingestion'
+            # JWT_SECRET intentionally omitted — same rationale as Graph,
+            # plus webhook routes are protected by their own signature scheme.
             secrets: |
-              JWT_SECRET=${{ secrets.JWT_SECRET }}
               B2_KEY_ID=${{ secrets.B2_KEY_ID }}
               B2_KEY=${{ secrets.B2_KEY }}
           - name: 'ai'
             config: 'apps/api/ai/wrangler.toml'
             package: '@ontodecide/ai'
+            # JWT_SECRET intentionally omitted.  AI reads tenant identity
+            # from x-tenant-id.  Third-party LLM keys are optional (the
+            # default provider is workers-ai, which needs no external key).
             secrets: |
-              JWT_SECRET=${{ secrets.JWT_SECRET }}
+              OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+              ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+              GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+              OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+              AI_GATEWAY_TOKEN=${{ secrets.AI_GATEWAY_TOKEN }}
           - name: 'cleanup'
             config: 'apps/api/cleanup/wrangler.toml'
             package: '@ontodecide/cleanup'
+            # JWT_SECRET intentionally omitted.  Cleanup runs admin-gated
+            # endpoints (x-user-role=admin check) + cron + queue; none of
+            # these paths require JWT verification.
             secrets: |
-              JWT_SECRET=${{ secrets.JWT_SECRET }}
               NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
               B2_KEY_ID=${{ secrets.B2_KEY_ID }}
               B2_KEY=${{ secrets.B2_KEY }}
@@ -126,9 +154,9 @@ jobs:
       # `secrets` input is written by wrangler-action@v3 via
       # `wrangler secret put <NAME>` — values are picked up from
       # the repo's GitHub Secrets (never committed to git).
-      # Resource IDs (D1 / KV / Queue names) come from either
-      # wrangler.toml defaults OR (preferred) Dashboard Variables
-      # overrides — they are NOT managed by this CI pipeline.
+      # Resource IDs (D1 / KV / Queue names / Service Bindings)
+      # come from either wrangler.toml defaults or (preferred)
+      # Dashboard Variables overrides — NOT managed by this CI.
       - name: Deploy ${{ matrix.service.name }}
         uses: cloudflare/wrangler-action@v3
         with:

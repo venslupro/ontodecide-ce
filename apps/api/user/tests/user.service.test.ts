@@ -78,6 +78,16 @@ class InMemoryUserRepo implements IUserRepository {
   async count(): Promise<number> {
     return this.users.size;
   }
+
+  async countActive(): Promise<number> {
+    let active = 0;
+    for (const u of this.users.values()) {
+      if (u.role !== 'admin' && u.snapshot().isActive && !u.snapshot().isDataCleared) {
+        active++;
+      }
+    }
+    return active;
+  }
 }
 
 class InMemoryAuditRepo implements IAuditRepository {

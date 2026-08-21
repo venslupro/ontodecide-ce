@@ -16,6 +16,13 @@ export function uuid(): string {
 
 /**
  * Generate a tenant id with a stable `tenant_` prefix.
+ *
+ * This is the **immutable data anchor** for a user — once assigned at
+ * account creation, it never changes, even if the user changes their
+ * email (login name). All internal systems (Neo4j database name, KV
+ * key prefixes, B2 object paths, D1 tenant_id column) reference this
+ * anchor, not the email/username.
+ *
  * @param prefix Optional prefix, defaults to 'tenant'.
  */
 export function tenantId(prefix = 'tenant'): string {

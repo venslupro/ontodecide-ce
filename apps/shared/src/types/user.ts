@@ -24,6 +24,8 @@ export interface JwtPayload {
   iat: number;
   /** JWT id (for revocation via KV blacklist). */
   jti: string;
+  /** When true, the caller may only access /auth/change-password. */
+  pwd_change_required?: boolean;
 }
 
 /** Public user record returned to clients (never contains password_hash). */
@@ -35,6 +37,8 @@ export interface UserPublic {
   role: UserRole;
   is_active: boolean;
   is_data_cleared: boolean;
+  must_change_password: boolean;
+  expires_at: string | null;
   created_at: string;
   last_login_at: string | null;
   last_cleanup_at: string | null;
@@ -68,6 +72,7 @@ export type AuditAction =
   | 'disable_user'
   | 'enable_user'
   | 'reset_password'
+  | 'change_password'
   | 'cleanup_data'
   | 'login'
   | 'logout'

@@ -1,50 +1,39 @@
 # AI Service Worker — multi-LLM decision intelligence.
 #
-# Deployed via Cloudflare Workers Builds (Git-connected).
+# Identity model:
+#   • This Worker does NOT hold JWT_SECRET. It trusts Gateway-injected
+#     headers (enforced by `internalOnlyMiddleware()` — every route is
+#     Gateway-only; no public carve-outs).
 #
-# Ownership split (keep in sync with infrastructure/terraform/workers.tf):
-#   HERE: code, [vars] (provider/model defaults), third-party API keys
-#         as Dashboard Secrets, Durable Object class declarations,
-#         D1/KV placeholder IDs filled from terraform output.
-#   THERE (terraform): Workers AI binding itself, D1 decision-db,
-#         KV ai-cache, DO namespace creation (on first deploy).
+# Build & deploy: see gateway wrangler.toml; identical model.
 
 name = "decision-ai-service"
-# NOTE: entry point is intentionally the TYPESCRIPT source file.
-# Wrangler bundles via its internal esbuild; the tsc-based
-# `turbo run build` step only typechecks and builds shared/dist.
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
 
-# LOCAL-ONLY [build] block (Workers Builds ignores Custom Builds;
-# authoritative build command lives in Dash + .cloudflare/workers-builds.yaml).
+# LOCAL-ONLY [build] block.
 [build]
 command = "pnpm --filter=@ontodecide/ai exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
 cwd = "apps/api/ai"
-# Note: Upload format/dir/main are inferred from top `main = "src/index.ts"`
-# automatically in wrangler >= 3.100.  Do NOT re-declare `[build.upload]`
-# + `main` — defining both is a fatal error.
 
-# Workers AI binding (free tier Neurons).  The binding NAME is what
-# matters to the Worker; the entitlement itself lives in the account.
+# Workers AI binding (free tier Neurons).
 [ai]
 binding = "AI"
 
 # D1: decisions / recommendations tables (shares decision-db).
 [[d1_databases]]
 binding        = "DB"
-database_name  = "ontodecide-decision-db-production"   # Terraform: cloudflare_d1_database.decision_db.name
-database_id    = "REPLACE_WITH_D1_ID"                  # Terraform output key: d1_database_id
+database_name  = "ontodecide-decision-db-production"
+database_id    = "REPLACE_WITH_D1_ID"
 migrations_dir = "src/migrations"
 
 # Inference cache + neuron-budget counter.
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"   # Terraform output key: kv_namespaces["ai-cache"]
+id = "REPLACE_WITH_KV_ID"
 
-# Durable Object: planning agent.  The first Workers Builds deploy of
-# this Worker will create the namespace from the [[migrations]] below.
+# Durable Object: planning agent.
 [[durable_objects.bindings]]
 name       = "AGENT"
 class_name = "PlanningAgent"
@@ -62,8 +51,8 @@ ANTHROPIC_MODEL     = "claude-3-sonnet-20241022"
 GOOGLE_MODEL        = "gemini-1.5-flash"
 OPENROUTER_MODEL    = "openai/gpt-4o-mini"
 
-# Secrets (Dashboard → Secrets / `wrangler secret put`):
-#   JWT_SECRET             — shared signing secret.
+# Secrets (Dashboard → Secrets, CI, or `wrangler secret put`):
+#   (JWT_SECRET is NOT required here. Identity is read from headers.)
 #   OPENAI_API_KEY         — when AI_DEFAULT_PROVIDER == "openai".
 #   ANTHROPIC_API_KEY      — when AI_DEFAULT_PROVIDER == "anthropic".
 #   GOOGLE_API_KEY         — when AI_DEFAULT_PROVIDER == "google".

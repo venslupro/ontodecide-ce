@@ -133,6 +133,13 @@ export const userPublicSchema = z.object({
   is_data_cleared: z
       .boolean()
       .openapi({description: 'Whether a data-cleanup has run for the user.'}),
+  must_change_password: z
+      .boolean()
+      .openapi({description: 'Whether the user must change their password on next login.'}),
+  expires_at: z
+      .string()
+      .nullable()
+      .openapi({description: 'ISO-8601 account expiration timestamp, or null.'}),
   created_at: z
       .string()
       .openapi({description: 'ISO-8601 creation timestamp.'}),
@@ -494,13 +501,10 @@ export const createUserSchema = z.object({
   username: z
       .string()
       .min(3)
-      .max(32)
-      .regex(
-          /^[A-Za-z0-9._-]+$/,
-          'Username must be 3-32 chars of alphanumeric, dot, underscore or dash.',
-      )
+      .max(254)
+      .optional()
       .openapi({
-        description: 'Unique username (3-32 chars, alphanumeric/dot/underscore/dash).',
+        description: 'Login name (typically the email). When omitted, `email` is used as the login name.',
       }),
   role: userRoleSchema
       .optional()
@@ -508,7 +512,7 @@ export const createUserSchema = z.object({
   email: z
       .email()
       .optional()
-      .openapi({description: 'Optional contact email.'}),
+      .openapi({description: 'Contact email. Also used as login name when `username` is omitted.'}),
   dataRetentionDays: z
       .number()
       .int()
@@ -518,6 +522,66 @@ export const createUserSchema = z.object({
       .openapi({
         description: 'Optional override of the global data-retention window in days (1..365).',
       }),
+});
+
+
+/** DTO for POST /api/applications (public account application). */
+export const accountApplicationSchema = z.object({
+  email: z
+      .email()
+      .openapi({description: 'Applicant email — used as login username and delivery address for credentials.'}),
+  usageDays: z
+      .number()
+      .int()
+      .min(1)
+      .max(90)
+      .openapi({description: 'Requested usage duration in days (1..90).'}),
+});
+
+/** Response for POST /api/applications. */
+export const applicationResultSchema = z.object({
+  id: z.string().openapi({description: 'Created user id.'}),
+  username: z.string().openapi({description: 'Login username (the email address).'}),
+  expires_at: z.string().openapi({description: 'ISO-8601 expiration timestamp.'}),
+  email_sent: z.boolean().openapi({description: 'Whether the credential email was delivered.'}),
+  temporary_password: z
+      .string()
+      .optional()
+      .openapi({description: 'Temporary password (only present when email could not be sent).'}),
+});
+
+
+/** DTO for POST /api/auth/change-password (first-login activation). */
+export const changePasswordSchema = z.object({
+  currentPassword: z
+      .string()
+      .openapi({description: 'Current (temporary) password.'}),
+  newPassword: z
+      .string()
+      .min(8)
+      .max(128)
+      .openapi({description: 'New password (8..128 chars).'}),
+});
+
+
+/** Extended auth tokens response that includes the password-change flag. */
+export const authTokensWithActivationSchema = z.object({
+  accessToken: z
+      .string()
+      .openapi({description: 'Short-lived JWT access token.'}),
+  refreshToken: z
+      .string()
+      .nullable()
+      .openapi({description: 'Long-lived refresh token (null until password is changed).'}),
+  expiresIn: z
+      .number()
+      .int()
+      .positive()
+      .openapi({description: 'Access token expiry epoch seconds.'}),
+  requirePasswordChange: z
+      .boolean()
+      .optional()
+      .openapi({description: 'When true, the caller must change their password before using the system.'}),
 });
 
 

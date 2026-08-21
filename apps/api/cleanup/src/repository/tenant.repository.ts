@@ -5,16 +5,16 @@
  */
 import type {TenantRow} from '../types/env.js';
 import {nowIso} from '@ontodecide/shared';
-import {and, eq, isNull, ne, or, sql} from 'drizzle-orm';
+import {and, eq, ne, sql} from 'drizzle-orm';
 import {drizzle} from 'drizzle-orm/d1';
 import {users} from '@ontodecide/shared/db';
 
 /**
- * SQL condition: a tenant is due for cleanup when the retention window
- * has elapsed since the last cleanup run.
+ * SQL condition: a tenant is due for cleanup when the account has expired
+ * (expires_at <= now) and the account hasn't been cleaned up yet.
  */
 // eslint-disable-next-line max-len
-const retentionDueCondition = sql`julianday(datetime('now')) - julianday(${users.last_cleanup_at}) >= ${users.data_retention_days}`;
+const expiryDueCondition = sql`${users.expires_at} IS NOT NULL AND datetime(${users.expires_at}) <= datetime('now')`;
 
 export interface ITenantCleanupRepository {
   /** List tenants due for cleanup (active + retention exceeded). */
@@ -42,16 +42,14 @@ export class D1TenantCleanupRepository implements ITenantCleanupRepository {
       last_cleanup_at: users.last_cleanup_at,
       data_retention_days: users.data_retention_days,
       data_size_estimate: users.data_size_estimate,
+      expires_at: users.expires_at,
     })
         .from(users)
         .where(and(
             eq(users.is_active, 1),
             eq(users.is_data_cleared, 0),
             ne(users.role, 'admin'),
-            or(
-                isNull(users.last_cleanup_at),
-                retentionDueCondition,
-            ),
+            expiryDueCondition,
         ))
         .all();
     return rows as unknown as TenantRow[];
@@ -67,6 +65,7 @@ export class D1TenantCleanupRepository implements ITenantCleanupRepository {
       last_cleanup_at: users.last_cleanup_at,
       data_retention_days: users.data_retention_days,
       data_size_estimate: users.data_size_estimate,
+      expires_at: users.expires_at,
     })
         .from(users)
         .where(eq(users.id, id))
@@ -85,6 +84,7 @@ export class D1TenantCleanupRepository implements ITenantCleanupRepository {
       last_cleanup_at: users.last_cleanup_at,
       data_retention_days: users.data_retention_days,
       data_size_estimate: users.data_size_estimate,
+      expires_at: users.expires_at,
     })
         .from(users)
         .where(eq(users.tenant_id, tenantId))

@@ -20,6 +20,8 @@ export interface IUserRepository {
   delete(id: string): Promise<void>;
   /** Count current users (excluding the bootstrap admin). */
   count(): Promise<number>;
+  /** Count active, non-cleared users (excluding the bootstrap admin). */
+  countActive(): Promise<number>;
 }
 
 /** Audit-log repository (write-mostly). */
@@ -40,6 +42,7 @@ export interface AuditEntry {
     | 'disable_user'
     | 'enable_user'
     | 'reset_password'
+    | 'change_password'
     | 'cleanup_data'
     | 'login'
     | 'logout'

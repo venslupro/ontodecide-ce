@@ -16,11 +16,14 @@ import {
   throwError,
   generateTemporaryPassword,
   hashPassword,
-  tenantId,
   uuid,
+  tenantId,
   nowIso,
   nowEpochSeconds,
   createTenantDbStatement,
+  sendEmail,
+  buildCredentialEmail,
+  DEFAULT_EMAIL_FROM,
 } from '@ontodecide/shared';
 import {User} from '../domain/user.entity.js';
 import type {
@@ -33,7 +36,8 @@ import type {
 import type {UserEnv, UserRole} from '../types/env.js';
 
 export interface CreateUserInput {
-  username: string;
+  /** Optional username. When omitted the system generates a unique one. */
+  username?: string;
   role?: UserRole;
   email?: string | null;
   dataRetentionDays?: number;
@@ -45,12 +49,23 @@ export interface CreateUserResult {
   temporaryPassword: string;
 }
 
+export interface ApplicationResult {
+  user: User;
+  /** Plaintext password, only visible at creation time. */
+  temporaryPassword: string;
+  /** Whether the credential email was delivered. */
+  emailSent: boolean;
+}
+
 export interface AuditContext {
   operatorId: string;
   operatorTenantId: string;
   ip: string | null;
   userAgent: string | null;
 }
+
+/** Short-lived token TTL for the password-change-required state (10 min). */
+const PWD_CHANGE_TOKEN_TTL_SECONDS = 10 * 60;
 
 export class UserManagementService {
   constructor(
@@ -61,39 +76,130 @@ export class UserManagementService {
     private readonly env?: UserEnv,
   ) {}
 
-  /** Create a new account AND provision the tenant's Neo4j database. */
-  public async createUser(input: CreateUserInput, ctx: AuditContext): Promise<CreateUserResult> {
-    const existing = await this.users.findByUsername(input.username);
-    if (existing) {
-      throwError(ERROR_CODES.USER_ALREADY_EXISTS, `Username '${input.username}' is taken.`);
-    }
+  /**
+   * Submit a public account application.
+   *
+   * Creates a user with:
+   *   - email as the login username (what the user types to log in)
+   *   - a random temporary password
+   *   - must_change_password = true (must be changed on first login)
+   *   - expires_at = now + usageDays
+   *   - an immutable tenant_id (data anchor) generated via `tenantId()`
+   *
+   * The email ↔ tenant_id mapping is stored in the `users` table
+   * (username column = email, tenant_id column = immutable anchor).
+   * All internal systems (Neo4j DB name, KV prefixes, B2 paths) use
+   * the tenant_id, never the email — so changing the email later
+   * doesn't require migrating any data.
+   *
+   * Sends the credentials + expiration via email (from venslu.pro@gmail.com).
+   * When no EMAIL_API_KEY is configured, the email is skipped and the
+   * password is returned in the API response as a fallback.
+   */
+  public async submitApplication(
+      email: string,
+      usageDays: number,
+      ctx: AuditContext,
+  ): Promise<ApplicationResult> {
     const maxUsers = parseInt((await this.config.get('max_users')) ?? String(CONFIG.MAX_USERS), 10);
-    const current = await this.users.count();
+    const current = await this.users.countActive();
     if (current >= maxUsers) {
       throwError(ERROR_CODES.USER_MAX_EXCEEDED, `Maximum of ${maxUsers} users reached.`);
     }
-    const role: UserRole = input.role ?? 'analyst';
-    const retention = input.dataRetentionDays ?? CONFIG.DEFAULT_DATA_RETENTION_DAYS;
+    // Email is the login name; check uniqueness.
+    const existing = await this.users.findByUsername(email);
+    if (existing) {
+      throwError(ERROR_CODES.USER_ALREADY_EXISTS, `An account for '${email}' already exists.`);
+    }
+    // Generate the immutable data anchor (tenant_id). This is used for
+    // Neo4j DB naming, KV key prefixes, B2 paths — never the email.
+    const tid = tenantId();
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(temporaryPassword);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + usageDays * 24 * 60 * 60 * 1000).toISOString();
     const user = User.new({
       id: uuid(),
-      tenantId: tenantId(),
-      username: input.username,
+      tenantId: tid,
+      username: email,
       passwordHash,
-      email: input.email ?? null,
-      role,
-      dataRetentionDays: retention,
+      email,
+      role: 'analyst',
+      dataRetentionDays: usageDays,
+      mustChangePassword: true,
+      expiresAt,
     });
     // Create the tenant's Neo4j logical database BEFORE saving the
-    // user to D1. If database provisioning fails (network, Neo4j
-    // unavailable) we roll back cleanly with no D1 state left behind.
+    // user to D1. If database provisioning fails we roll back cleanly.
     await this.createNeo4jDatabase(user.tenantId);
     await this.users.save(user);
     await this.recordAudit(ctx, {
       action: 'create_user',
       targetUserId: user.id,
-      details: JSON.stringify({username: input.username, role}),
+      details: JSON.stringify({username: email, usageDays, expiresAt, tenantId: tid}),
+      tenantId: user.tenantId,
+    });
+
+    // Send credential email.
+    const emailConfig = {
+      apiKey: this.env?.EMAIL_API_KEY,
+      from: this.env?.EMAIL_FROM ?? DEFAULT_EMAIL_FROM,
+    };
+    const {subject, text, html} = buildCredentialEmail(
+        email, temporaryPassword, expiresAt);
+    const emailSent = await sendEmail({to: email, subject, text, html}, emailConfig);
+
+    return {user, temporaryPassword, emailSent};
+  }
+
+  /**
+   * Create a new account AND provision the tenant's Neo4j database.
+   *
+   * The username (login name) is `input.username` or `input.email` —
+   * the admin must supply at least one. The tenant_id (immutable data
+   * anchor) is always generated independently via `tenantId()`, never
+   * derived from the username.
+   */
+  public async createUser(input: CreateUserInput, ctx: AuditContext): Promise<CreateUserResult> {
+    const maxUsers = parseInt((await this.config.get('max_users')) ?? String(CONFIG.MAX_USERS), 10);
+    const current = await this.users.countActive();
+    if (current >= maxUsers) {
+      throwError(ERROR_CODES.USER_MAX_EXCEEDED, `Maximum of ${maxUsers} users reached.`);
+    }
+    // Login name: prefer explicit username, fall back to email.
+    const username = input.username ?? input.email;
+    if (!username) {
+      throwError(ERROR_CODES.VALIDATION_FAILED, 'username or email is required.');
+    }
+    const existing = await this.users.findByUsername(username!);
+    if (existing) {
+      throwError(ERROR_CODES.USER_ALREADY_EXISTS, `Username '${username}' is taken.`);
+    }
+    // Generate the immutable data anchor — independent of username.
+    const tid = tenantId();
+    const role: UserRole = input.role ?? 'analyst';
+    const retention = input.dataRetentionDays ?? CONFIG.DEFAULT_DATA_RETENTION_DAYS;
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = await hashPassword(temporaryPassword);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + retention * 24 * 60 * 60 * 1000).toISOString();
+    const user = User.new({
+      id: uuid(),
+      tenantId: tid,
+      username: username!,
+      passwordHash,
+      email: input.email ?? null,
+      role,
+      dataRetentionDays: retention,
+      mustChangePassword: true,
+      expiresAt,
+    });
+    await this.createNeo4jDatabase(user.tenantId);
+    await this.users.save(user);
+    await this.recordAudit(ctx, {
+      action: 'create_user',
+      targetUserId: user.id,
+      details: JSON.stringify({username, role, tenantId: tid}),
       tenantId: user.tenantId,
     });
     return {user, temporaryPassword};
@@ -143,7 +249,18 @@ export class UserManagementService {
     }
   }
 
-  /** Authenticate a user; returns the user entity when credentials match. */
+  /**
+   * Authenticate a user; returns the user entity when credentials match.
+   *
+   * Checks:
+   *   1. User exists + password is valid.
+   *   2. Account is not disabled.
+   *   3. Account has not expired (checked against `expires_at`).
+   *
+   * The caller (auth handler) is responsible for checking
+   * `user.requiresPasswordChange` after a successful login and issuing
+   * a short-lived activation-only token when true.
+   */
   public async login(
       username: string,
       password: string,
@@ -172,6 +289,9 @@ export class UserManagementService {
     if (!user!.snapshot().isActive) {
       throwError(ERROR_CODES.USER_DISABLED, 'Account is disabled.');
     }
+    if (user!.isExpired()) {
+      throwError(ERROR_CODES.USER_ACCOUNT_EXPIRED, 'Account has expired.');
+    }
     user!.recordLogin();
     await this.users.save(user!);
     await this.recordAudit(ctx, {
@@ -181,6 +301,37 @@ export class UserManagementService {
       tenantId: user!.tenantId,
     });
     return user!;
+  }
+
+  /**
+   * Self-service password change (first-login activation).
+   *
+   * Validates the current password, sets the new one, clears the
+   * must-change flag, revokes all existing refresh tokens, and
+   * records an audit entry.
+   */
+  public async changePassword(
+      userId: string,
+      currentPassword: string,
+      newPassword: string,
+      ctx: AuditContext,
+  ): Promise<User> {
+    const user = await this.requireUser(userId);
+    const valid = await user.verifyPassword(currentPassword);
+    if (!valid) {
+      throwError(ERROR_CODES.AUTH_INVALID_CREDENTIALS, 'Current password is incorrect.');
+    }
+    const newHash = await hashPassword(newPassword);
+    user.changePassword(newHash);
+    await this.users.save(user);
+    await this.refresh.revokeAllForUser(user.id);
+    await this.recordAudit(ctx, {
+      action: 'change_password',
+      targetUserId: user.id,
+      details: null,
+      tenantId: user.tenantId,
+    });
+    return user;
   }
 
   /** Reset a user's password; returns the new plaintext once. */
@@ -325,3 +476,5 @@ export class UserManagementService {
     });
   }
 }
+
+export {PWD_CHANGE_TOKEN_TTL_SECONDS};

@@ -20,6 +20,10 @@ import {
 import {
   ERROR_CODES,
   authTokensSchema,
+  authTokensWithActivationSchema,
+  accountApplicationSchema,
+  applicationResultSchema,
+  changePasswordSchema,
   createUserSchema,
   loginSchema,
   ok,
@@ -39,8 +43,10 @@ import {
   loginHandler,
   logoutHandler,
   refreshHandler,
+  changePasswordHandler,
 } from './handlers/auth.js';
 import {profileHandler} from './handlers/user.js';
+import {submitApplicationHandler} from './handlers/application.js';
 import {
   createUserHandler,
   deleteUserHandler,
@@ -82,8 +88,8 @@ const app = new OpenAPIHono<UserContext>({
 
 // --- Middleware -----------------------------------------------------------
 
-/** Allow auth routes through without the internal-call marker. */
-app.use('*', internalOnlyMiddleware(['/auth/']));
+/** Allow auth + application routes through without the internal-call marker. */
+app.use('*', internalOnlyMiddleware(['/auth/', '/applications']));
 
 /** Create the DDD service layer per request from D1 + Neo4j bindings. */
 app.use('*', async (c, next) => {
@@ -137,9 +143,10 @@ const loginRoute = createRoute({
     },
   },
   responses: {
-    200: jsonOk(authTokensSchema, 'Tokens issued.'),
+    200: jsonOk(authTokensWithActivationSchema, 'Tokens issued (may require password change).'),
     400: jsonError('Validation failed.'),
     401: jsonError('Invalid credentials.'),
+    403: jsonError('Account expired.'),
   },
 });
 app.openapi(loginRoute, async (c) => {
@@ -185,6 +192,52 @@ const logoutRoute = createRoute({
 app.openapi(logoutRoute, async (c) => {
   const service = c.get('service');
   return logoutHandler(c, c.env.JWT_SECRET, service);
+});
+
+const changePasswordRoute = createRoute({
+  method: 'post',
+  path: '/auth/change-password',
+  tags: ['Auth'],
+  summary: 'Change password (first-login activation)',
+  security: [{bearerAuth: []}],
+  request: {
+    body: {
+      content: {'application/json': {schema: changePasswordSchema}},
+    },
+  },
+  responses: {
+    200: jsonOk(authTokensSchema, 'Password changed, full tokens issued.'),
+    400: jsonError('Validation failed.'),
+    401: jsonError('Current password incorrect.'),
+    403: jsonError('Missing identity headers.'),
+  },
+});
+app.openapi(changePasswordRoute, async (c) => {
+  const service = c.get('service');
+  return changePasswordHandler(c, c.env.JWT_SECRET, service);
+});
+
+// Public account application route.
+
+const applicationRoute = createRoute({
+  method: 'post',
+  path: '/applications',
+  tags: ['Auth'],
+  summary: 'Submit an account application',
+  request: {
+    body: {
+      content: {'application/json': {schema: accountApplicationSchema}},
+    },
+  },
+  responses: {
+    201: jsonOk(applicationResultSchema, 'Account created.'),
+    400: jsonError('Validation failed.'),
+    409: jsonError('Email already registered or max users reached.'),
+  },
+});
+app.openapi(applicationRoute, async (c) => {
+  const service = c.get('service');
+  return submitApplicationHandler(c, service);
 });
 
 // Self-service routes.

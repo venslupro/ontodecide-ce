@@ -21,7 +21,7 @@ import type {GatewayEnv} from './types/env.js';
 import {ROUTES, registerOpenApiSpec} from './routes.js';
 import {authMiddleware, type GatewayVariables} from './middlewares/auth.js';
 import {rateLimitMiddleware} from './middlewares/ratelimit.js';
-import {forwardRequest, buildDownstreamUrl} from './forward.js';
+import {forwardRequest} from './forward.js';
 
 type AppEnv = {
   Bindings: GatewayEnv;
@@ -53,7 +53,7 @@ app.get('/', (c) =>
 app.use('/api/*', authMiddleware, rateLimitMiddleware);
 
 // Catch-all forward handler — every /api/* request is proxied to the
-// matching downstream service.
+// matching downstream service via a Service Binding (zero-cost, in-account).
 app.all('/api/*', async (c) => {
   const path = new URL(c.req.url).pathname;
   const route = matchRoute(path);
@@ -66,9 +66,9 @@ app.all('/api/*', async (c) => {
     );
   }
   const auth = c.get('auth');
-  const targetUrl = buildDownstreamUrl(route.baseUrl(c.env), c.req.url);
+  const binding = route.binding(c.env);
   try {
-    return await forwardRequest(c.req.raw, targetUrl, auth);
+    return await forwardRequest(c.req.raw, binding, auth);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Downstream call failed';
     return jsonFailResponse(c, ERROR_CODES.INTERNAL, message, 502);
