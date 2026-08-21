@@ -136,6 +136,62 @@ jobs:
       - name: Build ${{ matrix.service.name }}
         run: pnpm turbo run build --filter=${{ matrix.service.package }}
 
+      # Ensure Cloudflare resources referenced by wrangler.toml exist
+      # before deploy. wrangler deploy fails if queues / D1 / KV
+      # names are referenced but not yet created.
+      - name: Ensure Cloudflare resources for ${{ matrix.service.name }}
+        shell: bash
+        run: |
+          set -e
+          W="pnpm --filter=@ontodecide/${{ matrix.service.name }} exec wrangler"
+          #
+          # Ensure D1 database exists (shared by user + ai + cleanup)
+          #
+          DB_NAME="ontodecide-decision-db-production"
+          case "${{ matrix.service.name }}" in
+            user|ai|cleanup)
+              if ! $W d1 list --remote 2>/dev/null | grep -q "$DB_NAME"; then
+                echo "Creating D1 database: $DB_NAME"
+                $W d1 create "$DB_NAME" --remote
+              else
+                echo "D1 database $DB_NAME already exists"
+              fi
+              ;;
+          esac
+          #
+          # Ensure Queues exist (ingestion + cleanup)
+          #
+          case "${{ matrix.service.name }}" in
+            ingestion)
+              for q in ontodecide-ingestion-production ontodecide-ingestion-dlq-production; do
+                if ! $W queues list --remote 2>/dev/null | grep -q "$q"; then
+                  echo "Creating Queue: $q"
+                  $W queues create "$q" --remote
+                else
+                  echo "Queue $q already exists"
+                fi
+              done
+              ;;
+            cleanup)
+              for q in ontodecide-cleanup-production ontodecide-cleanup-dlq-production; do
+                if ! $W queues list --remote 2>/dev/null | grep -q "$q"; then
+                  echo "Creating Queue: $q"
+                  $W queues create "$q" --remote
+                else
+                  echo "Queue $q already exists"
+                fi
+              done
+              ;;
+          esac
+          #
+          # KV namespaces are created automatically on first deploy
+          # (wrangler detects [[kv_namespaces]] blocks and provisions
+          # them). No explicit create needed here.
+          #
+          # Service Bindings are auto-resolved at deploy time.
+          # Cron triggers in cleanup/wrangler.toml are auto-provisioned.
+          echo "Resource check complete for ${{ matrix.service.name }}"
+
       # Build the secrets list for the current service.
       # wrangler-action expects secret NAMES (one per line), not
       # NAME=VALUE pairs. It reads values from process.env, which
