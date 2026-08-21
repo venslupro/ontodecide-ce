@@ -137,49 +137,66 @@ jobs:
         run: pnpm turbo run build --filter=${{ matrix.service.package }}
 
       # Ensure Cloudflare resources referenced by wrangler.toml exist
-      # before deploy (best-effort). Uses `set +e` so missing resources
-      # do NOT block the deploy — the Worker itself validates config
-      # at startup and surfaces clear error messages.
+      # before deploy.
+      #
+      # IMPORTANT: wrangler CLI reads CLOUDFLARE_API_TOKEN /
+      # CLOUDFLARE_ACCOUNT_ID (NOT CF_API_TOKEN / CF_ACCOUNT_ID).
+      # We export the mapped names so direct `wrangler` shell commands
+      # (queues create, d1 create) are authenticated.
       - name: Ensure Cloudflare resources for ${{ matrix.service.name }}
         shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
-          set +e
           W="pnpm --filter=@ontodecide/${{ matrix.service.name }} exec wrangler"
           #
           # Ensure D1 database exists (shared by user + ai + cleanup)
+          # Best-effort: D1 is auto-created on first deploy, so we
+          # don't fail if the pre-create step errors.
           #
           DB_NAME="ontodecide-decision-db-production"
           case "${{ matrix.service.name }}" in
             user|ai|cleanup)
+              set +e
               if ! $W d1 list --remote 2>/dev/null | grep -q "$DB_NAME"; then
                 echo "Creating D1 database: $DB_NAME"
                 $W d1 create "$DB_NAME" --remote
               else
                 echo "D1 database $DB_NAME already exists"
               fi
+              set -e
               ;;
           esac
           #
           # Ensure Queues exist (ingestion + cleanup)
-          # Note: wrangler queues commands are remote-only — no --remote flag.
+          # MUST succeed: wrangler deploy fails if referenced queues
+          # don't exist.  We use set -e so queue creation errors are
+          # surfaced immediately, not silently swallowed.
           #
           case "${{ matrix.service.name }}" in
             ingestion)
               for q in ontodecide-ingestion-production ontodecide-ingestion-dlq-production; do
+                set +e
                 if ! $W queues list 2>/dev/null | grep -q "$q"; then
+                  set -e
                   echo "Creating Queue: $q"
                   $W queues create "$q"
                 else
+                  set -e
                   echo "Queue $q already exists"
                 fi
               done
               ;;
             cleanup)
               for q in ontodecide-cleanup-production ontodecide-cleanup-dlq-production; do
+                set +e
                 if ! $W queues list 2>/dev/null | grep -q "$q"; then
+                  set -e
                   echo "Creating Queue: $q"
                   $W queues create "$q"
                 else
+                  set -e
                   echo "Queue $q already exists"
                 fi
               done
