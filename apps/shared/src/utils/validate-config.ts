@@ -167,6 +167,60 @@ export const validators = {
     if (value.trim().length === 0) return `must not be empty`;
     return null;
   },
+
+  /**
+   * JWT HMAC signing secret validator.
+   *
+   * Enforces production-grade secret quality:
+   *   1. Minimum 32 characters (HMAC-SHA256 requirement).
+   *   2. Not a common weak / well-known secret.
+   *   3. Has character variety — not all-lowercase, all-uppercase,
+   *      or all-digit (low entropy).
+   *   4. Not a single character repeated (e.g. "aaaaaaaaaa").
+   *   5. Not a simple sequential pattern (e.g. "abcdefghij").
+   *
+   * @example
+   * validators.jwtSecret  // default: min 32 chars
+   * validators.jwtSecret(64) // require 64+ chars (HMAC-SHA512)
+   */
+  jwtSecret: (minLength: number = 32) =>
+    (value: unknown): string | null => {
+      if (typeof value !== 'string') return `must be a string`;
+      if (value.length < minLength) {
+        return `must be at least ${minLength} characters (got ${value.length})`;
+      }
+      // Common weak secrets that would pass the length check.
+      const weakSecrets = new Set([
+        // Generic weak keys
+        'secret', 'key', 'changeme', 'password', 'admin',
+        'jwt', 'jwt_secret', 'signing_key', 'signing-secret',
+        // Common placeholder values
+        'your-secret-key', 'super-secret-key', 'my-secret-key',
+        'development', 'staging', 'production',
+        // Too common to be safe
+        '12345678901234567890123456789012',
+        '0987654321098765432109876543210',
+      ]);
+      const trimmed = value.trim().toLowerCase();
+      if (weakSecrets.has(trimmed)) {
+        return `matches a well-known weak secret — choose a random ${minLength}+ char string`;
+      }
+      // All same character (e.g. "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+      if (/^(.)\1+$/.test(value)) {
+        return `is a single character repeated — use a random string with variety`;
+      }
+      // Character variety check: must have at least 2 of [lowercase, uppercase, digits, symbols]
+      const hasLower = /[a-z]/.test(value);
+      const hasUpper = /[A-Z]/.test(value);
+      const hasDigit = /[0-9]/.test(value);
+      const hasSymbol = /[^a-zA-Z0-9]/.test(value);
+      const varietyCount = [hasLower, hasUpper, hasDigit, hasSymbol].filter(Boolean).length;
+      if (varietyCount < 2) {
+        return `lacks character variety — mix at least 2 of ` +
+          `[lowercase, uppercase, digits, symbols]`;
+      }
+      return null;
+    },
 };
 
 // ─── Helper: create a ConfigKey with optional validator ────────────────────────

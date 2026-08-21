@@ -27,7 +27,7 @@ import {forwardRequest} from './forward.js';
 let configValidated = false;
 
 const REQUIRED_KEYS = [
-  configKey('JWT_SECRET', 'HMAC-SHA256 signing key (≥32 chars)', validators.minLength(32)),
+  configKey('JWT_SECRET', 'HMAC-SHA256 signing key (≥32 chars, high entropy)', validators.jwtSecret()),
   configKey('JWT_BLACKLIST', 'KV namespace for revoked JWTs'),
   configKey('RATE_LIMIT', 'KV namespace for rate-limit counters'),
   configKey('USER_SERVICE', 'Service Binding to User Worker'),

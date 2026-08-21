@@ -75,7 +75,7 @@ type UserContext = {
 let configValidated = false;
 
 const REQUIRED_KEYS = [
-  configKey('JWT_SECRET', 'HMAC-SHA256 signing key (≥32 chars)', validators.minLength(32)),
+  configKey('JWT_SECRET', 'HMAC-SHA256 signing key (≥32 chars, high entropy)', validators.jwtSecret()),
   configKey('DB', 'D1 database for users, audit_logs, refresh_tokens'),
   configKey('CACHE', 'KV cache namespace'),
 ];
