@@ -146,32 +146,26 @@ jobs:
         id: prepare_secrets
         shell: bash
         run: |
-          names=""
+          names=()
           case "${{ matrix.service.name }}" in
             gateway)
-              names="JWT_SECRET" ;;
+              names=("JWT_SECRET") ;;
             user)
-              names="JWT_SECRET
-EMAIL_API_KEY" ;;
+              names=("JWT_SECRET" "EMAIL_API_KEY") ;;
             graph)
-              names="NEO4J_PASSWORD" ;;
+              names=("NEO4J_PASSWORD") ;;
             ingestion)
-              names="B2_KEY_ID
-B2_KEY" ;;
+              names=("B2_KEY_ID" "B2_KEY") ;;
             ai)
-              names="OPENAI_API_KEY
-ANTHROPIC_API_KEY
-GOOGLE_API_KEY
-OPENROUTER_API_KEY
-AI_GATEWAY_TOKEN" ;;
+              names=("OPENAI_API_KEY" "ANTHROPIC_API_KEY" "GOOGLE_API_KEY" "OPENROUTER_API_KEY" "AI_GATEWAY_TOKEN") ;;
             cleanup)
-              names="NEO4J_PASSWORD
-B2_KEY_ID
-B2_KEY" ;;
+              names=("NEO4J_PASSWORD" "B2_KEY_ID" "B2_KEY") ;;
           esac
-          echo "secrets<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$names" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "secrets<<EOF"
+            printf '%s\n' "${names[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       # Deploy Worker code AND push runtime secrets in one step.
       # `secrets` input is written by wrangler-action@v3 via
