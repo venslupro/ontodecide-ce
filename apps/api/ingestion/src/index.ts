@@ -21,10 +21,13 @@ import {
 } from '@ontodecide/shared/hono';
 import {
   ERROR_CODES,
+  configKey,
   ingestJobEnqueuedSchema,
   ingestSyncResultSchema,
   ingestSyncSchema,
   validateAndLogConfig,
+  validators,
+  type ConfigKey,
 } from '@ontodecide/shared';
 import type {IngestionEnv, IngestJobMessage} from './types/env.js';
 import {
@@ -93,16 +96,18 @@ const app = new OpenAPIHono<{Bindings: IngestionEnv}>({
 /** Cache config validation result — runs once per Worker instance. */
 let configValidated = false;
 
-const REQUIRED_KEYS = [
-  'B2_KEY_ID',
-  'B2_KEY',
-  'B2_REGION',
-  'B2_INGESTION_BUCKET',
-  'INGEST_QUEUE',
-  'JOBS',
-  'GRAPH_SERVICE',
+const REQUIRED_KEYS: ConfigKey[] = [
+  configKey('B2_KEY_ID', 'B2 Application Key ID', validators.nonEmpty),
+  configKey('B2_KEY', 'B2 Application Key Secret', validators.nonEmpty),
+  configKey('B2_REGION', 'B2 region (e.g. us-west-004)', validators.pattern(/^us-\w+-\d+$/, 'B2 region format like us-west-004')),
+  configKey('B2_INGESTION_BUCKET', 'B2 ingestion staging bucket name', validators.nonEmpty),
+  configKey('INGEST_QUEUE', 'Queue producer for async ETL jobs'),
+  configKey('JOBS', 'KV namespace for job-status records'),
+  configKey('GRAPH_SERVICE', 'Service Binding to Graph Worker'),
 ];
-const OPTIONAL_KEYS = ['GRAPH_SERVICE_URL'];
+const OPTIONAL_KEYS: ConfigKey[] = [
+  configKey('GRAPH_SERVICE_URL', 'Fallback URL for Graph Service (dev only)', validators.url),
+];
 
 // Config validation middleware — runs once per Worker instance.
 app.use('*', async (c, next) => {

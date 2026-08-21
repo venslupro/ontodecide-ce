@@ -11,11 +11,14 @@ import {
   ok,
   agentPlanRequestSchema,
   agentStateSchema,
+  configKey,
   recommendationRequestSchema,
   recommendationSchema,
   scenarioRequestSchema,
   scenarioResultSchema,
   validateAndLogConfig,
+  validators,
+  type ConfigKey,
 } from '@ontodecide/shared';
 import {
   OpenAPIHono,
@@ -60,14 +63,20 @@ export interface AiBindings {
 /** Cache config validation result — runs once per Worker instance. */
 let configValidated = false;
 
-const REQUIRED_KEYS = ['AI', 'DB', 'CACHE', 'AGENT', 'WORKERS_AI_MODEL'];
-const OPTIONAL_KEYS = [
-  'AI_GATEWAY_ID',
-  'AI_GATEWAY_TOKEN',
-  'OPENAI_API_KEY',
-  'ANTHROPIC_API_KEY',
-  'GOOGLE_API_KEY',
-  'OPENROUTER_API_KEY',
+const REQUIRED_KEYS: ConfigKey[] = [
+  configKey('AI', 'Workers AI binding'),
+  configKey('DB', 'D1 database for decisions, agent_runs'),
+  configKey('CACHE', 'KV cache namespace + neuron budget counter'),
+  configKey('AGENT', 'Durable Object namespace for planning agent'),
+  configKey('WORKERS_AI_MODEL', 'Workers AI model id', validators.nonEmpty),
+];
+const OPTIONAL_KEYS: ConfigKey[] = [
+  configKey('AI_GATEWAY_ID', 'AI Gateway id (optional)'),
+  configKey('AI_GATEWAY_TOKEN', 'AI Gateway auth token (optional)'),
+  configKey('OPENAI_API_KEY', 'OpenAI API key (optional)'),
+  configKey('ANTHROPIC_API_KEY', 'Anthropic API key (optional)'),
+  configKey('GOOGLE_API_KEY', 'Google API key (optional)'),
+  configKey('OPENROUTER_API_KEY', 'OpenRouter API key (optional)'),
 ];
 
 export default {

@@ -18,6 +18,7 @@ import {
 } from '@ontodecide/shared/hono';
 import {
   ERROR_CODES,
+  configKey,
   cypherQueryRequestSchema,
   entityNodeSchema,
   exploreRequestSchema,
@@ -25,6 +26,8 @@ import {
   ontologyTypeSchema,
   situationNodeSchema,
   validateAndLogConfig,
+  validators,
+  type ConfigKey,
 } from '@ontodecide/shared';
 import {z} from 'zod';
 import type {GraphEnv} from './types/env.js';
@@ -64,13 +67,13 @@ const app = new OpenAPIHono<{Bindings: GraphEnv; Variables: GraphVars}>({
 let configValidated = false;
 
 const REQUIRED_KEYS = [
-  'CACHE',
-  'NEO4J_URL',
-  'NEO4J_USER',
-  'NEO4J_PASSWORD',
-  'NEO4J_DATABASE',
+  configKey('CACHE', 'KV cache namespace for ontology + entity caches'),
+  configKey('NEO4J_URL', 'Neo4j AuraDB connection URL', validators.url),
+  configKey('NEO4J_USER', 'Neo4j username (usually "neo4j")', validators.nonEmpty),
+  configKey('NEO4J_PASSWORD', 'Neo4j password', validators.minLength(1)),
+  configKey('NEO4J_DATABASE', 'Neo4j database name', validators.nonEmpty),
 ];
-const OPTIONAL_KEYS: string[] = [];
+const OPTIONAL_KEYS: ConfigKey[] = [];
 
 // Config validation middleware — runs once per Worker instance.
 app.use('*', async (c, next) => {

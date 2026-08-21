@@ -24,7 +24,10 @@ import {
   ERROR_CODES,
   cleanupRequestSchema,
   cleanupStatusSchema,
+  configKey,
   validateAndLogConfig,
+  validators,
+  type ConfigKey,
 } from '@ontodecide/shared';
 import type {CleanupEnv, CleanupMessage} from './types/env.js';
 import {
@@ -55,25 +58,25 @@ const app = new OpenAPIHono<{Bindings: CleanupEnv}>({
 /** Cache config validation result — runs once per Worker instance. */
 let configValidated = false;
 
-const REQUIRED_KEYS = [
-  'CLEANUP_QUEUE',
-  'DB',
-  'B2_KEY_ID',
-  'B2_KEY',
-  'B2_REGION',
-  'B2_INGESTION_BUCKET',
-  'B2_ARCHIVE_BUCKET',
-  'USER_CACHE',
-  'GRAPH_CACHE',
-  'INGESTION_JOBS',
-  'AI_CACHE',
-  'CLEANUP_JOBS',
-  'NEO4J_URL',
-  'NEO4J_USER',
-  'NEO4J_PASSWORD',
-  'NEO4J_DATABASE',
+const REQUIRED_KEYS: ConfigKey[] = [
+  configKey('CLEANUP_QUEUE', 'Queue producer for cleanup jobs'),
+  configKey('DB', 'D1 database for users + audit_logs'),
+  configKey('B2_KEY_ID', 'B2 Application Key ID', validators.nonEmpty),
+  configKey('B2_KEY', 'B2 Application Key Secret', validators.nonEmpty),
+  configKey('B2_REGION', 'B2 region (e.g. us-west-004)', validators.pattern(/^us-\w+-\d+$/, 'B2 region format like us-west-004')),
+  configKey('B2_INGESTION_BUCKET', 'B2 ingestion staging bucket', validators.nonEmpty),
+  configKey('B2_ARCHIVE_BUCKET', 'B2 archive backup bucket', validators.nonEmpty),
+  configKey('USER_CACHE', 'KV namespace for user cache'),
+  configKey('GRAPH_CACHE', 'KV namespace for graph cache'),
+  configKey('INGESTION_JOBS', 'KV namespace for ingestion jobs'),
+  configKey('AI_CACHE', 'KV namespace for AI cache'),
+  configKey('CLEANUP_JOBS', 'KV namespace for cleanup jobs'),
+  configKey('NEO4J_URL', 'Neo4j AuraDB connection URL', validators.url),
+  configKey('NEO4J_USER', 'Neo4j username', validators.nonEmpty),
+  configKey('NEO4J_PASSWORD', 'Neo4j password', validators.minLength(1)),
+  configKey('NEO4J_DATABASE', 'Neo4j database name', validators.nonEmpty),
 ];
-const OPTIONAL_KEYS: string[] = [];
+const OPTIONAL_KEYS: ConfigKey[] = [];
 
 // Config validation middleware — runs once per Worker instance.
 app.use('*', async (c, next) => {

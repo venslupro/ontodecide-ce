@@ -1,20 +1,23 @@
 /**
  * Runtime configuration validation for Cloudflare Workers.
  *
- * Unlike the CI/CD deploy step (which is best-effort), this module
- * enforces config correctness at Worker startup. Each Worker calls
- * {@link validateWorkerConfig} on first request to surface clear
- * warnings for missing secrets, empty vars, or unbound resources.
+ * Two-layer validation:
+ *   1. Presence check  — every key must be non-null/non-empty.
+ *   2. Semantic check — for string values, validates format / length
+ *                       via pluggable validator functions.
  *
  * Design goals:
  *   1. Deploy must NEVER block on missing config — the Worker is
  *      deployed and reachable even with incomplete configuration.
  *   2. The first request triggers validation and logs every missing
- *      piece, so operators see exactly what to fix.
+ *      or malformed piece, so operators see exactly what to fix.
  *   3. Required vs. optional keys are distinguished — missing required
  *      keys produce ERROR-level logs, missing optional keys produce
  *      WARN-level logs.
+ *   4. Semantic validators are composable and reusable across services.
  */
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Severity of a config validation finding. */
 export type ConfigSeverity = 'error' | 'warning';
@@ -25,66 +28,195 @@ export interface ConfigFinding {
   key: string;
   /** Severity — `error` for required keys, `warning` for optional. */
   severity: ConfigSeverity;
-  /** Human-readable description of what this key is for. */
+  /** Human-readable description of what was wrong. */
   description: string;
 }
 
 /**
- * Validate a Worker's runtime environment against a set of expected keys.
+ * A configuration key declaration with optional semantic validation.
  *
- * @param env            The Cloudflare Worker `env` object (string vars +
- *                       bound resources like KVNamespace, D1Database, Queue).
- * @param requiredKeys   Keys that MUST be present and non-empty.
- *                       String values are checked for non-emptiness;
- *                       bound resources are checked for non-nullness.
- * @param optionalKeys   Keys that SHOULD be present but are not strictly
- *                       required. Missing optional keys produce warnings.
- * @param serviceName    Human-readable service name (e.g. "gateway",
- *                       "ingestion") used in log messages.
+ * @example
+ * const jwtKey = configKey('JWT_SECRET', 'HMAC signing key (≥32 bytes)', validators.minLength(32));
+ */
+export interface ConfigKey {
+  /** Env key name matching wrangler.toml / Dashboard variable name. */
+  key: string;
+  /** Human-readable description for error messages. */
+  description: string;
+  /**
+   * Optional semantic validator.
+   * Returns `null` on success, or a human-readable error message on failure.
+   */
+  validate?: (value: unknown) => string | null;
+}
+
+// ─── Common validators ────────────────────────────────────────────────────────
+
+/**
+ * Reusable semantic validators for common config patterns.
+ * Each returns `null` on success, or an error message string on failure.
+ */
+export const validators = {
+  /** String must be at least `n` characters. */
+  minLength: (n: number) => (value: unknown): string | null => {
+    if (typeof value !== 'string') return `must be a string`;
+    if (value.length < n) {
+      return `must be at least ${n} characters (got ${value.length})`;
+    }
+    return null;
+  },
+
+  /** String must be a valid URL (http or https). */
+  url: (value: unknown): string | null => {
+    if (typeof value !== 'string') return `must be a string`;
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        return `must use http or https protocol (got: ${parsed.protocol})`;
+      }
+      return null;
+    } catch {
+      return `must be a valid URL (got: ${JSON.stringify(value)})`;
+    }
+  },
+
+  /** String must start with the given prefix. */
+  startsWith: (prefix: string) => (value: unknown): string | null => {
+    if (typeof value !== 'string') return `must be a string`;
+    if (!value.startsWith(prefix)) {
+      return `must start with "${prefix}" (got: ${JSON.stringify(value)})`;
+    }
+    return null;
+  },
+
+  /** String must match a regex pattern. */
+  pattern: (regex: RegExp, label?: string) => (value: unknown): string | null => {
+    if (typeof value !== 'string') return `must be a string`;
+    if (!regex.test(value)) {
+      return label ?
+        `must match ${label} (got: ${JSON.stringify(value)})` :
+        `must match ${regex} (got: ${JSON.stringify(value)})`;
+    }
+    return null;
+  },
+
+  /** String must be a valid email address. */
+  email: (value: unknown): string | null => {
+    if (typeof value !== 'string') return `must be a string`;
+    // Basic email check — not RFC 5322 perfect, but sufficient for config validation.
+    const basicEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!basicEmail.test(value)) {
+      return `must be a valid email address (got: ${JSON.stringify(value)})`;
+    }
+    return null;
+  },
+
+  /** String must be non-empty after trimming. */
+  nonEmpty: (value: unknown): string | null => {
+    if (typeof value !== 'string') return `must be a string`;
+    if (value.trim().length === 0) return `must not be empty`;
+    return null;
+  },
+};
+
+// ─── Helper: create a ConfigKey with optional validator ────────────────────────
+
+/**
+ * Shorthand for declaring a config key without semantic validation.
+ *
+ * @example
+ * configKey('JWT_SECRET', 'HMAC signing key')
+ */
+export function configKey(
+    key: string,
+    description: string,
+    validate?: (value: unknown) => string | null,
+): ConfigKey {
+  return {key, description, validate};
+}
+
+// ─── Core validation engine ───────────────────────────────────────────────────
+
+/**
+ * Validate a Worker's runtime environment against a set of declared keys.
+ *
+ * For each required/optional key:
+ *   1. Check presence (non-null for resources, non-empty for strings).
+ *   2. If present and a validator is defined, run semantic check.
+ *
+ * @param env          The Cloudflare Worker `env` object.
+ * @param requiredKeys Keys that MUST be present and valid.
+ * @param optionalKeys Keys that SHOULD be present but are not strictly required.
+ * @param serviceName  Human-readable service name for log context.
  * @returns Array of findings (empty = all good).
  */
 export function validateWorkerConfig(
     env: Record<string, unknown>,
-    requiredKeys: string[],
-    optionalKeys: string[] = [],
+    requiredKeys: ConfigKey[],
+    optionalKeys: ConfigKey[] = [],
     serviceName: string = 'worker',
 ): ConfigFinding[] {
   const findings: ConfigFinding[] = [];
 
-  for (const key of requiredKeys) {
+  for (const {key, description, validate} of requiredKeys) {
     const value = env[key];
-    if (!isPresent(value)) {
+    const present = isPresent(value);
+    if (!present) {
       findings.push({
         key,
         severity: 'error',
-        description: `Missing required config: ${key} is not set. ` +
+        description: `Missing required config: ${description}. ` +
           `Set it in Cloudflare Dashboard → Worker → Variables and Secrets, ` +
           `or push via \`wrangler secret put ${key}\`.`,
       });
+      continue;
+    }
+    // Semantic validation (only for string values, resources are validated
+    // by their non-nullness check above).
+    if (validate && typeof value === 'string') {
+      const err = validate(value);
+      if (err) {
+        findings.push({
+          key,
+          severity: 'error',
+          description: `Invalid config: ${err} (key: ${key})`,
+        });
+      }
     }
   }
 
-  for (const key of optionalKeys) {
+  for (const {key, description, validate} of optionalKeys) {
     const value = env[key];
-    if (!isPresent(value)) {
+    const present = isPresent(value);
+    if (!present) {
       findings.push({
         key,
         severity: 'warning',
-        description: `Missing optional config: ${key} is not set. ` +
+        description: `Missing optional config: ${description}. ` +
           `Some features of the ${serviceName} service may not work.`,
       });
+      continue;
+    }
+    if (validate && typeof value === 'string') {
+      const err = validate(value);
+      if (err) {
+        findings.push({
+          key,
+          severity: 'warning',
+          description: `Invalid optional config: ${err} (key: ${key})`,
+        });
+      }
     }
   }
 
   return findings;
 }
 
+// ─── Logging ──────────────────────────────────────────────────────────────────
+
 /**
  * Log all config findings at the appropriate severity level.
  * Uses console.error for `error` severity, console.warn for `warning`.
- *
- * @param findings  Output of {@link validateWorkerConfig}.
- * @param serviceName  Human-readable service name for log context.
  */
 export function logConfigFindings(
     findings: ConfigFinding[],
@@ -102,7 +234,7 @@ export function logConfigFindings(
 
   if (errors.length > 0) {
     console.error(
-        `[config] ${serviceName}: ${errors.length} REQUIRED config(s) missing:`,
+        `[config] ${serviceName}: ${errors.length} REQUIRED config(s) issue(s):`,
     );
     for (const f of errors) {
       console.error(`  ✗ ${f.key} — ${f.description}`);
@@ -111,13 +243,34 @@ export function logConfigFindings(
 
   if (warnings.length > 0) {
     console.warn(
-        `[config] ${serviceName}: ${warnings.length} optional config(s) missing:`,
+        `[config] ${serviceName}: ${warnings.length} optional config(s) issue(s):`,
     );
     for (const f of warnings) {
       console.warn(`  ⚠ ${f.key} — ${f.description}`);
     }
   }
 }
+
+// ─── Combined helper ──────────────────────────────────────────────────────────
+
+/**
+ * Combined validation + logging helper.
+ *
+ * @returns The findings array (for programmatic use, e.g. returning
+ *          a 503 in health-check when required keys are missing).
+ */
+export function validateAndLogConfig(
+    env: Record<string, unknown>,
+    requiredKeys: ConfigKey[],
+    optionalKeys: ConfigKey[] = [],
+    serviceName: string = 'worker',
+): ConfigFinding[] {
+  const findings = validateWorkerConfig(env, requiredKeys, optionalKeys, serviceName);
+  logConfigFindings(findings, serviceName);
+  return findings;
+}
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /**
  * Check whether an env value is "present":
@@ -131,25 +284,4 @@ function isPresent(value: unknown): boolean {
   // Bound resources (KVNamespace, D1Database, Queue, Fetcher,
   // DurableObjectNamespace) are objects — truthy check suffices.
   return true;
-}
-
-/**
- * Combined validation + logging helper.
- *
- * @param env            Worker env object.
- * @param requiredKeys   Required key names.
- * @param optionalKeys   Optional key names (defaults to `[]`).
- * @param serviceName    Service name for log context.
- * @returns The findings array (for programmatic use, e.g. returning
- *          a 503 in health-check when required keys are missing).
- */
-export function validateAndLogConfig(
-    env: Record<string, unknown>,
-    requiredKeys: string[],
-    optionalKeys: string[] = [],
-    serviceName: string = 'worker',
-): ConfigFinding[] {
-  const findings = validateWorkerConfig(env, requiredKeys, optionalKeys, serviceName);
-  logConfigFindings(findings, serviceName);
-  return findings;
 }

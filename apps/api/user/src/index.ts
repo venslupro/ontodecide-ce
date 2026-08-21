@@ -24,6 +24,7 @@ import {
   accountApplicationSchema,
   applicationResultSchema,
   changePasswordSchema,
+  configKey,
   createUserSchema,
   loginSchema,
   ok,
@@ -31,6 +32,7 @@ import {
   userPublicSchema,
   credentialResultSchema,
   validateAndLogConfig,
+  validators,
 } from '@ontodecide/shared';
 import type {UserEnv} from './types/env.js';
 import {
@@ -72,8 +74,15 @@ type UserContext = {
 /** Cache config validation result — runs once per Worker instance. */
 let configValidated = false;
 
-const REQUIRED_KEYS = ['JWT_SECRET', 'DB', 'CACHE'];
-const OPTIONAL_KEYS = ['EMAIL_API_KEY', 'EMAIL_FROM'];
+const REQUIRED_KEYS = [
+  configKey('JWT_SECRET', 'HMAC-SHA256 signing key (≥32 chars)', validators.minLength(32)),
+  configKey('DB', 'D1 database for users, audit_logs, refresh_tokens'),
+  configKey('CACHE', 'KV cache namespace'),
+];
+const OPTIONAL_KEYS = [
+  configKey('EMAIL_API_KEY', 'Resend API key for transactional emails'),
+  configKey('EMAIL_FROM', 'Sender email address', validators.email),
+];
 
 const app = new OpenAPIHono<UserContext>({
   defaultHook: (result, c) => {

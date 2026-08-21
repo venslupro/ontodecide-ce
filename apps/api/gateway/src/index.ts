@@ -10,7 +10,7 @@
  * The Gateway keeps no business state — it is intentionally stateless and
  * relies on KV only for the JWT blacklist and rate-limit counters.
  */
-import {ERROR_CODES, validateAndLogConfig} from '@ontodecide/shared';
+import {ERROR_CODES, validateAndLogConfig, configKey, validators} from '@ontodecide/shared';
 import {
   OpenAPIHono,
   jsonOkResponse,
@@ -27,16 +27,18 @@ import {forwardRequest} from './forward.js';
 let configValidated = false;
 
 const REQUIRED_KEYS = [
-  'JWT_SECRET',
-  'JWT_BLACKLIST',
-  'RATE_LIMIT',
-  'USER_SERVICE',
-  'GRAPH_SERVICE',
-  'INGESTION_SERVICE',
-  'AI_SERVICE',
-  'CLEANUP_SERVICE',
+  configKey('JWT_SECRET', 'HMAC-SHA256 signing key (≥32 chars)', validators.minLength(32)),
+  configKey('JWT_BLACKLIST', 'KV namespace for revoked JWTs'),
+  configKey('RATE_LIMIT', 'KV namespace for rate-limit counters'),
+  configKey('USER_SERVICE', 'Service Binding to User Worker'),
+  configKey('GRAPH_SERVICE', 'Service Binding to Graph Worker'),
+  configKey('INGESTION_SERVICE', 'Service Binding to Ingestion Worker'),
+  configKey('AI_SERVICE', 'Service Binding to AI Worker'),
+  configKey('CLEANUP_SERVICE', 'Service Binding to Cleanup Worker'),
 ];
-const OPTIONAL_KEYS = ['AI_DEFAULT_PROVIDER'];
+const OPTIONAL_KEYS = [
+  configKey('AI_DEFAULT_PROVIDER', 'Default LLM provider name'),
+];
 
 type AppEnv = {
   Bindings: GatewayEnv;
