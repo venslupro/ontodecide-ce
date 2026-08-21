@@ -8,3 +8,4 @@ export * from './response.js';
 export * from './crypto.js';
 export * from './jwt.js';
 export * from './email.js';
+export * from './validate-config.js';

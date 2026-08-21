@@ -30,6 +30,7 @@ import {
   refreshSchema,
   userPublicSchema,
   credentialResultSchema,
+  validateAndLogConfig,
 } from '@ontodecide/shared';
 import type {UserEnv} from './types/env.js';
 import {
@@ -68,6 +69,12 @@ type UserContext = {
   Variables: UserVars;
 };
 
+/** Cache config validation result — runs once per Worker instance. */
+let configValidated = false;
+
+const REQUIRED_KEYS = ['JWT_SECRET', 'DB', 'CACHE'];
+const OPTIONAL_KEYS = ['EMAIL_API_KEY', 'EMAIL_FROM'];
+
 const app = new OpenAPIHono<UserContext>({
   defaultHook: (result, c) => {
     if (!result.success) {
@@ -87,6 +94,20 @@ const app = new OpenAPIHono<UserContext>({
 });
 
 // --- Middleware -----------------------------------------------------------
+
+// Config validation middleware — runs once per Worker instance.
+app.use('*', async (c, next) => {
+  if (!configValidated) {
+    validateAndLogConfig(
+      c.env as unknown as Record<string, unknown>,
+      REQUIRED_KEYS,
+      OPTIONAL_KEYS,
+      'user',
+    );
+    configValidated = true;
+  }
+  await next();
+});
 
 /** Allow auth + application routes through without the internal-call marker. */
 app.use('*', internalOnlyMiddleware(['/auth/', '/applications']));

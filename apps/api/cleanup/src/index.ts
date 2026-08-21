@@ -24,6 +24,7 @@ import {
   ERROR_CODES,
   cleanupRequestSchema,
   cleanupStatusSchema,
+  validateAndLogConfig,
 } from '@ontodecide/shared';
 import type {CleanupEnv, CleanupMessage} from './types/env.js';
 import {
@@ -49,6 +50,43 @@ const app = new OpenAPIHono<{Bindings: CleanupEnv}>({
     }
     return;
   },
+});
+
+/** Cache config validation result — runs once per Worker instance. */
+let configValidated = false;
+
+const REQUIRED_KEYS = [
+  'CLEANUP_QUEUE',
+  'DB',
+  'B2_KEY_ID',
+  'B2_KEY',
+  'B2_REGION',
+  'B2_INGESTION_BUCKET',
+  'B2_ARCHIVE_BUCKET',
+  'USER_CACHE',
+  'GRAPH_CACHE',
+  'INGESTION_JOBS',
+  'AI_CACHE',
+  'CLEANUP_JOBS',
+  'NEO4J_URL',
+  'NEO4J_USER',
+  'NEO4J_PASSWORD',
+  'NEO4J_DATABASE',
+];
+const OPTIONAL_KEYS: string[] = [];
+
+// Config validation middleware — runs once per Worker instance.
+app.use('*', async (c, next) => {
+  if (!configValidated) {
+    validateAndLogConfig(
+      c.env as unknown as Record<string, unknown>,
+      REQUIRED_KEYS,
+      OPTIONAL_KEYS,
+      'cleanup',
+    );
+    configValidated = true;
+  }
+  await next();
 });
 
 // All Cleanup routes are internal-only (called by the Gateway).

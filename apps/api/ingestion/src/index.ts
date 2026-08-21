@@ -24,6 +24,7 @@ import {
   ingestJobEnqueuedSchema,
   ingestSyncResultSchema,
   ingestSyncSchema,
+  validateAndLogConfig,
 } from '@ontodecide/shared';
 import type {IngestionEnv, IngestJobMessage} from './types/env.js';
 import {
@@ -87,6 +88,34 @@ const app = new OpenAPIHono<{Bindings: IngestionEnv}>({
     }
     return;
   },
+});
+
+/** Cache config validation result — runs once per Worker instance. */
+let configValidated = false;
+
+const REQUIRED_KEYS = [
+  'B2_KEY_ID',
+  'B2_KEY',
+  'B2_REGION',
+  'B2_INGESTION_BUCKET',
+  'INGEST_QUEUE',
+  'JOBS',
+  'GRAPH_SERVICE',
+];
+const OPTIONAL_KEYS = ['GRAPH_SERVICE_URL'];
+
+// Config validation middleware — runs once per Worker instance.
+app.use('*', async (c, next) => {
+  if (!configValidated) {
+    validateAndLogConfig(
+      c.env as unknown as Record<string, unknown>,
+      REQUIRED_KEYS,
+      OPTIONAL_KEYS,
+      'ingestion',
+    );
+    configValidated = true;
+  }
+  await next();
 });
 
 // Public webhook callbacks bypass the internal-only guard; every other

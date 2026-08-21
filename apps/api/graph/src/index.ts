@@ -24,6 +24,7 @@ import {
   ingestPayloadSchema,
   ontologyTypeSchema,
   situationNodeSchema,
+  validateAndLogConfig,
 } from '@ontodecide/shared';
 import {z} from 'zod';
 import type {GraphEnv} from './types/env.js';
@@ -57,6 +58,32 @@ const app = new OpenAPIHono<{Bindings: GraphEnv; Variables: GraphVars}>({
           'Validation failed.',
           400,
       ),
+});
+
+/** Cache config validation result — runs once per Worker instance. */
+let configValidated = false;
+
+const REQUIRED_KEYS = [
+  'CACHE',
+  'NEO4J_URL',
+  'NEO4J_USER',
+  'NEO4J_PASSWORD',
+  'NEO4J_DATABASE',
+];
+const OPTIONAL_KEYS: string[] = [];
+
+// Config validation middleware — runs once per Worker instance.
+app.use('*', async (c, next) => {
+  if (!configValidated) {
+    validateAndLogConfig(
+      c.env as unknown as Record<string, unknown>,
+      REQUIRED_KEYS,
+      OPTIONAL_KEYS,
+      'graph',
+    );
+    configValidated = true;
+  }
+  await next();
 });
 
 // Gateway-only: reject direct calls except for the OpenAPI docs.

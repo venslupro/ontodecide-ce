@@ -15,6 +15,7 @@ import {
   recommendationSchema,
   scenarioRequestSchema,
   scenarioResultSchema,
+  validateAndLogConfig,
 } from '@ontodecide/shared';
 import {
   OpenAPIHono,
@@ -56,8 +57,30 @@ export interface AiBindings {
   recommendations: RecommendationService;
 }
 
+/** Cache config validation result — runs once per Worker instance. */
+let configValidated = false;
+
+const REQUIRED_KEYS = ['AI', 'DB', 'CACHE', 'AGENT', 'WORKERS_AI_MODEL'];
+const OPTIONAL_KEYS = [
+  'AI_GATEWAY_ID',
+  'AI_GATEWAY_TOKEN',
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'GOOGLE_API_KEY',
+  'OPENROUTER_API_KEY',
+];
+
 export default {
   async fetch(request: Request, env: AiEnv): Promise<Response> {
+    if (!configValidated) {
+      validateAndLogConfig(
+        env as unknown as Record<string, unknown>,
+        REQUIRED_KEYS,
+        OPTIONAL_KEYS,
+        'ai',
+      );
+      configValidated = true;
+    }
     const bindings = createBindings(env);
     const app = buildApp(bindings);
     return app.fetch(request, env);

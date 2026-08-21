@@ -10,7 +10,7 @@
  * The Gateway keeps no business state — it is intentionally stateless and
  * relies on KV only for the JWT blacklist and rate-limit counters.
  */
-import {ERROR_CODES} from '@ontodecide/shared';
+import {ERROR_CODES, validateAndLogConfig} from '@ontodecide/shared';
 import {
   OpenAPIHono,
   jsonOkResponse,
@@ -22,6 +22,21 @@ import {ROUTES, registerOpenApiSpec} from './routes.js';
 import {authMiddleware, type GatewayVariables} from './middlewares/auth.js';
 import {rateLimitMiddleware} from './middlewares/ratelimit.js';
 import {forwardRequest} from './forward.js';
+
+/** Cache config validation result — runs once per Worker instance. */
+let configValidated = false;
+
+const REQUIRED_KEYS = [
+  'JWT_SECRET',
+  'JWT_BLACKLIST',
+  'RATE_LIMIT',
+  'USER_SERVICE',
+  'GRAPH_SERVICE',
+  'INGESTION_SERVICE',
+  'AI_SERVICE',
+  'CLEANUP_SERVICE',
+];
+const OPTIONAL_KEYS = ['AI_DEFAULT_PROVIDER'];
 
 type AppEnv = {
   Bindings: GatewayEnv;
@@ -48,6 +63,20 @@ app.get('/healthz', (c) =>
 app.get('/', (c) =>
   jsonOkResponse(c, {service: 'ontodecide-gateway', version: '0.1.0'}),
 );
+
+// Config validation middleware — runs once per Worker instance.
+app.use('*', async (c, next) => {
+  if (!configValidated) {
+    validateAndLogConfig(
+      c.env as unknown as Record<string, unknown>,
+      REQUIRED_KEYS,
+      OPTIONAL_KEYS,
+      'gateway',
+    );
+    configValidated = true;
+  }
+  await next();
+});
 
 // Auth + rate-limit middleware for every proxied request.
 app.use('/api/*', authMiddleware, rateLimitMiddleware);

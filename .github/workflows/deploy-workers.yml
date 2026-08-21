@@ -137,12 +137,13 @@ jobs:
         run: pnpm turbo run build --filter=${{ matrix.service.package }}
 
       # Ensure Cloudflare resources referenced by wrangler.toml exist
-      # before deploy. wrangler deploy fails if queues / D1 / KV
-      # names are referenced but not yet created.
+      # before deploy (best-effort). Uses `set +e` so missing resources
+      # do NOT block the deploy — the Worker itself validates config
+      # at startup and surfaces clear error messages.
       - name: Ensure Cloudflare resources for ${{ matrix.service.name }}
         shell: bash
         run: |
-          set -e
+          set +e
           W="pnpm --filter=@ontodecide/${{ matrix.service.name }} exec wrangler"
           #
           # Ensure D1 database exists (shared by user + ai + cleanup)
@@ -197,30 +198,45 @@ jobs:
       # wrangler-action expects secret NAMES (one per line), not
       # NAME=VALUE pairs. It reads values from process.env, which
       # we populate via the job-level env: mapping above.
-      # We use a shell step to avoid GitHub Actions expression
-      # limitations (no ternary ? : operator).
+      #
+      # IMPORTANT: We skip secrets whose env var is empty/unset so
+      # that deploys succeed even when optional secrets (e.g. LLM
+      # API keys) are not yet configured.  The Worker itself will
+      # log warnings at startup for missing required configs.
       - name: Prepare secrets for ${{ matrix.service.name }}
         id: prepare_secrets
         shell: bash
         run: |
-          names=()
+          all_names=()
           case "${{ matrix.service.name }}" in
             gateway)
-              names=("JWT_SECRET") ;;
+              all_names=("JWT_SECRET") ;;
             user)
-              names=("JWT_SECRET" "EMAIL_API_KEY") ;;
+              all_names=("JWT_SECRET" "EMAIL_API_KEY") ;;
             graph)
-              names=("NEO4J_PASSWORD") ;;
+              all_names=("NEO4J_PASSWORD") ;;
             ingestion)
-              names=("B2_KEY_ID" "B2_KEY") ;;
+              all_names=("B2_KEY_ID" "B2_KEY") ;;
             ai)
-              names=("OPENAI_API_KEY" "ANTHROPIC_API_KEY" "GOOGLE_API_KEY" "OPENROUTER_API_KEY" "AI_GATEWAY_TOKEN") ;;
+              all_names=("OPENAI_API_KEY" "ANTHROPIC_API_KEY" "GOOGLE_API_KEY" "OPENROUTER_API_KEY" "AI_GATEWAY_TOKEN") ;;
             cleanup)
-              names=("NEO4J_PASSWORD" "B2_KEY_ID" "B2_KEY") ;;
+              all_names=("NEO4J_PASSWORD" "B2_KEY_ID" "B2_KEY") ;;
           esac
+          # Filter: only include secrets that have a non-empty env value.
+          names=()
+          for name in "${all_names[@]}"; do
+            val="${!name}"
+            if [ -n "$val" ]; then
+              names+=("$name")
+            else
+              echo "WARNING: $name is not set — skipping. Worker will validate at runtime."
+            fi
+          done
           {
             echo "secrets<<EOF"
-            printf '%s\n' "${names[@]}"
+            if [ ${#names[@]} -gt 0 ]; then
+              printf '%s\n' "${names[@]}"
+            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
