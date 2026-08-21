@@ -160,13 +160,14 @@ jobs:
           esac
           #
           # Ensure Queues exist (ingestion + cleanup)
+          # Note: wrangler queues commands are remote-only — no --remote flag.
           #
           case "${{ matrix.service.name }}" in
             ingestion)
               for q in ontodecide-ingestion-production ontodecide-ingestion-dlq-production; do
-                if ! $W queues list --remote 2>/dev/null | grep -q "$q"; then
+                if ! $W queues list 2>/dev/null | grep -q "$q"; then
                   echo "Creating Queue: $q"
-                  $W queues create "$q" --remote
+                  $W queues create "$q"
                 else
                   echo "Queue $q already exists"
                 fi
@@ -174,9 +175,9 @@ jobs:
               ;;
             cleanup)
               for q in ontodecide-cleanup-production ontodecide-cleanup-dlq-production; do
-                if ! $W queues list --remote 2>/dev/null | grep -q "$q"; then
+                if ! $W queues list 2>/dev/null | grep -q "$q"; then
                   echo "Creating Queue: $q"
-                  $W queues create "$q" --remote
+                  $W queues create "$q"
                 else
                   echo "Queue $q already exists"
                 fi
