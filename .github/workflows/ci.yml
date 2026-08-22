@@ -94,7 +94,7 @@ jobs:
 
       - name: Check for Terraform-relevant path changes
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           list-files: 'none'
           filters: |
@@ -107,7 +107,7 @@ jobs:
 
       - name: Setup Terraform
         if: steps.filter.outputs.terraform == 'true'
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: '~> 1.9'
           terraform_wrapper: true
@@ -144,7 +144,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Install actionlint + yq (via Go toolchain)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.22'
           # This repo has no Go modules / go.sum — actionlint and yq are
