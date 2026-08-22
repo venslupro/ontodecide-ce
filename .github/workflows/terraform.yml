@@ -111,7 +111,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@v5
         with:
           terraform_version: '~> 1.9'
           terraform_wrapper: true
@@ -144,13 +144,13 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@v5
         with:
           terraform_version: '~> 1.9'
           terraform_wrapper: true
 
       - name: Cache Terraform providers
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: infrastructure/terraform/.terraform/providers
           key: tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
@@ -227,7 +227,7 @@ jobs:
         run: terraform show tfplan.binary | tee tfplan-summary.txt
 
       - name: Upload plan artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: tfplan-${{ github.sha }}
           path: |
@@ -255,19 +255,19 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@v5
         with:
           terraform_version: '~> 1.9'
           terraform_wrapper: true
 
       - name: Cache Terraform providers
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: infrastructure/terraform/.terraform/providers
           key: tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
 
       - name: Download previous plan artifacts (if available)
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         continue-on-error: true
         with:
           name: tfplan-${{ github.sha }}
