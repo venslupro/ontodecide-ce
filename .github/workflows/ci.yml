@@ -44,6 +44,16 @@ jobs:
     name: Build · Lint · Test
     runs-on: ubuntu-latest
     steps:
+      # Runner opt-in: runs BEFORE any JS-backed action (even checkout)
+      # so that FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 is present in
+      # $GITHUB_ENV when the runner loads action.yml metadata.  This
+      # unconditionally silences the "Node.js 20 is deprecated" banner
+      # for every subsequent action in this job, regardless of whether
+      # third-party authors have updated their action.yml metadata.
+      - name: Opt-in: force JS actions onto Node 24 runtime
+        run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true" >> $GITHUB_ENV
+        shell: bash
+
       - name: Checkout
         uses: actions/checkout@v5
 
@@ -96,6 +106,16 @@ jobs:
     outputs:
       skipped: ${{ steps.filter.outputs.terraform != 'true' }}
     steps:
+      # Runner opt-in: runs BEFORE any JS-backed action (even checkout)
+      # so that FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 is present in
+      # $GITHUB_ENV when the runner loads action.yml metadata.  This
+      # unconditionally silences the "Node.js 20 is deprecated" banner
+      # for every subsequent action in this job, regardless of whether
+      # third-party authors have updated their action.yml metadata.
+      - name: Opt-in: force JS actions onto Node 24 runtime
+        run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true" >> $GITHUB_ENV
+        shell: bash
+
       - name: Checkout
         uses: actions/checkout@v5
 
@@ -147,6 +167,16 @@ jobs:
     name: YAML · TOML Lint
     runs-on: ubuntu-latest
     steps:
+      # Runner opt-in: runs BEFORE any JS-backed action (even checkout)
+      # so that FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 is present in
+      # $GITHUB_ENV when the runner loads action.yml metadata.  This
+      # unconditionally silences the "Node.js 20 is deprecated" banner
+      # for every subsequent action in this job, regardless of whether
+      # third-party authors have updated their action.yml metadata.
+      - name: Opt-in: force JS actions onto Node 24 runtime
+        run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true" >> $GITHUB_ENV
+        shell: bash
+
       - name: Checkout
         uses: actions/checkout@v5
 

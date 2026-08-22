@@ -100,6 +100,16 @@ jobs:
       matrix_json: ${{ steps.compute.outputs.matrix_json }}
       has_changes: ${{ steps.compute.outputs.has_changes }}
     steps:
+      # Runner opt-in: runs BEFORE any JS-backed action (even checkout)
+      # so that FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 is present in
+      # $GITHUB_ENV when the runner loads action.yml metadata.  This
+      # unconditionally silences the "Node.js 20 is deprecated" banner
+      # for every subsequent action in this job, regardless of whether
+      # third-party authors have updated their action.yml metadata.
+      - name: Opt-in: force JS actions onto Node 24 runtime
+        run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true" >> $GITHUB_ENV
+        shell: bash
+
       - name: Checkout (full history for paths-filter)
         uses: actions/checkout@v5
         with:
@@ -229,6 +239,16 @@ jobs:
       AI_GATEWAY_TOKEN: ${{ secrets.AI_GATEWAY_TOKEN }}
 
     steps:
+      # Runner opt-in: runs BEFORE any JS-backed action (even checkout)
+      # so that FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 is present in
+      # $GITHUB_ENV when the runner loads action.yml metadata.  This
+      # unconditionally silences the "Node.js 20 is deprecated" banner
+      # for every subsequent action in this job, regardless of whether
+      # third-party authors have updated their action.yml metadata.
+      - name: Opt-in: force JS actions onto Node 24 runtime
+        run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true" >> $GITHUB_ENV
+        shell: bash
+
       - name: Checkout Code
         uses: actions/checkout@v5
 
@@ -379,6 +399,16 @@ jobs:
       PROJECT_NAME: ${{ github.event.repository.name }}
       ENVIRONMENT:  ${{ github.event.inputs.environment || 'production' }}
     steps:
+      # Runner opt-in: runs BEFORE any JS-backed action (even checkout)
+      # so that FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 is present in
+      # $GITHUB_ENV when the runner loads action.yml metadata.  This
+      # unconditionally silences the "Node.js 20 is deprecated" banner
+      # for every subsequent action in this job, regardless of whether
+      # third-party authors have updated their action.yml metadata.
+      - name: Opt-in: force JS actions onto Node 24 runtime
+        run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true" >> $GITHUB_ENV
+        shell: bash
+
       - name: Checkout
         uses: actions/checkout@v5
 
