@@ -16,6 +16,13 @@
 
 name: CI
 
+# Opt-in GitHub runner: force all JS-backed actions onto the Node 24
+# runtime (suppresses the "Node.js 20 is deprecated" deprecation banner
+# for any third-party action whose action.yml still declares node20).
+# Reference: https://github.blog/changelog/2025-09-19
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 on:
   push:
     branches:

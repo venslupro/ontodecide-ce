@@ -74,6 +74,11 @@ concurrency:
 # reads this list dynamically.
 # ------------------------------------------------------------------
 env:
+  # Runner opt-in: execute all JS-backed actions on Node 24 to suppress
+  # the "Node.js 20 is deprecated" warning for actions that haven't yet
+  # declared `using: node24` in their action.yml. Reference:
+  # https://github.blog/changelog/2025-09-19
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   DEFAULTS_MATRIX_JSON: >-
     [
       {"name":"gateway",   "config":"apps/api/gateway/wrangler.toml",     "package":"@ontodecide/gateway"},

@@ -82,6 +82,11 @@ defaults:
     working-directory: infrastructure/terraform
 
 env:
+  # Runner opt-in: execute all JS-backed actions on Node 24 to suppress
+  # the "Node.js 20 is deprecated" warning for actions that haven't yet
+  # declared `using: node24` in their action.yml. Reference:
+  # https://github.blog/changelog/2025-09-19
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   # Terraform Provider authentication — reuse the same CF_API_TOKEN
   # already configured for deploy-workers.yml (no extra secret needed).
   CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
