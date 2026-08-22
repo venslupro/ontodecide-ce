@@ -312,13 +312,15 @@ resource "cloudflare_workers_script" "tier1" {
   }
 
   # ---- KV ----
+  # Note: the for_each key uses lower(binding) (see kv_namespace for_each above),
+  # but the wrangler binding NAME stays UPPER_SNAKE_CASE.
   dynamic "kv_namespace_binding" {
     for_each = [
       for item in local.kv_binding_map : item if item.svc == each.key
     ]
     content {
       name         = kv_namespace_binding.value.binding
-      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${kv_namespace_binding.value.binding}"].id
+      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${lower(kv_namespace_binding.value.binding)}"].id
     }
   }
 
@@ -364,13 +366,14 @@ resource "cloudflare_workers_script" "ingestion" {
   ]
 
   # ---- KV ----
+  # for_each key uses lower(binding); binding NAME retains UPPER_SNAKE_CASE.
   dynamic "kv_namespace_binding" {
     for_each = [
       for item in local.kv_binding_map : item if item.svc == "ingestion"
     ]
     content {
       name         = kv_namespace_binding.value.binding
-      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${kv_namespace_binding.value.binding}"].id
+      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${lower(kv_namespace_binding.value.binding)}"].id
     }
   }
 
@@ -424,13 +427,14 @@ resource "cloudflare_workers_script" "gateway" {
   ]
 
   # ---- KV ----
+  # for_each key uses lower(binding); binding NAME retains UPPER_SNAKE_CASE.
   dynamic "kv_namespace_binding" {
     for_each = [
       for item in local.kv_binding_map : item if item.svc == "gateway"
     ]
     content {
       name         = kv_namespace_binding.value.binding
-      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${kv_namespace_binding.value.binding}"].id
+      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${lower(kv_namespace_binding.value.binding)}"].id
     }
   }
 
