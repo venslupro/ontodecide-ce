@@ -4,8 +4,7 @@
 # `[build]` section from any wrangler.toml (per Workers Builds Config
 # docs).  The authoritative Build command lives at:
 #   1) Dashboard → Worker → Settings → Builds (production source of truth)
-#   2) .cloudflare/workers-builds.yaml            (versioned mirror in repo)
-#   3) scripts/build-worker.sh                    (scripted equivalent)
+#   2) Each app's wrangler.toml [build] block (versioned mirror in repo)
 #
 # Each app under apps/api/<name>/wrangler.toml still carries its own
 # [build] / [build.upload] block for LOCAL DEVELOPMENT only
@@ -24,8 +23,6 @@
 #     npx wrangler deploy --config apps/api/<name>/wrangler.toml
 #   Correct Non-production deploy command:
 #     npx wrangler versions upload --config apps/api/<name>/wrangler.toml
-#
-#   See .cloudflare/workers-builds.yaml for the exact 6 tuples.
 
 name = "ontodecide"
 # NOTE: This root wrangler.toml intentionally does NOT declare the REAL

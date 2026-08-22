@@ -4,7 +4,7 @@
 # HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
 #   • Terraform CREATES & GOVERNS:
 #       - Worker skeleton + 4D tags
-#       - D1 binding "DB" → cloudflare_d1_database.decision_db.id
+#       - D1 binding "DB" → cloudflare_d1_database.shared_db.id
 #       - KV namespace "CACHE"
 #   • Wrangler deploys: script code · [vars] · JWT_SECRET + EMAIL_API_KEY
 # ============================================================
@@ -28,9 +28,9 @@ compatibility_flags = ["nodejs_compat"]
 command = "pnpm --filter=@ontodecide/user exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
 cwd = "apps/api/user"
 
-# ----- D1: shared decision-db (Terraform-managed) -------------------------
-# database_name MUST match "${project_name}-${env_short}-decision-db" (e.g. ontodecide-prd-decision-db)
-# from main.tf → cloudflare_d1_database.decision_db.name.
+# ----- D1: shared-db (Terraform-managed) ---------------------------------
+# database_name MUST match "${project_name}-${env_short}-shared-db"
+# (e.g. ontodecide-prd-shared-db) from main.tf → cloudflare_d1_database.shared_db.name.
 #
 # Use `database_name` here (not `database_id`) so the same wrangler.toml
 # works across environments with different project/env names — Terraform
@@ -41,7 +41,7 @@ cwd = "apps/api/user"
 # scripts/migrate.sh --remote in the post-deploy migrate-d1 CI job.
 [[d1_databases]]
 binding        = "DB"
-database_name  = "ontodecide-prd-decision-db"
+database_name  = "ontodecide-prd-shared-db"
 migrations_dir = "src/migrations"
 
 # ----- KV: session / user lookup cache (Terraform-managed) ----------------

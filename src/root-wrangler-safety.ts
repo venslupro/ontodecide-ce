@@ -33,8 +33,8 @@
 //   silently succeeding with a "nothing" bundle.
 //
 // Authoritative per-app Deploy commands live in:
-//   • .cloudflare/workers-builds.yaml         (paste into Dashboard)
 //   • apps/api/<X>/wrangler.toml              (one per Worker)
+//   • this file's banner below                (paste into Dashboard)
 // ==========================================================================
 
 const VALID_WORKERS = [
@@ -89,8 +89,8 @@ const banner = `
  IF you see this inside CLOUDFLARE WORKERS BUILDS deploy logs:
    → The Worker's Settings → Builds → Deploy command was pasted
      WITHOUT the required --config flag.  Go back to Dashboard for
-     ALL 6 Workers and paste the Deploy/Preview commands exactly as
-     shown in the repo file .cloudflare/workers-builds.yaml.
+     ALL 6 Workers and paste the Deploy/Preview commands using
+     --config apps/api/<X>/wrangler.toml as shown above.
 
  IF you see this LOCALLY:
    → cd apps/api/<X> first, then wrangler deploy.

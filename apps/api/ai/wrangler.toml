@@ -4,7 +4,7 @@
 # HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
 #   • Terraform CREATES & GOVERNS:
 #       - Worker skeleton + 4D tags
-#       - D1 binding "DB" → shared decision-db
+#       - D1 binding "DB" → shared-db (cloudflare_d1_database.shared_db)
 #       - KV namespace "CACHE"
 #       - Gateway → AI Service Binding (binding=AI_SERVICE)
 #   • Wrangler deploys (NOT Terraform — Provider v4 lacks support):
@@ -36,11 +36,11 @@ cwd = "apps/api/ai"
 [ai]
 binding = "AI"
 
-# ----- D1: shared decision-db (Terraform-managed) -------------------------
-# database_name matches cloudflare_d1_database.decision_db.name pattern.
+# ----- D1: shared-db (Terraform-managed) ---------------------------------
+# database_name matches cloudflare_d1_database.shared_db.name pattern.
 [[d1_databases]]
 binding        = "DB"
-database_name  = "ontodecide-prd-decision-db"
+database_name  = "ontodecide-prd-shared-db"
 migrations_dir = "src/migrations"
 
 # ----- KV: inference cache + neuron-budget (Terraform-managed) ------------
