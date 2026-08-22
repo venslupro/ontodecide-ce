@@ -7,12 +7,16 @@
 #
 # TRIGGERS:
 #   • push to `main` with changes under infrastructure/terraform/**
-#     → fmt · validate · plan, then pauses for MANUAL APPROVAL
-#     (environments.production gate) before apply.
+#     → fmt · validate · plan ONLY (READ-ONLY).  Apply NEVER runs on
+#     push; it must be triggered manually from the UI (see below).
 #   • pull_request (main / staging) with TF file changes
 #     → fmt · validate · plan (READ-ONLY, no apply).
 #       Reviewers can see the real Cloudflare diff in PR checks.
-#   • workflow_dispatch → manual kickoff from Actions UI.
+#   • workflow_dispatch on `main` branch
+#     → fmt · validate · plan + (if approved) APPLY.
+#     This is the ONLY way to execute `terraform apply`.  You MUST
+#     trigger it manually from Repo → Actions → Terraform workflow
+#     → Run workflow → choose branch: main.
 #
 # PHASES:
 #   1. Static checks   — terraform fmt -check (canonical formatting)
@@ -20,9 +24,11 @@
 #   2. Plan            — `terraform plan` renders the diff against
 #                        the real Cloudflare state.  The plan JSON
 #                        is uploaded as a build artifact for review.
-#   3. Apply (MANUAL)  — requires the `production` Environment
-#                        protection rule (Settings → Environments)
-#                        or manual review.  Apply is NEVER automatic.
+#   3. Apply (MANUAL)  — ONLY when workflow_dispatch is run against
+#                        the `main` branch AND the `production`
+#                        Environment protection rule (Settings →
+#                        Environments · Required reviewers) is
+#                        approved.  Apply NEVER runs on push or PR.
 #
 # REQUIRED GITHUB SECRETS / VARS:
 #   (Set via Repo → Settings → Secrets and variables → Actions)
@@ -227,7 +233,7 @@ jobs:
         run: terraform show tfplan.binary | tee tfplan-summary.txt
 
       - name: Upload plan artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: tfplan-${{ github.sha }}
           path: |
@@ -239,15 +245,23 @@ jobs:
   # Phase 3 — Apply (NEVER automatic — requires manual approval)
   # -------------------------------------------------------------
   apply:
-    name: Apply (Manual Approval Required)
+    name: Apply (Manual · main-only · workflow_dispatch-only)
     needs: plan
-    # Apply ONLY on main branch — never on PR or feature branches.
-    if: github.ref == 'refs/heads/main'
+    # Apply is NEVER automatic:
+    #   1) only on `main` branch (not on staging, PRs, or feature
+    #      branches);
+    #   2) only when the workflow was triggered MANUALLY via the
+    #      GitHub UI ("Run workflow" button, i.e. event name ==
+    #      workflow_dispatch).
+    # A push to main (even with TF file changes) will run validate +
+    # plan but this `apply` job simply won't be created in the run.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # ↓↓↓ This gate is CRITICAL for the "Shift Left" promise.
+    # ↓↓↓ Additional safety gate beyond the `if:` guard above.
     # Create the `production` environment in Repo → Settings →
-    # Environments and enable "Required reviewers" so this job
-    # PAUSES until a designated human clicks "Approve & deploy".
+    # Environments and enable "Required reviewers" so even a
+    # correctly-triggered manual workflow_dispatch PAUSES until a
+    # designated human clicks "Approve & deploy".
     environment:
       name: production
     steps:
@@ -267,7 +281,7 @@ jobs:
           key: tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
 
       - name: Download previous plan artifacts (if available)
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           name: tfplan-${{ github.sha }}

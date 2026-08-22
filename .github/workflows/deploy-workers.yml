@@ -43,10 +43,14 @@
 
 name: Deploy Cloudflare Workers
 
+# MANUAL-ONLY TRIGGER (no push / no PR auto-run).
+# Worker deployments touch production Cloudflare accounts (script
+# uploads + secret writes + D1 migrations).  To guarantee zero
+# accidental deployments, this workflow has ZERO automatic triggers.
+# The only way to execute it is:
+#   Repo → Actions → Deploy Cloudflare Workers → Run workflow →
+#   choose branch + (optionally) override services and/or env.
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       services:
