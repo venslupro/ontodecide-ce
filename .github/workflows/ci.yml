@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Install pnpm using the EXACT version declared in package.json
       # ("packageManager" field, Node.js corepack standard).  This step
@@ -55,7 +55,7 @@ jobs:
           corepack prepare pnpm@9.12.0 --activate
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -90,7 +90,7 @@ jobs:
       skipped: ${{ steps.filter.outputs.terraform != 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check for Terraform-relevant path changes
         id: filter
@@ -141,7 +141,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install actionlint + yq (via Go toolchain)
         uses: actions/setup-go@v5
