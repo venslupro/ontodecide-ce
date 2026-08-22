@@ -4,7 +4,7 @@
 # HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
 #   • Terraform CREATES & GOVERNS:
 #       - Worker skeleton + 4D tags
-#       - D1 binding "DB" → shared decision-db
+#       - D1 binding "DB" → shared-db (cloudflare_d1_database.shared_db)
 #       - 5 KV namespaces (USER_CACHE / GRAPH_CACHE / INGESTION_JOBS /
 #         AI_CACHE / CLEANUP_JOBS) — for cross-service cache invalidation
 #       - Queue producer "CLEANUP_QUEUE" + cleanup / cleanup-dlq Queues
@@ -58,10 +58,10 @@ max_batch_timeout = 30
 max_retries       = 3
 dead_letter_queue = "ontodecide-prd-cleanup-dlq"
 
-# ----- D1: shared decision-db (Terraform-managed) -------------------------
+# ----- D1: shared-db (Terraform-managed) ---------------------------------
 [[d1_databases]]
 binding        = "DB"
-database_name  = "ontodecide-prd-decision-db"
+database_name  = "ontodecide-prd-shared-db"
 
 # ----- KV: cross-service cache invalidation (Terraform-managed) -----------
 # 5 bindings MUST match local.kv_binding_map entries with svc="cleanup".

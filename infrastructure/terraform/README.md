@@ -13,8 +13,8 @@
 
 | Resource              | Count | Naming pattern                                          |
 | --------------------- | ----: | ------------------------------------------------------- |
-| D1 `decision-db`      | 1     | `${project}-${env_short}-decision-db` (ontodecide-prd-decision-db) |
-| KV namespaces         | 11    | `${project}-${env_short}-${svc}-${BINDING}` (ontodecide-prd-gateway-JWT_BLACKLIST) |
+| D1 `shared-db`        | 1     | `${project}-${env_short}-shared-db` (ontodecide-prd-shared-db, user/ai/cleanup 三服务共享) |
+| KV namespaces         | 11    | `${project}-${env_short}-${svc}-${binding-lowercase}` (ontodecide-prd-gateway-jwt-blacklist) |
 | Cloudflare Queues     | 4     | `${project}-${env_short}-{ingestion,cleanup}{-dlq,}` (ontodecide-prd-ingestion, ontodecide-prd-cleanup-dlq) |
 | Worker Script skeletons | 6   | `${project}-${env_short}-{service}` (ontodecide-prd-gateway, ontodecide-prd-graph) |
 | Service Bindings      | 6     | Gateway → 5 downstreams, Ingestion → Graph (tier-ordered)|

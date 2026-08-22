@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Apply D1 migrations to the shared decision-db.
+# Apply D1 migrations to the shared-db (shared by user/ai/cleanup).
 #
 # The D1 database NAME is constructed to match the Terraform resource:
-#   cloudflare_d1_database.decision_db.name
-#     = ${PROJECT_NAME}-${ENV_SHORT}-decision-db
+#   cloudflare_d1_database.shared_db.name
+#     = ${PROJECT_NAME}-${ENV_SHORT}-shared-db
 # with PROJECT_NAME defaulting to "ontodecide" and ENVIRONMENT defaulting
 # to "production" (shortened to "prd" for resource naming).  These defaults
 # match the defaults declared in infrastructure/terraform/variables.tf and
@@ -69,9 +69,9 @@ done
 PROJECT_NAME="${PROJECT_NAME:-ontodecide}"
 # Env short form: production→prd, staging→stg (matches Terraform local.env_short)
 ENV_SHORT="$([[ "$ENVIRONMENT" == "production" ]] && echo "prd" || ([[ "$ENVIRONMENT" == "staging" ]] && echo "stg" || echo "$ENVIRONMENT"))"
-# Matches exactly: cloudflare_d1_database.decision_db.name
-#   = "${var.project_name}-${local.env_short}-decision-db"
-DB_NAME="${PROJECT_NAME}-${ENV_SHORT}-decision-db"
+# Matches exactly: cloudflare_d1_database.shared_db.name
+#   = "${var.project_name}-${local.env_short}-shared-db"
+DB_NAME="${PROJECT_NAME}-${ENV_SHORT}-shared-db"
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   cat <<EOF

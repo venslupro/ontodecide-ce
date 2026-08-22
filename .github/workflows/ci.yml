@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Install pnpm using the EXACT version declared in package.json
       # ("packageManager" field, Node.js corepack standard).  This step
@@ -55,7 +55,7 @@ jobs:
           corepack prepare pnpm@9.12.0 --activate
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -90,11 +90,11 @@ jobs:
       skipped: ${{ steps.filter.outputs.terraform != 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check for Terraform-relevant path changes
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           list-files: 'none'
           filters: |
@@ -107,7 +107,7 @@ jobs:
 
       - name: Setup Terraform
         if: steps.filter.outputs.terraform == 'true'
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: '~> 1.9'
           terraform_wrapper: true
@@ -141,12 +141,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install actionlint + yq (via Go toolchain)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          # NOTE: keep at 1.25+.  `go install @latest` for actionlint
+          # pulls from the tip of the release branch; as of Aug 2026 the
+          # latest actionlint (v1.7.12+) declares `go >= 1.25.0` in its
+          # go.mod.  Downgrading this pin below 1.25 will retrigger the
+          # "requires go >= 1.25.0 (running go 1.22; GOTOOLCHAIN=local)"
+          # hard failure from the YAML·TOML Lint job.
+          go-version: '1.25'
+          # This repo has no Go modules / go.sum — actionlint and yq are
+          # installed with "go install @latest" (no local module graph).
+          # Default cache: 'go' therefore emits the noisy warning:
+          #   "Restore cache failed: Dependencies file is not found
+          #    ... Supported file pattern: go.sum"
+          # Disable caching entirely; go install @latest is fast enough
+          # and nothing stable to key against anyway.
+          cache: false
 
       - name: Install actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@latest

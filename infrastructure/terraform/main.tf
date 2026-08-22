@@ -1,52 +1,46 @@
 # ============================================================================
-# OntoDecide — Cloudflare 长生命周期资源 IaC 清单
-# Cloudflare Provider v4.52 精确 schema 对齐版
+# OntoDecide — Cloudflare long-lived resources IaC manifest
+# Cloudflare Provider v4.52 exact schema-aligned version
 #
-# 负责范围 (Shift Left · 静态资源层):
-#   • D1 共享决策库 decision-db
-#   • 6 个 Worker 全部 KV namespace
-#   • Ingestion / Cleanup 主队列 + DLQ (DLQ 在 wrangler.toml consumer 中绑定)
-#   • 6 个 Worker 的绑定骨架 / Service Bindings / tags 治理
+# Scope (Shift Left · static resource layer):
+#   • D1 shared database "shared-db" (shared by user/ai/cleanup)
+#   • All KV namespaces for the 6 workers
+#   • Ingestion / Cleanup main queues + DLQs (DLQ bindings live in wrangler.toml consumer)
+#   • Binding skeletons / Service Bindings / tag governance for the 6 workers
 #   • Cleanup cron trigger
-#   • 可选: 自定义域名 (Workers Domain，zone_id 非空时创建)
+#   • Optional: custom domain (Workers Domain, created when zone_id is non-empty)
 #
-# 不负责范围 (代码层 · 走 deploy-workers.yml / wrangler.toml):
-#   • Worker 脚本代码版本 (Wrangler Action)
-#   • [vars] 普通文本环境变量 (wrangler.toml 原生负责)
-#   • Workers AI [ai] 绑定 (wrangler.toml [ai] 负责)
-#   • Durable Object 类上传 — wrangler.toml [[migrations]] tag=v1 负责
-#   • Queue consumer / DLQ 绑定 — wrangler.toml [[queues.consumers]] dead_letter_queue
-#   • D1 迁移 SQL — scripts/migrate.sh --remote 在全部 deploy 成功后执行
-#   • Backblaze B2 桶 / Neo4j AuraDB — 外部 IaC / 控制台管理 (outputs 中汇总)
+# Out of scope (code layer · handled by deploy-workers.yml / wrangler.toml):
+#   • Worker script code versions (Wrangler Action)
+#   • [vars] plain-text env vars (native to wrangler.toml)
+#   • Workers AI [ai] binding (handled by wrangler.toml [ai])
+#   • Durable Object class upload — handled by wrangler.toml [[migrations]] tag=v1
+#   • Queue consumer / DLQ binding — wrangler.toml [[queues.consumers]] dead_letter_queue
+#   • D1 migration SQL — scripts/migrate.sh --remote runs after all deploys succeed
+#   • Backblaze B2 buckets / Neo4j AuraDB — external IaC / console-managed (summarized in outputs)
 #
-# 命名约定 (统一):
+# Naming convention (unified):
 #   ${project_name}-${env_short}-${service}[-${suffix}]
-#   示例: ontodecide-prd-gateway, ontodecide-prd-graph, ontodecide-prd-decision-db
-#         ontodecide-prd-ingestion, ontodecide-prd-ingestion-dlq
-#         ontodecide-prd-gateway-JWT_BLACKLIST
+#   Examples: ontodecide-prd-gateway, ontodecide-prd-graph, ontodecide-prd-shared-db
+#             ontodecide-prd-ingestion, ontodecide-prd-ingestion-dlq
+#             ontodecide-prd-gateway-jwt-blacklist (KV title lowercase + hyphens)
 #
-# 创建顺序 (Service Binding 依赖):
-#   Tier 1 (叶子服务, 无 service binding): user · ai · graph · cleanup
-#   Tier 2 (依赖 graph): ingestion
-#   Tier 3 (依赖全部下游): gateway
+# Creation order (Service Binding dependency):
+#   Tier 1 (leaf services, no service binding): user · ai · graph · cleanup
+#   Tier 2 (depends on graph): ingestion
+#   Tier 3 (depends on all downstreams): gateway
 # ============================================================================
 
-# -------- 治理 metadata + 统一命名 locals --------
+# -------- Governance metadata + unified naming locals --------
 locals {
   tag_environment = "Environment=${var.environment}"
   tag_project     = "Project=${var.project_name}"
   tag_lifecycle   = "Lifecycle=long-lived"
 
-  standard_tags_map = {
-    Environment = var.environment
-    Project     = var.project_name
-    Lifecycle   = "long-lived"
-  }
-
-  # 环境缩写: production→prd, staging→stg (用于资源命名)
+  # Env short form: production→prd, staging→stg (used in resource naming)
   env_short = var.environment == "production" ? "prd" : (var.environment == "staging" ? "stg" : var.environment)
 
-  # 统一资源名前缀: ontodecide-prd
+  # Unified resource name prefix: ontodecide-prd
   res_prefix = "${var.project_name}-${local.env_short}"
 
   workers = {
@@ -120,7 +114,7 @@ locals {
     { binding = "GRAPH_SERVICE", target = "graph" },
   ]
 
-  # Durable Object 类清单 (在 wrangler.toml [[migrations]] v1 中声明类代码)
+  # Durable Object class list (class code declared in wrangler.toml [[migrations]] v1)
   durable_object_classes = {
     AGENT = "PlanningAgent"
   }
@@ -139,83 +133,154 @@ locals {
 }
 
 # ============================================================================
-# 1) D1 共享数据库: ${res_prefix}-decision-db
+# 1) D1 shared database: ${res_prefix}-shared-db
+#    Shared by user / ai / cleanup (has_db=true). Naming convention:
+#      ${project}-${env}-shared-db   service=shared expresses cross-service sharing
+#                                   suffix=db    identifies resource type
 # ============================================================================
-resource "cloudflare_d1_database" "decision_db" {
+resource "cloudflare_d1_database" "shared_db" {
   account_id = var.account_id
-  name       = "${local.res_prefix}-decision-db"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=shared Lifecycle=long-lived
+  name       = "${local.res_prefix}-shared-db"
+  # Governance: Environment=${var.environment} Project=${var.project_name}
+  #             Service=shared Lifecycle=long-lived
+}
+
+# D1 resource renamed from decision_db to shared_db. Last apply failed due to
+# insufficient token scope, so D1 is not in state — this moved block is a no-op;
+# if state has a leftover entry, it migrates smoothly.
+moved {
+  from = cloudflare_d1_database.decision_db
+  to   = cloudflare_d1_database.shared_db
 }
 
 # ============================================================================
 # 2) KV Namespaces (11)
-#    命名: ${res_prefix}-${svc}-${binding}
-#    示例: ontodecide-prd-gateway-JWT_BLACKLIST
-#          ontodecide-prd-cleanup-USER_CACHE
+#    Naming convention (Cloudflare resource name / Google Cloud naming convention):
+#      • title         lowercase + hyphens  e.g. ontodecide-prd-cleanup-cleanup-jobs
+#      • for_each key  lowercase + double-underscore separator (TF state internal id, not a cloud resource name)
+#                      e.g. cleanup__cleanup_jobs
+#    Note: kv_binding_map.binding itself stays UPPER_SNAKE_CASE,
+#          because it maps to the wrangler.toml binding name (JS env var env.XXX).
+#          Here we only convert to lowercase via lower()/replace() at naming time.
 # ============================================================================
 resource "cloudflare_workers_kv_namespace" "kv" {
   for_each = {
     for idx, item in local.kv_binding_map :
-    "${item.svc}__${item.binding}" => item
+    # state key lowercase (TF internal id, aligned with cloud naming convention)
+    "${item.svc}__${lower(item.binding)}" => item
   }
 
   account_id = var.account_id
-  title      = "${local.res_prefix}-${each.value.svc}-${each.value.binding}"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=${each.value.svc} Lifecycle=long-lived
+  # title is the Cloudflare resource display name; lowercase + hyphens per Cloudflare naming convention
+  # (binding field keeps UPPER_SNAKE_CASE for wrangler.toml; conversion happens here only)
+  title = "${local.res_prefix}-${each.value.svc}-${lower(replace(each.value.binding, "_", "-"))}"
+  # Governance: Environment=${var.environment} Project=${var.project_name}
+  #             Service=${each.value.svc} Lifecycle=long-lived
 }
 
 # ============================================================================
-# 3) Queues: ingestion + cleanup (主 + DLQ 分别创建)
-#    命名: ${res_prefix}-{service}[-dlq]
-#    consumer 的 dead_letter_queue 绑定由 wrangler.toml [[queues.consumers]] 负责
+# 2b) State migration — KV for_each key migrated from UPPER_SNAKE_CASE to lowercase
+#     Background: the old for_each key used the binding field verbatim (uppercase),
+#     producing mixed-case state keys like cleanup__CLEANUP_JOBS.
+#     The for_each key now uses lower(binding); these moved blocks explicitly
+#     declare the key change so Terraform migrates state without rebuilding resources.
+#     moved blocks are declarative and no-op when the old key is absent in state.
+# ============================================================================
+moved {
+  from = cloudflare_workers_kv_namespace.kv["gateway__JWT_BLACKLIST"]
+  to   = cloudflare_workers_kv_namespace.kv["gateway__jwt_blacklist"]
+}
+moved {
+  from = cloudflare_workers_kv_namespace.kv["gateway__RATE_LIMIT"]
+  to   = cloudflare_workers_kv_namespace.kv["gateway__rate_limit"]
+}
+moved {
+  from = cloudflare_workers_kv_namespace.kv["user__CACHE"]
+  to   = cloudflare_workers_kv_namespace.kv["user__cache"]
+}
+moved {
+  from = cloudflare_workers_kv_namespace.kv["graph__CACHE"]
+  to   = cloudflare_workers_kv_namespace.kv["graph__cache"]
+}
+moved {
+  from = cloudflare_workers_kv_namespace.kv["ingestion__JOBS"]
+  to   = cloudflare_workers_kv_namespace.kv["ingestion__jobs"]
+}
+moved {
+  from = cloudflare_workers_kv_namespace.kv["ai__CACHE"]
+  to   = cloudflare_workers_kv_namespace.kv["ai__cache"]
+}
+moved {
+  from = cloudflare_workers_kv_namespace.kv["cleanup__USER_CACHE"]
+  to   = cloudflare_workers_kv_namespace.kv["cleanup__user_cache"]
+}
+moved {
+  from = cloudflare_workers_kv_namespace.kv["cleanup__GRAPH_CACHE"]
+  to   = cloudflare_workers_kv_namespace.kv["cleanup__graph_cache"]
+}
+moved {
+  from = cloudflare_workers_kv_namespace.kv["cleanup__INGESTION_JOBS"]
+  to   = cloudflare_workers_kv_namespace.kv["cleanup__ingestion_jobs"]
+}
+moved {
+  from = cloudflare_workers_kv_namespace.kv["cleanup__AI_CACHE"]
+  to   = cloudflare_workers_kv_namespace.kv["cleanup__ai_cache"]
+}
+moved {
+  from = cloudflare_workers_kv_namespace.kv["cleanup__CLEANUP_JOBS"]
+  to   = cloudflare_workers_kv_namespace.kv["cleanup__cleanup_jobs"]
+}
+
+# ============================================================================
+# 3) Queues: ingestion + cleanup (main + DLQ created separately)
+#    consumer's dead_letter_queue binding is handled by wrangler.toml [[queues.consumers]]
 # ============================================================================
 resource "cloudflare_queue" "ingestion_dlq" {
   account_id = var.account_id
   name       = "${local.res_prefix}-ingestion-dlq"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=ingestion Lifecycle=long-lived
+  # Governance: Environment=${var.environment} Project=${var.project_name}
+  #             Service=ingestion Lifecycle=long-lived
 }
 
 resource "cloudflare_queue" "ingestion" {
   account_id = var.account_id
   name       = "${local.res_prefix}-ingestion"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=ingestion Lifecycle=long-lived
+  # Governance: Environment=${var.environment} Project=${var.project_name}
+  #             Service=ingestion Lifecycle=long-lived
 }
 
 resource "cloudflare_queue" "cleanup_dlq" {
   account_id = var.account_id
   name       = "${local.res_prefix}-cleanup-dlq"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=cleanup Lifecycle=long-lived
+  # Governance: Environment=${var.environment} Project=${var.project_name}
+  #             Service=cleanup Lifecycle=long-lived
 }
 
 resource "cloudflare_queue" "cleanup" {
   account_id = var.account_id
   name       = "${local.res_prefix}-cleanup"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=cleanup Lifecycle=long-lived
+  # Governance: Environment=${var.environment} Project=${var.project_name}
+  #             Service=cleanup Lifecycle=long-lived
 }
 
 # ============================================================================
-# 4) Worker 绑定骨架 (metadata-only) — 按依赖层级拆分
+# 4) Worker binding skeleton (metadata-only) — split by dependency tier
 #
-#    Cloudflare API 要求 Service Binding 的目标 Worker 在创建绑定时已存在。
-#    单个 for_each 资源并行创建无法保证顺序，因此拆分为三层:
+#    The Cloudflare API requires the target Worker of a Service Binding to exist
+#    when the binding is created. A single for_each resource creates in parallel
+#    and cannot guarantee ordering, so it is split into three tiers:
 #
-#    Tier 1 (叶子): user · ai · graph · cleanup — 无 service binding
-#    Tier 2:        ingestion — service_binding → graph (Tier1)
-#    Tier 3:        gateway   — service_binding → 5 个下游 (Tier1 + Tier2)
+#    Tier 1 (leaf):    user · ai · graph · cleanup — no service binding
+#    Tier 2:           ingestion — service_binding → graph (Tier1)
+#    Tier 3:           gateway   — service_binding → 5 downstreams (Tier1 + Tier2)
 #
-#    Provider v4 workers_script 不支持 ai_binding / durable_object 块；
-#    因此 AI / DO / 普通 [vars] 仍由 wrangler.toml 声明。
-#    content 是 sentinel；Wrangler 每次 deploy 会覆盖脚本与 vars；
-#    lifecycle.ignore_changes 保证 Terraform apply 不会回滚 wrangler 的真实代码。
+#    Provider v4 workers_script does not support ai_binding / durable_object blocks;
+#    so AI / DO / plain [vars] are still declared in wrangler.toml.
+#    content is a sentinel; Wrangler overwrites the script and vars on each deploy;
+#    lifecycle.ignore_changes ensures Terraform apply never rolls back wrangler's real code.
 # ============================================================================
 
-# ---- Tier 1: 叶子服务 (user, ai, graph, cleanup) — 无 Service Binding ----
+# ---- Tier 1: leaf services (user, ai, graph, cleanup) — no Service Binding ----
 resource "cloudflare_workers_script" "tier1" {
   for_each = {
     for k, w in local.workers : k => w
@@ -229,7 +294,7 @@ resource "cloudflare_workers_script" "tier1" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  # 四维治理标签 (Provider v4 唯一支持 tags 的资源)
+  # 4D governance tags (the only resource supporting native tags on Provider v4)
   tags = [
     local.tag_environment,
     local.tag_project,
@@ -242,18 +307,20 @@ resource "cloudflare_workers_script" "tier1" {
     for_each = each.value.has_db ? [1] : []
     content {
       name        = "DB"
-      database_id = cloudflare_d1_database.decision_db.id
+      database_id = cloudflare_d1_database.shared_db.id
     }
   }
 
   # ---- KV ----
+  # Note: the for_each key uses lower(binding) (see kv_namespace for_each above),
+  # but the wrangler binding NAME stays UPPER_SNAKE_CASE.
   dynamic "kv_namespace_binding" {
     for_each = [
       for item in local.kv_binding_map : item if item.svc == each.key
     ]
     content {
       name         = kv_namespace_binding.value.binding
-      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${kv_namespace_binding.value.binding}"].id
+      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${lower(kv_namespace_binding.value.binding)}"].id
     }
   }
 
@@ -299,13 +366,14 @@ resource "cloudflare_workers_script" "ingestion" {
   ]
 
   # ---- KV ----
+  # for_each key uses lower(binding); binding NAME retains UPPER_SNAKE_CASE.
   dynamic "kv_namespace_binding" {
     for_each = [
       for item in local.kv_binding_map : item if item.svc == "ingestion"
     ]
     content {
       name         = kv_namespace_binding.value.binding
-      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${kv_namespace_binding.value.binding}"].id
+      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${lower(kv_namespace_binding.value.binding)}"].id
     }
   }
 
@@ -315,7 +383,7 @@ resource "cloudflare_workers_script" "ingestion" {
     queue   = cloudflare_queue.ingestion.name
   }
 
-  # ---- Service Binding → Graph (Tier1, 必须先创建) ----
+  # ---- Service Binding → Graph (Tier1, must be created first) ----
   dynamic "service_binding" {
     for_each = local.ingestion_service_bindings
     content {
@@ -325,7 +393,7 @@ resource "cloudflare_workers_script" "ingestion" {
     }
   }
 
-  # 显式依赖: graph Worker 必须先创建
+  # Explicit dependency: graph Worker must be created first
   depends_on = [cloudflare_workers_script.tier1["graph"]]
 
   lifecycle {
@@ -342,7 +410,7 @@ resource "cloudflare_workers_script" "ingestion" {
   }
 }
 
-# ---- Tier 3: gateway — Service Bindings → 全部 5 个下游 ----
+# ---- Tier 3: gateway — Service Bindings → all 5 downstreams ----
 resource "cloudflare_workers_script" "gateway" {
   account_id          = var.account_id
   name                = local.workers["gateway"].worker_name
@@ -359,28 +427,29 @@ resource "cloudflare_workers_script" "gateway" {
   ]
 
   # ---- KV ----
+  # for_each key uses lower(binding); binding NAME retains UPPER_SNAKE_CASE.
   dynamic "kv_namespace_binding" {
     for_each = [
       for item in local.kv_binding_map : item if item.svc == "gateway"
     ]
     content {
       name         = kv_namespace_binding.value.binding
-      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${kv_namespace_binding.value.binding}"].id
+      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${lower(kv_namespace_binding.value.binding)}"].id
     }
   }
 
-  # ---- Service Bindings → 5 个下游 (Tier1 + Tier2 必须先创建) ----
+  # ---- Service Bindings → 5 downstreams (Tier1 + Tier2 must be created first) ----
   dynamic "service_binding" {
     for_each = local.gateway_service_bindings
     content {
       name = service_binding.value.binding
-      # ingestion 在 Tier2, 其余在 Tier1
+      # ingestion is in Tier2, the rest in Tier1
       service     = service_binding.value.target == "ingestion" ? cloudflare_workers_script.ingestion.name : cloudflare_workers_script.tier1[service_binding.value.target].name
       environment = var.environment
     }
   }
 
-  # 显式依赖: 全部 Tier1 + ingestion 必须先创建
+  # Explicit dependency: all Tier1 + ingestion must be created first
   depends_on = [
     cloudflare_workers_script.tier1,
     cloudflare_workers_script.ingestion,
@@ -401,7 +470,7 @@ resource "cloudflare_workers_script" "gateway" {
 }
 
 # ============================================================================
-# 5) Cron trigger: Cleanup 每天 03:00 UTC
+# 5) Cron trigger: Cleanup daily at 03:00 UTC
 #    v4 schedules = list(string) of cron expressions
 # ============================================================================
 resource "cloudflare_workers_cron_trigger" "cleanup_daily" {
@@ -410,12 +479,12 @@ resource "cloudflare_workers_cron_trigger" "cleanup_daily" {
   script_name = local.workers["cleanup"].worker_name
   schedules   = local.workers["cleanup"].cron
 
-  # cleanup Worker (Tier1) 必须先存在, cron trigger 引用其 worker_name
+  # cleanup Worker (Tier1) must exist first; cron trigger references its worker_name
   depends_on = [cloudflare_workers_script.tier1["cleanup"]]
 }
 
 # ============================================================================
-# 6) 可选: Workers 自定义域名
+# 6) Optional: Workers custom domain
 # ============================================================================
 locals {
   custom_domains = {
@@ -439,22 +508,22 @@ resource "cloudflare_workers_domain" "svc" {
   hostname    = each.value
   service     = local.workers[each.key].worker_name
   environment = var.environment
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=${each.key} Lifecycle=long-lived
+  # Governance: Environment=${var.environment} Project=${var.project_name}
+  #             Service=${each.key} Lifecycle=long-lived
 
-  # 对应 Worker 必须先创建
+  # The corresponding Worker must be created first
   depends_on = [cloudflare_workers_script.gateway]
 }
 
 # ============================================================================
-# --------- apps/web (service #7) 扩展锚点 ---------
-# 接入第 7 个 Worker 仅需改动以下三处，无需动结构代码：
+# --------- apps/web (service #7) extension anchor ---------
+# Adding a 7th Worker only requires these four edits — no structural refactor:
 #
-# (1) local.workers 新增:
+# (1) Add to local.workers:
 #     web = { worker_name="${local.res_prefix}-web", service="web", has_db=false, cron=[], tier=1 }
-# (2) Gateway 如需转发到 Web，在 local.gateway_service_bindings 追加:
+# (2) If Gateway should forward to Web, append to local.gateway_service_bindings:
 #     { binding="WEB_SERVICE", target="web" }
-# (3) KV 缓存在 local.kv_binding_map 追加:
+# (3) Append KV cache to local.kv_binding_map:
 #     { svc="web", binding="CACHE" }
-# (4) deploy-workers.yml 的 DEFAULTS_MATRIX 追加一条 web 服务条目
+# (4) Append a web entry to DEFAULTS_MATRIX in deploy-workers.yml
 # ============================================================================

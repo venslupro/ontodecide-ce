@@ -2,7 +2,7 @@
 -- Migration 0001: initial schema for the User Service.
 --
 -- Mirrors the design doc §4.2.2 schema. Run via
--- `wrangler d1 migrations apply decision-db`.
+-- `wrangler d1 migrations apply shared-db`.
 -- ============================================================
 
 -- Users table (account lifecycle core).

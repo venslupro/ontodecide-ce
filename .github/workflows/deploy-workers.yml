@@ -76,12 +76,12 @@ concurrency:
 env:
   DEFAULTS_MATRIX_JSON: >-
     [
-      {"name":"gateway",   "config":"apps/api/gateway/wrangler.toml",     "package":"@ontodecide/gateway",   "src_paths":["apps/api/gateway/**","packages/shared/**"]},
-      {"name":"user",      "config":"apps/api/user/wrangler.toml",        "package":"@ontodecide/user",      "src_paths":["apps/api/user/**","packages/shared/**"]},
-      {"name":"graph",     "config":"apps/api/graph/wrangler.toml",       "package":"@ontodecide/graph",     "src_paths":["apps/api/graph/**","packages/shared/**"]},
-      {"name":"ingestion", "config":"apps/api/ingestion/wrangler.toml",   "package":"@ontodecide/ingestion", "src_paths":["apps/api/ingestion/**","packages/shared/**"]},
-      {"name":"ai",        "config":"apps/api/ai/wrangler.toml",          "package":"@ontodecide/ai",        "src_paths":["apps/api/ai/**","packages/shared/**"]},
-      {"name":"cleanup",   "config":"apps/api/cleanup/wrangler.toml",     "package":"@ontodecide/cleanup",   "src_paths":["apps/api/cleanup/**","packages/shared/**"]}
+      {"name":"gateway",   "config":"apps/api/gateway/wrangler.toml",     "package":"@ontodecide/gateway"},
+      {"name":"user",      "config":"apps/api/user/wrangler.toml",        "package":"@ontodecide/user"},
+      {"name":"graph",     "config":"apps/api/graph/wrangler.toml",       "package":"@ontodecide/graph"},
+      {"name":"ingestion", "config":"apps/api/ingestion/wrangler.toml",   "package":"@ontodecide/ingestion"},
+      {"name":"ai",        "config":"apps/api/ai/wrangler.toml",          "package":"@ontodecide/ai"},
+      {"name":"cleanup",   "config":"apps/api/cleanup/wrangler.toml",     "package":"@ontodecide/cleanup"}
     ]
 
 jobs:
@@ -96,7 +96,7 @@ jobs:
       has_changes: ${{ steps.compute.outputs.has_changes }}
     steps:
       - name: Checkout (full history for paths-filter)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -105,28 +105,28 @@ jobs:
       # declared src_paths (includes transitive shared/ dep).
       - name: Build paths-filter ruleset + run detection
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           list-files: 'none'
           filters: |
             gateway:
               - 'apps/api/gateway/**'
-              - 'packages/shared/**'
+              - 'apps/shared/**'
             user:
               - 'apps/api/user/**'
-              - 'packages/shared/**'
+              - 'apps/shared/**'
             graph:
               - 'apps/api/graph/**'
-              - 'packages/shared/**'
+              - 'apps/shared/**'
             ingestion:
               - 'apps/api/ingestion/**'
-              - 'packages/shared/**'
+              - 'apps/shared/**'
             ai:
               - 'apps/api/ai/**'
-              - 'packages/shared/**'
+              - 'apps/shared/**'
             cleanup:
               - 'apps/api/cleanup/**'
-              - 'packages/shared/**'
+              - 'apps/shared/**'
             workflow:
               - '.github/workflows/deploy-workers.yml'
 
@@ -225,7 +225,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # ---- Toolchain (byte-equivalent to workers-builds image) ----
       - name: Setup pnpm (corepack)
@@ -234,7 +234,7 @@ jobs:
           corepack prepare pnpm@9.12.0 --activate
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -352,12 +352,12 @@ jobs:
           secrets: ${{ steps.prepare_secrets.outputs.secrets }}
 
   # ----------------------------------------------------------------
-  # Job 2 — Post-deploy: apply D1 migrations to shared decision-db.
+  # Job 2 — Post-deploy: apply D1 migrations to the shared-db.
   #         Runs ONCE after all changed Workers successfully deploy.
   #         SKIPS entirely if no services deployed this run.
   #
-  #         D1 name = "${PROJECT_NAME}-${ENV_SHORT}-decision-db"
-  #         Must match Terraform cloudflare_d1_database.decision_db.name.
+  #         D1 name = "${PROJECT_NAME}-${ENV_SHORT}-shared-db"
+  #         Must match Terraform cloudflare_d1_database.shared_db.name.
   # ----------------------------------------------------------------
   migrate-d1:
     name: Apply D1 Migrations (remote)
@@ -375,7 +375,7 @@ jobs:
       ENVIRONMENT:  ${{ github.event.inputs.environment || 'production' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup pnpm (corepack)
         run: |
@@ -383,7 +383,7 @@ jobs:
           corepack prepare pnpm@9.12.0 --activate
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'pnpm'

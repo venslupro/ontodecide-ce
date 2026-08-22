@@ -1,81 +1,77 @@
 # ============================================================================
-# 输入变量 —— 与 deploy-workers.yml / migrate.sh 命名约定保持一致
-#   PROJECT_NAME  <-> var.project_name   (默认 "ontodecide")
-#   ENVIRONMENT   <-> var.environment    (默认 "production")
+# Input variables — naming aligned with deploy-workers.yml / migrate.sh
+#   PROJECT_NAME  <-> var.project_name   (default "ontodecide")
+#   ENVIRONMENT   <-> var.environment    (default "production")
 # ============================================================================
 
 variable "account_id" {
-  description = "Cloudflare 账户 ID (32 hex)。可使用 TF_VAR_account_id 注入。"
+  description = "Cloudflare account ID (32 hex). Can be injected via TF_VAR_account_id."
   type        = string
   sensitive   = true
 }
 
 variable "zone_id" {
-  description = "(可选) 自定义域名所在 Cloudflare Zone ID。留空则跳过域名资源创建。"
+  description = "(Optional) Cloudflare Zone ID for the custom domain. Leave empty to skip domain resource creation."
   type        = string
   default     = ""
 }
 
 variable "project_name" {
-  description = "项目前缀，参与所有资源命名 (与 migrate.sh PROJECT_NAME 一致)。"
+  description = "Project prefix used in all resource naming (matches migrate.sh PROJECT_NAME)."
   type        = string
   default     = "ontodecide"
 }
 
 variable "environment" {
-  description = "环境后缀 (production / staging)。预留 staging 入口，本轮默认 production。"
+  description = "Environment suffix (production / staging). Staging entry is reserved; defaults to production."
   type        = string
   default     = "production"
 
   validation {
     condition     = contains(["production", "staging"], var.environment)
-    error_message = "environment 必须是 production 或 staging。"
+    error_message = "environment must be production or staging."
   }
 }
 
-# ---- B2 / Neo4j 外部依赖变量 (Terraform 不直接创建，仅文档化 + 审计) ----
-# B2 桶命名统一: ${project_name}-${env_short}-{用途}
-# (实际桶在外部创建; 此处仅审计文档化, 确保命名与约定一致)
+# ---- B2 / Neo4j external dependency variables (Terraform does not create them; documented + audited only) ----
+# B2 bucket naming convention: ${project_name}-${env_short}-{purpose}
+# (buckets are created externally; this only documents/audits to keep naming consistent)
 variable "b2_region" {
-  description = "Backblaze B2 S3 region，例如 us-west-004。"
+  description = "Backblaze B2 S3 region, e.g. us-west-004."
   type        = string
   default     = "us-west-004"
 }
 
 variable "b2_ingestion_bucket" {
-  description = "B2 数据接入暂存桶名称 (Ingestion 使用，Cleanup 归档)。命名: ontodecide-prd-ingestion-staging"
+  description = "B2 data ingestion staging bucket name (used by Ingestion, archived by Cleanup). Naming: ontodecide-prd-ingestion-staging"
   type        = string
   default     = "ontodecide-prd-ingestion-staging"
 }
 
 variable "b2_archive_bucket" {
-  description = "B2 租户归档备份桶名称 (Cleanup 使用)。命名: ontodecide-prd-tenant-archive"
+  description = "B2 tenant archive backup bucket name (used by Cleanup). Naming: ontodecide-prd-tenant-archive"
   type        = string
   default     = "ontodecide-prd-tenant-archive"
 }
 
 # ---- Terraform remote state backend (B2 S3-compatible) ----
-# B2 桶名称 (仅文档化, 实际在 backend config 中通过 -backend-config 注入)
-variable "tf_state_bucket" {
-  description = "B2 存放 Terraform state 的桶名。命名: ontodecide-prd-terraform-state"
-  type        = string
-  default     = "ontodecide-prd-terraform-state"
-}
+# B2 bucket name is hardcoded statically in versions.tf backend "s3" block
+# (ontodecide-prd-terraform-state); credentials are injected via env vars.
 
 variable "neo4j_url_placeholder" {
-  description = "Neo4j AuraDB 连接 URL 占位符。真实值通过 wrangler.toml [vars] + Dashboard 变量覆盖注入。"
+  description = "Neo4j AuraDB connection URL placeholder. Real value injected via wrangler.toml [vars] + Dashboard variable overrides."
   type        = string
   default     = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
 }
 
 variable "neo4j_user" {
-  description = "Neo4j 用户名 (仅用于文档)。"
+  description = "Neo4j username (documentation only)."
   type        = string
   default     = "neo4j"
 }
 
 variable "neo4j_database" {
-  description = "Neo4j 单共享 DB 名称 (property isolation + tenant_id)。"
+  description = "Neo4j shared DB name (property isolation + tenant_id)."
   type        = string
   default     = "neo4j"
 }
