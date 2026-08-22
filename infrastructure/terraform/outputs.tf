@@ -1,6 +1,6 @@
 # ============================================================================
-# 输出：便于人工审阅 / 回填到 Cloudflare Dashboard Variables & Secrets
-#       (严禁把真实 ID 写回 git)
+# Outputs: for human review / backfilling into Cloudflare Dashboard Variables & Secrets
+#          (NEVER commit real IDs back to git)
 # ============================================================================
 
 output "project_name" { value = var.project_name }
@@ -8,24 +8,24 @@ output "environment" { value = var.environment }
 output "zone_id" { value = var.zone_id }
 
 # ---- D1 ----
-output "decision_database_id" {
-  description = "共享决策 D1 数据库 ID (绑定名 DB; user/ai/cleanup 三服务共享)。"
-  value       = cloudflare_d1_database.decision_db.id
+output "shared_database_id" {
+  description = "Shared D1 database ID (binding name DB; shared by user/ai/cleanup)."
+  value       = cloudflare_d1_database.shared_db.id
   sensitive   = true
 }
-output "decision_database_name" {
-  value = cloudflare_d1_database.decision_db.name
+output "shared_database_name" {
+  value = cloudflare_d1_database.shared_db.name
 }
 
 # ---- KV ----
 output "kv_namespaces" {
-  description = "KV namespace 元数据：svc / binding / title (id 不输出，避免意外泄露)。"
+  description = "KV namespace metadata: svc / binding / title (id not exported to avoid accidental leakage)."
   value = {
     for k, r in cloudflare_workers_kv_namespace.kv :
     k => {
-      svc     = split("__", k)[0]
-      binding = split("__", k)[1]
-      title   = r.title
+      svc = split("__", k)[0]
+      # state key is lowercase; upper() restores the original case to align with the wrangler.toml binding name
+      binding = upper(split("__", k)[1])
     }
   }
 }
@@ -40,7 +40,7 @@ output "queues" {
   }
 }
 
-# ---- Workers (合并 Tier1 + Tier2 + Tier3 输出) ----
+# ---- Workers (merge Tier1 + Tier2 + Tier3 outputs) ----
 output "workers" {
   value = merge(
     {
@@ -90,12 +90,13 @@ output "worker_domains" {
 
 # ---- Durable Object ----
 output "durable_object_classes" {
-  description = "AI Worker Durable Object 类清单。类代码由 Wrangler [[migrations]] v1 上传。"
+  description = "AI Worker Durable Object class list. Class code is uploaded via Wrangler [[migrations]] v1."
   value       = local.durable_object_classes
 }
 
 # ============================================================================
-# 外部依赖 (Terraform 不直接创建，仅方便人工核对 wrangler.toml [vars])
+# External dependencies (Terraform does not create them; for manual cross-check
+# against wrangler.toml [vars])
 # ============================================================================
 output "external_backblaze_b2" {
   value = {
