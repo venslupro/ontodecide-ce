@@ -147,6 +147,14 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          # This repo has no Go modules / go.sum — actionlint and yq are
+          # installed with "go install @latest" (no local module graph).
+          # Default cache: 'go' therefore emits the noisy warning:
+          #   "Restore cache failed: Dependencies file is not found
+          #    ... Supported file pattern: go.sum"
+          # Disable caching entirely; go install @latest is fast enough
+          # and nothing stable to key against anyway.
+          cache: false
 
       - name: Install actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@latest
