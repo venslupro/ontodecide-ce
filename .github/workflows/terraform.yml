@@ -165,21 +165,20 @@ jobs:
       #   A prior run failed to create cloudflare_d1_database.decision_db
       #   (Authentication error 10000), yet the remote state file in B2
       #   ended up holding a ghost D1 UUID that does not map to any live
-      #   Cloudflare database (error code 7404 on read-back). After the
-      #   resource rename decision_db -> shared_db the stale id was
-      #   carried forward by the moved {} block, causing every subsequent
-      #   terraform plan to abort with 7404 before finishing the diff.
+      #   Cloudflare database (error 7404 on read-back). After the resource
+      #   rename decision_db -> shared_db the stale id was carried forward
+      #   by the moved {} block, so every subsequent plan aborted at 7404.
       #
-      # Behavior:
-      #   * 'terraform state rm' on a non-existent key exits non-zero,
-      #     so the '|| echo ...' guard makes the step idempotent — it runs
-      #     successfully whether the stale record is still present or
-      #     has already been cleaned up.
-      #   * Both the old (pre-move) and new state keys are tried to
-      #     handle races.
-      #   * This step is intentionally NOT conditional on environment:
-      #     state rm is a pure state-file edit and never talks to the
-      #     Cloudflare API, so it is safe even after the drift is fixed.
+      # Strategy:
+      #   * FIRST list the state contents, SECOND rm only keys that are
+      #     actually present. This avoids the red "Error: Terraform exited
+      #     with code 1" banner that 'terraform state rm <missing>' emits,
+      #     which previously polluted the CI log even though the || echo
+      #     guards kept the step alive.
+      #   * Both the old (pre-move) and new state keys are checked.
+      #   * 'terraform state rm' is a pure state-file edit and never talks
+      #     to the Cloudflare API, so this step is safe to leave in place
+      #     after drift is resolved (it becomes a no-op).
       #
       # Retirement:
       #   Once the plan step finishes with exit code 0 across two
@@ -189,12 +188,28 @@ jobs:
       - name: (One-off) Remove stale D1 UUID from remote state
         if: always()
         run: |
-          terraform state rm cloudflare_d1_database.decision_db 2>/dev/null || \
-            echo "decision_db not in state (or already migrated via moved block)"
-          terraform state rm cloudflare_d1_database.shared_db 2>/dev/null || \
-            echo "shared_db not in state (drift already resolved)"
+          set -u -o pipefail
+
+          echo "Snapshot of current state keys that match 'd1':"
+          STATE_KEYS="$(terraform state list | grep -E '^cloudflare_d1_database\.' || true)"
+          if [ -z "${STATE_KEYS}" ]; then
+            echo "  (no D1 resources present — nothing to remove, step no-op)"
+          else
+            echo "${STATE_KEYS}"
+            for KEY in cloudflare_d1_database.decision_db cloudflare_d1_database.shared_db; do
+              if echo "${STATE_KEYS}" | grep -Fxq "${KEY}"; then
+                echo "Removing ${KEY} ..."
+                terraform state rm "${KEY}"
+                echo "  ... removed."
+              else
+                echo "Skipping ${KEY} (not present in state)."
+              fi
+            done
+          fi
+
+          echo
           echo "State D1 keys after cleanup:"
-          terraform state list 2>/dev/null | grep d1 || echo "(no D1 resources in state)"
+          terraform state list | grep -E '^cloudflare_d1_database\.' || echo "(no D1 resources in state)"
 
       - name: Plan
         id: plan
