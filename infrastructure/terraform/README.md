@@ -11,15 +11,17 @@
 
 ### What Terraform CREATES and GOVERNS (this directory)
 
-| Resource              | Count | Naming pattern                                     |
-| --------------------- | ----: | -------------------------------------------------- |
-| D1 `decision-db`      | 1     | `${project}-decision-db-${env}`                    |
-| KV namespaces         | 11    | `${project}-${BINDING_NAME}-${env}`                |
-| Cloudflare Queues     | 4     | `${project}-{ingestion,cleanup}{-dlq,}-${env}`     |
-| Worker Script skeletons | 6   | `decision-{gateway,user-service,…}`                |
-| Service Bindings      | 6     | Gateway → 5 downstreams, Ingestion → Graph         |
-| Cron Trigger          | 1     | Cleanup · 03:00 UTC daily                          |
-| Workers Domain (opt.) | 1     | `api.${project}.com` (requires non-empty zone_id)  |
+| Resource              | Count | Naming pattern                                          |
+| --------------------- | ----: | ------------------------------------------------------- |
+| D1 `decision-db`      | 1     | `${project}-${env_short}-decision-db` (ontodecide-prd-decision-db) |
+| KV namespaces         | 11    | `${project}-${env_short}-${svc}-${BINDING}` (ontodecide-prd-gateway-JWT_BLACKLIST) |
+| Cloudflare Queues     | 4     | `${project}-${env_short}-{ingestion,cleanup}{-dlq,}` (ontodecide-prd-ingestion, ontodecide-prd-cleanup-dlq) |
+| Worker Script skeletons | 6   | `${project}-${env_short}-{service}` (ontodecide-prd-gateway, ontodecide-prd-graph) |
+| Service Bindings      | 6     | Gateway → 5 downstreams, Ingestion → Graph (tier-ordered)|
+| Cron Trigger          | 1     | Cleanup · 03:00 UTC daily                               |
+| Workers Domain (opt.) | 1     | `api.${project}.com` (requires non-empty zone_id)       |
+
+> **Env short**: `production` → `prd`, `staging` → `stg`
 
 ### What Terraform DOES NOT TOUCH (code layer)
 
@@ -70,6 +72,30 @@ export TF_VAR_project_name='ontodecide'
 export TF_VAR_environment='production'
 ```
 
+### 2.2b Backblaze B2 — Terraform remote state bucket
+
+Terraform state is persisted in a B2 bucket (S3-compatible backend) so
+that CI runs share state. This prevents the "plan shows +create for all
+resources but apply fails because they already exist" problem.
+
+1. Create a B2 bucket named `ontodecide-prd-terraform-state` (region:
+   `us-east-005`). Tag it with the same 4D governance tags as other B2
+   buckets (Environment / Project / Service=tf-state / Lifecycle).
+2. Create or reuse a B2 Application Key with **read+write** on this
+   bucket. The existing `B2_KEY_ID` / `B2_KEY` GitHub secrets (used by
+   ingestion + cleanup workers) work if the key has access to all 3
+   buckets; otherwise create a dedicated key.
+3. The backend config (bucket, endpoint, region, skip flags) is
+   **static** in `versions.tf` — no `-backend-config` flags needed.
+   To use a different bucket, create a local `backend_override.tf`
+   (gitignored via `*_override.tf` pattern).
+4. For **local dev**, just export B2 credentials:
+   ```bash
+   export AWS_ACCESS_KEY_ID='<B2_KEY_ID>'
+   export AWS_SECRET_ACCESS_KEY='<B2_KEY>'
+   terraform -chdir=infrastructure/terraform init
+   ```
+
 ### 2.3 Init + validate (no Cloudflare calls, 100 % offline-safe)
 
 ```bash
@@ -83,7 +109,10 @@ terraform -chdir=infrastructure/terraform validate
 ```bash
 cd infrastructure/terraform
 cp terraform.tfvars.example terraform.tfvars   # then edit values
-terraform init     # now with real provider auth
+# Backend config is static in versions.tf — just export B2 creds and init:
+export AWS_ACCESS_KEY_ID='<B2_KEY_ID>'
+export AWS_SECRET_ACCESS_KEY='<B2_KEY>'
+terraform init
 terraform plan
 ```
 
@@ -137,12 +166,15 @@ Then paste each ID into the matching `[[kv_namespaces]]` block.
 ### 3.1 `terraform.yml` — Infrastructure pipeline
 
 The Terraform pipeline **reuses** the same secrets already configured for
-`deploy-workers.yml` — no extra secrets or variables to create.
+`deploy-workers.yml` — no extra secrets to create for the Cloudflare side.
+B2 secrets (`B2_KEY_ID` / `B2_KEY`) are reused for the remote state backend.
 
 | Kind      | Name                         | Description                                |
 | --------- | ---------------------------- | ------------------------------------------ |
 | **Secret**| `CF_API_TOKEN`               | Wide-scope Cloudflare API token (shared)   |
 | **Secret**| `CF_ACCOUNT_ID`              | 32-hex Cloudflare account ID (shared)     |
+| **Secret**| `B2_KEY_ID`                   | B2 key ID for remote state backend (shared)|
+| **Secret**| `B2_KEY`                      | B2 key secret for remote state backend (shared)|
 | Variable  | `TF_ZONE_ID`                 | (optional) Zone ID for `api.ontodecide.com`|
 
 > **Project name** is derived automatically from the GitHub repo name
@@ -250,8 +282,8 @@ single KV CACHE binding).
 | ------- | ----- | --- |
 | `wrangler deploy` → *"binding XXX references nonexistent KV"* | Terraform hasn't provisioned the namespace yet, or IDs still have `REPLACE_WITH_*` placeholder | Run `terraform apply` once, then paste real KV IDs into wrangler.toml |
 | `terraform plan` → *"cloudflare_workers_script has changed (external diff)"* | `wrangler deploy` overwrote the sentinel script, which is expected | Intentionally ignored via `lifecycle.ignore_changes = [content, module, compatibility_*, *_binding]` — a fresh plan will show `0 to add, 0 to change, 0 to destroy` on scripts |
-| Deploy fails → *"Queue 'ontodecide-ingestion-production' not found"* | Legacy inline `wrangler queues create` shell was removed; Queue must exist from Terraform | Run `terraform apply` once to create the Queue resources (including DLQs) before deploy |
-| `terraform apply` on first run → *"Service Binding target worker does not exist"* | Service Bindings require both Workers to exist first | The sentinel script in `cloudflare_workers_script.svc` uses `create_before_destroy = true` + one `for_each` across all 6 workers; Terraform resolves the creation order automatically. If you still hit this, apply twice (harmless second pass). |
+| Deploy fails → *"Queue 'ontodecide-prd-ingestion' not found"* | Legacy inline `wrangler queues create` shell was removed; Queue must exist from Terraform | Run `terraform apply` once to create the Queue resources (including DLQs) before deploy |
+| `terraform apply` on first run → *"Service Binding target worker does not exist"* | Service Bindings require both Workers to exist first | Workers are split into **Tier 1** (user/ai/graph/cleanup) → **Tier 2** (ingestion) → **Tier 3** (gateway) with explicit `depends_on`. Terraform creates them in the correct order. If you still hit this, check that B2 remote state is configured (see §2). |
 | `terraform validate` → *"An argument named 'tags' is not expected here"* | You added `tags =` to a resource that doesn't support tags on Provider v4 | Only `cloudflare_workers_script` supports native `tags` on v4.52. For D1/KV/Queue/Cron use the **name convention + comment + outputs summary** pattern used in main.tf instead. |
 
 ---

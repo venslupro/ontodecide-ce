@@ -31,7 +31,7 @@
 #
 # Build & deploy: see gateway wrangler.toml; identical model.
 
-name = "decision-ingestion-service"
+name = "ontodecide-prd-ingestion"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
@@ -48,26 +48,26 @@ cwd = "apps/api/ingestion"
 # `service` name matches local.workers["graph"].worker_name in main.tf.
 [[services]]
 binding = "GRAPH_SERVICE"
-service = "decision-graph-service"
+service = "ontodecide-prd-graph"
 
 # ----- Async queue (Terraform CREATES queues; Wrangler maps consumers) ----
 # Queue names MUST match cloudflare_queue.ingestion.name and
 # cloudflare_queue.ingestion_dlq.name in main.tf:
-#   main = "${project_name}-ingestion-${environment}"
-#   dlq  = "${project_name}-ingestion-dlq-${environment}"
+#   main = "${project_name}-${env_short}-ingestion"
+#   dlq  = "${project_name}-${env_short}-ingestion-dlq"
 [[queues.producers]]
 binding = "INGEST_QUEUE"
-queue   = "ontodecide-ingestion-production"
+queue   = "ontodecide-prd-ingestion"
 
 # Consumer + dead_letter_queue are CODE-LEVEL declarations.
 # Terraform creates the raw Queue resources; wrangler wires the
 # consumer function + DLQ redirection onto them at deploy time.
 [[queues.consumers]]
-queue             = "ontodecide-ingestion-production"
+queue             = "ontodecide-prd-ingestion"
 max_batch_size    = 5
 max_batch_timeout = 30
 max_retries       = 3
-dead_letter_queue = "ontodecide-ingestion-dlq-production"
+dead_letter_queue = "ontodecide-prd-ingestion-dlq"
 
 # ----- KV: async ingestion job tracking (Terraform-managed) ---------------
 [[kv_namespaces]]
@@ -79,7 +79,7 @@ id = "REPLACE_WITH_TERRAFORM_CREATED_KV_JOBS_INGESTION_ID"
 # Bucket names MUST match Terraform output external_backblaze_b2
 # (tags: Environment / Project / Service=shared / Lifecycle=long-lived).
 B2_REGION           = "us-west-004"
-B2_INGESTION_BUCKET = "ontodecide-ingestion-staging-production"
+B2_INGESTION_BUCKET = "ontodecide-prd-ingestion-staging"
 
 # Secrets (Dashboard → Secrets, CI, or `wrangler secret put`):
 #   B2_KEY_ID   — B2 Application Key keyID with R/W on the staging bucket.

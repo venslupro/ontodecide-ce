@@ -7,6 +7,7 @@ project_name = "ontodecide"
 environment  = "production"
 
 # 外部依赖默认值 (默认与 wrangler.toml 一致，真实 B2 桶 / Neo4j 由外部 IaC 管理)
+# B2 桶命名统一: ontodecide-prd-{用途}
 b2_region           = "us-west-004"
-b2_ingestion_bucket = "ontodecide-ingestion-staging-production"
-b2_archive_bucket   = "ontodecide-tenant-archive-production"
+b2_ingestion_bucket = "ontodecide-prd-ingestion-staging"
+b2_archive_bucket   = "ontodecide-prd-tenant-archive"

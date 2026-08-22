@@ -34,6 +34,8 @@ variable "environment" {
 }
 
 # ---- B2 / Neo4j 外部依赖变量 (Terraform 不直接创建，仅文档化 + 审计) ----
+# B2 桶命名统一: ${project_name}-${env_short}-{用途}
+# (实际桶在外部创建; 此处仅审计文档化, 确保命名与约定一致)
 variable "b2_region" {
   description = "Backblaze B2 S3 region，例如 us-west-004。"
   type        = string
@@ -41,15 +43,23 @@ variable "b2_region" {
 }
 
 variable "b2_ingestion_bucket" {
-  description = "B2 数据接入暂存桶名称 (Ingestion 使用，Cleanup 归档)。"
+  description = "B2 数据接入暂存桶名称 (Ingestion 使用，Cleanup 归档)。命名: ontodecide-prd-ingestion-staging"
   type        = string
-  default     = "ontodecide-ingestion-staging-production"
+  default     = "ontodecide-prd-ingestion-staging"
 }
 
 variable "b2_archive_bucket" {
-  description = "B2 租户归档备份桶名称 (Cleanup 使用)。"
+  description = "B2 租户归档备份桶名称 (Cleanup 使用)。命名: ontodecide-prd-tenant-archive"
   type        = string
-  default     = "ontodecide-tenant-archive-production"
+  default     = "ontodecide-prd-tenant-archive"
+}
+
+# ---- Terraform remote state backend (B2 S3-compatible) ----
+# B2 桶名称 (仅文档化, 实际在 backend config 中通过 -backend-config 注入)
+variable "tf_state_bucket" {
+  description = "B2 存放 Terraform state 的桶名。命名: ontodecide-prd-terraform-state"
+  type        = string
+  default     = "ontodecide-prd-terraform-state"
 }
 
 variable "neo4j_url_placeholder" {

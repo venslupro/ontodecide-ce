@@ -3,11 +3,12 @@
 #
 # The D1 database NAME is constructed to match the Terraform resource:
 #   cloudflare_d1_database.decision_db.name
-#     = ${PROJECT_NAME}-decision-db-${ENVIRONMENT}
+#     = ${PROJECT_NAME}-${ENV_SHORT}-decision-db
 # with PROJECT_NAME defaulting to "ontodecide" and ENVIRONMENT defaulting
-# to "production".  These defaults match the defaults declared in
-# infrastructure/terraform/variables.tf and the database_name committed
-# in every wrangler.toml that references the shared DB.
+# to "production" (shortened to "prd" for resource naming).  These defaults
+# match the defaults declared in infrastructure/terraform/variables.tf and
+# the database_name committed in every wrangler.toml that references the
+# shared DB.
 #
 # If you pass an explicit --env or set PROJECT_NAME via the environment
 # you MUST ensure that the same override was passed to the Terraform
@@ -66,9 +67,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 PROJECT_NAME="${PROJECT_NAME:-ontodecide}"
+# Env short form: production→prd, staging→stg (matches Terraform local.env_short)
+ENV_SHORT="$([[ "$ENVIRONMENT" == "production" ]] && echo "prd" || ([[ "$ENVIRONMENT" == "staging" ]] && echo "stg" || echo "$ENVIRONMENT"))"
 # Matches exactly: cloudflare_d1_database.decision_db.name
-#   = "${var.project_name}-decision-db-${var.environment}"
-DB_NAME="${PROJECT_NAME}-decision-db-${ENVIRONMENT}"
+#   = "${var.project_name}-${local.env_short}-decision-db"
+DB_NAME="${PROJECT_NAME}-${ENV_SHORT}-decision-db"
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   cat <<EOF

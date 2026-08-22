@@ -30,7 +30,7 @@
 #   • `main = "src/index.ts"` lets wrangler bundle via its esbuild pipeline
 #     and resolve @ontodecide/shared via package.json exports → dist.
 
-name = "decision-gateway"
+name = "ontodecide-prd-gateway"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
@@ -53,23 +53,23 @@ AI_DEFAULT_PROVIDER = "workers-ai"
 # Environment TS types (compile-time drift detection).
 [[services]]
 binding = "USER_SERVICE"
-service = "decision-user-service"
+service = "ontodecide-prd-user"
 
 [[services]]
 binding = "GRAPH_SERVICE"
-service = "decision-graph-service"
+service = "ontodecide-prd-graph"
 
 [[services]]
 binding = "INGESTION_SERVICE"
-service = "decision-ingestion-service"
+service = "ontodecide-prd-ingestion"
 
 [[services]]
 binding = "AI_SERVICE"
-service = "decision-ai-service"
+service = "ontodecide-prd-ai"
 
 [[services]]
 binding = "CLEANUP_SERVICE"
-service = "decision-cleanup-service"
+service = "ontodecide-prd-cleanup"
 
 # Secrets (set via Dashboard → Worker → Secrets, CI, or `wrangler secret put`):
 #   JWT_SECRET           — 32+ byte HMAC signing key.
@@ -84,7 +84,7 @@ service = "decision-cleanup-service"
 # How to populate `id` after first `terraform apply`:
 #   1. Run:  terraform -chdir=infrastructure/terraform output kv_namespaces
 #   2. Log into Cloudflare Dashboard → Workers KV → click the namespace
-#      named "${project_name}-${BINDING}-${environment}"
+#      named "${project_name}-${env_short}-${svc}-${BINDING}"
 #   3. Copy the Namespace ID and paste into the `id` field below.
 #
 # For local dev (`wrangler dev` / `wrangler types`) you can leave the

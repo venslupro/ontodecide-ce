@@ -40,14 +40,26 @@ output "queues" {
   }
 }
 
-# ---- Workers ----
+# ---- Workers (合并 Tier1 + Tier2 + Tier3 输出) ----
 output "workers" {
-  value = {
-    for k, w in cloudflare_workers_script.svc : k => {
-      name               = w.name
-      compatibility_date = w.compatibility_date
-    }
-  }
+  value = merge(
+    {
+      for k, w in cloudflare_workers_script.tier1 : k => {
+        name               = w.name
+        compatibility_date = w.compatibility_date
+      }
+    },
+    {
+      ingestion = {
+        name               = cloudflare_workers_script.ingestion.name
+        compatibility_date = cloudflare_workers_script.ingestion.compatibility_date
+      },
+      gateway = {
+        name               = cloudflare_workers_script.gateway.name
+        compatibility_date = cloudflare_workers_script.gateway.compatibility_date
+      },
+    },
+  )
 }
 
 # ---- Service Bindings ----

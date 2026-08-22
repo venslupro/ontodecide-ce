@@ -18,7 +18,7 @@
 #
 # Build & deploy: see gateway wrangler.toml; identical model.
 
-name = "decision-user-service"
+name = "ontodecide-prd-user"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
@@ -29,7 +29,7 @@ command = "pnpm --filter=@ontodecide/user exec tsc -p tsconfig.json --noEmit && 
 cwd = "apps/api/user"
 
 # ----- D1: shared decision-db (Terraform-managed) -------------------------
-# database_name MUST match "${project_name}-decision-db-${environment}"
+# database_name MUST match "${project_name}-${env_short}-decision-db" (e.g. ontodecide-prd-decision-db)
 # from main.tf → cloudflare_d1_database.decision_db.name.
 #
 # Use `database_name` here (not `database_id`) so the same wrangler.toml
@@ -41,7 +41,7 @@ cwd = "apps/api/user"
 # scripts/migrate.sh --remote in the post-deploy migrate-d1 CI job.
 [[d1_databases]]
 binding        = "DB"
-database_name  = "ontodecide-decision-db-production"
+database_name  = "ontodecide-prd-decision-db"
 migrations_dir = "src/migrations"
 
 # ----- KV: session / user lookup cache (Terraform-managed) ----------------

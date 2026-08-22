@@ -21,7 +21,7 @@
 #
 # Build & deploy: see gateway wrangler.toml; identical model.
 
-name = "decision-ai-service"
+name = "ontodecide-prd-ai"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
@@ -40,7 +40,7 @@ binding = "AI"
 # database_name matches cloudflare_d1_database.decision_db.name pattern.
 [[d1_databases]]
 binding        = "DB"
-database_name  = "ontodecide-decision-db-production"
+database_name  = "ontodecide-prd-decision-db"
 migrations_dir = "src/migrations"
 
 # ----- KV: inference cache + neuron-budget (Terraform-managed) ------------
@@ -62,7 +62,7 @@ new_classes = ["PlanningAgent"]
 [vars]
 AI_DEFAULT_PROVIDER = "workers-ai"
 WORKERS_AI_MODEL    = "@cf/meta/llama-3-8b-instruct"
-AI_GATEWAY_ID       = "decision-gateway"
+AI_GATEWAY_ID       = "ontodecide-prd-gateway"
 OPENAI_MODEL        = "gpt-4o-mini"
 ANTHROPIC_MODEL     = "claude-3-sonnet-20241022"
 GOOGLE_MODEL        = "gemini-1.5-flash"

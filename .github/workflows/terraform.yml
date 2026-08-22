@@ -91,6 +91,13 @@ env:
   TF_VAR_zone_id:     ${{ vars.TF_ZONE_ID }}
   TF_VAR_project_name: ${{ github.event.repository.name }}
   TF_VAR_environment: ${{ github.event.inputs.environment || 'production' }}
+  # ---- Remote state backend (B2 S3-compatible) ----
+  # Backend config (bucket/endpoint/region/skip flags) is STATIC in
+  # versions.tf. Only credentials are injected via env vars.
+  # Reuses B2_KEY_ID / B2_KEY secrets already configured for
+  # deploy-workers.yml (ingestion + cleanup workers).
+  AWS_ACCESS_KEY_ID:     ${{ secrets.B2_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_KEY }}
 
 jobs:
   # -------------------------------------------------------------
@@ -148,19 +155,17 @@ jobs:
           path: infrastructure/terraform/.terraform/providers
           key: tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
 
-      - name: Init
+      - name: Init (B2 remote state backend config is static in versions.tf)
         run: terraform init -input=false
 
       - name: Plan
         id: plan
         run: |
-          terraform plan \
-            -input=false \
-            -out=tfplan.binary \
-            -var-file=terraform.tfvars 2>/dev/null || \
-          terraform plan \
-            -input=false \
-            -out=tfplan.binary
+          if [ -f terraform.tfvars ]; then
+            terraform plan -input=false -out=tfplan.binary -var-file=terraform.tfvars
+          else
+            terraform plan -input=false -out=tfplan.binary
+          fi
 
       - name: Render plan to JSON artifact
         run: terraform show -json tfplan.binary > tfplan.json
@@ -215,7 +220,7 @@ jobs:
           name: tfplan-${{ github.sha }}
           path: infrastructure/terraform/
 
-      - name: Init
+      - name: Init (B2 remote state backend config is static in versions.tf)
         run: terraform init -input=false
 
       # Prefer reusing the plan from Phase 2 so the reviewer sees
@@ -229,11 +234,11 @@ jobs:
             terraform apply -input=false tfplan.binary
           else
             echo ">>> Saved plan not found — generating fresh plan and applying <<<"
-            terraform apply \
-              -input=false \
-              -auto-approve \
-              -var-file=terraform.tfvars 2>/dev/null || \
-            terraform apply -input=false -auto-approve
+            if [ -f terraform.tfvars ]; then
+              terraform apply -input=false -auto-approve -var-file=terraform.tfvars
+            else
+              terraform apply -input=false -auto-approve
+            fi
           fi
 
       - name: Print outputs (resource IDs / names for human review)

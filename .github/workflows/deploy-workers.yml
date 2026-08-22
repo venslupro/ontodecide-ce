@@ -356,7 +356,7 @@ jobs:
   #         Runs ONCE after all changed Workers successfully deploy.
   #         SKIPS entirely if no services deployed this run.
   #
-  #         D1 name = "${PROJECT_NAME}-decision-db-${ENVIRONMENT}"
+  #         D1 name = "${PROJECT_NAME}-${ENV_SHORT}-decision-db"
   #         Must match Terraform cloudflare_d1_database.decision_db.name.
   # ----------------------------------------------------------------
   migrate-d1:
@@ -395,7 +395,7 @@ jobs:
         run: |
           echo "PROJECT_NAME = ${PROJECT_NAME}"
           echo "ENVIRONMENT  = ${ENVIRONMENT}"
-          echo "Target D1    = ${PROJECT_NAME}-decision-db-${ENVIRONMENT}"
+          echo "Target D1    = (computed by migrate.sh — run --dry-run below)"
           ./scripts/migrate.sh --env "${ENVIRONMENT}" --dry-run
 
       - name: Apply D1 migrations (remote — idempotent, no-ops if current)

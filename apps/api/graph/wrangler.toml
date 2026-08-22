@@ -20,7 +20,7 @@
 #
 # Build & deploy: see gateway wrangler.toml; identical model.
 
-name = "decision-graph-service"
+name = "ontodecide-prd-graph"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]

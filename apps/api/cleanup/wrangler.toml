@@ -28,7 +28,7 @@
 #
 # Build & deploy: see gateway wrangler.toml; identical model.
 
-name = "decision-cleanup-service"
+name = "ontodecide-prd-cleanup"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
@@ -49,19 +49,19 @@ crons = ["0 3 * * *"]
 # Names MUST match cloudflare_queue.cleanup(.cleanup_dlq).name pattern.
 [[queues.producers]]
 binding = "CLEANUP_QUEUE"
-queue   = "ontodecide-cleanup-production"
+queue   = "ontodecide-prd-cleanup"
 
 [[queues.consumers]]
-queue             = "ontodecide-cleanup-production"
+queue             = "ontodecide-prd-cleanup"
 max_batch_size    = 5
 max_batch_timeout = 30
 max_retries       = 3
-dead_letter_queue = "ontodecide-cleanup-dlq-production"
+dead_letter_queue = "ontodecide-prd-cleanup-dlq"
 
 # ----- D1: shared decision-db (Terraform-managed) -------------------------
 [[d1_databases]]
 binding        = "DB"
-database_name  = "ontodecide-decision-db-production"
+database_name  = "ontodecide-prd-decision-db"
 
 # ----- KV: cross-service cache invalidation (Terraform-managed) -----------
 # 5 bindings MUST match local.kv_binding_map entries with svc="cleanup".
@@ -91,8 +91,8 @@ NEO4J_USER = "neo4j"
 NEO4J_DATABASE = "neo4j"
 
 B2_REGION           = "us-west-004"
-B2_INGESTION_BUCKET = "ontodecide-ingestion-staging-production"
-B2_ARCHIVE_BUCKET   = "ontodecide-tenant-archive-production"
+B2_INGESTION_BUCKET = "ontodecide-prd-ingestion-staging"
+B2_ARCHIVE_BUCKET   = "ontodecide-prd-tenant-archive"
 
 # Secrets (Dashboard → Secrets, CI, or `wrangler secret put`):
 #   NEO4J_PASSWORD   — Password for NEO4J_USER on the shared database.

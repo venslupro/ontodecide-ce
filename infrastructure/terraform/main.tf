@@ -18,12 +18,20 @@
 #   • Queue consumer / DLQ 绑定 — wrangler.toml [[queues.consumers]] dead_letter_queue
 #   • D1 迁移 SQL — scripts/migrate.sh --remote 在全部 deploy 成功后执行
 #   • Backblaze B2 桶 / Neo4j AuraDB — 外部 IaC / 控制台管理 (outputs 中汇总)
+#
+# 命名约定 (统一):
+#   ${project_name}-${env_short}-${service}[-${suffix}]
+#   示例: ontodecide-prd-gateway, ontodecide-prd-graph, ontodecide-prd-decision-db
+#         ontodecide-prd-ingestion, ontodecide-prd-ingestion-dlq
+#         ontodecide-prd-gateway-JWT_BLACKLIST
+#
+# 创建顺序 (Service Binding 依赖):
+#   Tier 1 (叶子服务, 无 service binding): user · ai · graph · cleanup
+#   Tier 2 (依赖 graph): ingestion
+#   Tier 3 (依赖全部下游): gateway
 # ============================================================================
 
-# -------- 治理 metadata locals --------
-# Cloudflare Provider v4.52 仅 cloudflare_workers_script 原生支持 tags
-# (Set(String))；其余资源用资源名 + 注释 + outputs 摘要体现四维治理。
-# --------
+# -------- 治理 metadata + 统一命名 locals --------
 locals {
   tag_environment = "Environment=${var.environment}"
   tag_project     = "Project=${var.project_name}"
@@ -35,42 +43,54 @@ locals {
     Lifecycle   = "long-lived"
   }
 
+  # 环境缩写: production→prd, staging→stg (用于资源命名)
+  env_short = var.environment == "production" ? "prd" : (var.environment == "staging" ? "stg" : var.environment)
+
+  # 统一资源名前缀: ontodecide-prd
+  res_prefix = "${var.project_name}-${local.env_short}"
+
   workers = {
     gateway = {
-      worker_name = "decision-gateway"
+      worker_name = "${local.res_prefix}-gateway"
       service     = "gateway"
       has_db      = false
       cron        = []
+      tier        = 3
     }
     user = {
-      worker_name = "decision-user-service"
+      worker_name = "${local.res_prefix}-user"
       service     = "user"
       has_db      = true
       cron        = []
+      tier        = 1
     }
     graph = {
-      worker_name = "decision-graph-service"
+      worker_name = "${local.res_prefix}-graph"
       service     = "graph"
       has_db      = false
       cron        = []
+      tier        = 1
     }
     ingestion = {
-      worker_name = "decision-ingestion-service"
+      worker_name = "${local.res_prefix}-ingestion"
       service     = "ingestion"
       has_db      = false
       cron        = []
+      tier        = 2
     }
     ai = {
-      worker_name = "decision-ai-service"
+      worker_name = "${local.res_prefix}-ai"
       service     = "ai"
       has_db      = true
       cron        = []
+      tier        = 1
     }
     cleanup = {
-      worker_name = "decision-cleanup-service"
+      worker_name = "${local.res_prefix}-cleanup"
       service     = "cleanup"
       has_db      = true
       cron        = ["0 3 * * *"]
+      tier        = 1
     }
   }
 
@@ -104,74 +124,7 @@ locals {
   durable_object_classes = {
     AGENT = "PlanningAgent"
   }
-}
 
-# ============================================================================
-# 1) D1 共享数据库: ${project_name}-decision-db-${environment}
-# ============================================================================
-resource "cloudflare_d1_database" "decision_db" {
-  account_id = var.account_id
-  name       = "${var.project_name}-decision-db-${var.environment}"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=shared Lifecycle=long-lived
-}
-
-# ============================================================================
-# 2) KV Namespaces (11)
-# ============================================================================
-resource "cloudflare_workers_kv_namespace" "kv" {
-  for_each = {
-    for idx, item in local.kv_binding_map :
-    "${item.svc}__${item.binding}" => item
-  }
-
-  account_id = var.account_id
-  title      = "${var.project_name}-${each.value.binding}-${var.environment}"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=${each.value.svc} Lifecycle=long-lived
-}
-
-# ============================================================================
-# 3) Queues: ingestion + cleanup (主 + DLQ 分别创建)
-#    consumer 的 dead_letter_queue 绑定由 wrangler.toml [[queues.consumers]] 负责
-# ============================================================================
-resource "cloudflare_queue" "ingestion_dlq" {
-  account_id = var.account_id
-  name       = "${var.project_name}-ingestion-dlq-${var.environment}"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=ingestion Lifecycle=long-lived
-}
-
-resource "cloudflare_queue" "ingestion" {
-  account_id = var.account_id
-  name       = "${var.project_name}-ingestion-${var.environment}"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=ingestion Lifecycle=long-lived
-}
-
-resource "cloudflare_queue" "cleanup_dlq" {
-  account_id = var.account_id
-  name       = "${var.project_name}-cleanup-dlq-${var.environment}"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=cleanup Lifecycle=long-lived
-}
-
-resource "cloudflare_queue" "cleanup" {
-  account_id = var.account_id
-  name       = "${var.project_name}-cleanup-${var.environment}"
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=cleanup Lifecycle=long-lived
-}
-
-# ============================================================================
-# 4) Worker 绑定骨架 (metadata-only)
-#    Provider v4 workers_script 不支持 ai_binding / durable_object 块；
-#    因此 AI / DO / 普通 [vars] 仍由 wrangler.toml 声明。
-#    这里的 content 是 sentinel；Wrangler 每次 deploy 会覆盖脚本与 vars；
-#    lifecycle.ignore_changes + ignore_all_changes plain_text bindings 保证
-#    Terraform apply 不会回滚 wrangler 的真实代码。
-# ============================================================================
-locals {
   sentinel_script = <<-EOT
   // Terraform reserved sentinel — actual code deployed via Wrangler Action.
   export default {
@@ -185,8 +138,90 @@ locals {
   EOT
 }
 
-resource "cloudflare_workers_script" "svc" {
-  for_each            = local.workers
+# ============================================================================
+# 1) D1 共享数据库: ${res_prefix}-decision-db
+# ============================================================================
+resource "cloudflare_d1_database" "decision_db" {
+  account_id = var.account_id
+  name       = "${local.res_prefix}-decision-db"
+  # 治理: Environment=${var.environment} Project=${var.project_name}
+  #       Service=shared Lifecycle=long-lived
+}
+
+# ============================================================================
+# 2) KV Namespaces (11)
+#    命名: ${res_prefix}-${svc}-${binding}
+#    示例: ontodecide-prd-gateway-JWT_BLACKLIST
+#          ontodecide-prd-cleanup-USER_CACHE
+# ============================================================================
+resource "cloudflare_workers_kv_namespace" "kv" {
+  for_each = {
+    for idx, item in local.kv_binding_map :
+    "${item.svc}__${item.binding}" => item
+  }
+
+  account_id = var.account_id
+  title      = "${local.res_prefix}-${each.value.svc}-${each.value.binding}"
+  # 治理: Environment=${var.environment} Project=${var.project_name}
+  #       Service=${each.value.svc} Lifecycle=long-lived
+}
+
+# ============================================================================
+# 3) Queues: ingestion + cleanup (主 + DLQ 分别创建)
+#    命名: ${res_prefix}-{service}[-dlq]
+#    consumer 的 dead_letter_queue 绑定由 wrangler.toml [[queues.consumers]] 负责
+# ============================================================================
+resource "cloudflare_queue" "ingestion_dlq" {
+  account_id = var.account_id
+  name       = "${local.res_prefix}-ingestion-dlq"
+  # 治理: Environment=${var.environment} Project=${var.project_name}
+  #       Service=ingestion Lifecycle=long-lived
+}
+
+resource "cloudflare_queue" "ingestion" {
+  account_id = var.account_id
+  name       = "${local.res_prefix}-ingestion"
+  # 治理: Environment=${var.environment} Project=${var.project_name}
+  #       Service=ingestion Lifecycle=long-lived
+}
+
+resource "cloudflare_queue" "cleanup_dlq" {
+  account_id = var.account_id
+  name       = "${local.res_prefix}-cleanup-dlq"
+  # 治理: Environment=${var.environment} Project=${var.project_name}
+  #       Service=cleanup Lifecycle=long-lived
+}
+
+resource "cloudflare_queue" "cleanup" {
+  account_id = var.account_id
+  name       = "${local.res_prefix}-cleanup"
+  # 治理: Environment=${var.environment} Project=${var.project_name}
+  #       Service=cleanup Lifecycle=long-lived
+}
+
+# ============================================================================
+# 4) Worker 绑定骨架 (metadata-only) — 按依赖层级拆分
+#
+#    Cloudflare API 要求 Service Binding 的目标 Worker 在创建绑定时已存在。
+#    单个 for_each 资源并行创建无法保证顺序，因此拆分为三层:
+#
+#    Tier 1 (叶子): user · ai · graph · cleanup — 无 service binding
+#    Tier 2:        ingestion — service_binding → graph (Tier1)
+#    Tier 3:        gateway   — service_binding → 5 个下游 (Tier1 + Tier2)
+#
+#    Provider v4 workers_script 不支持 ai_binding / durable_object 块；
+#    因此 AI / DO / 普通 [vars] 仍由 wrangler.toml 声明。
+#    content 是 sentinel；Wrangler 每次 deploy 会覆盖脚本与 vars；
+#    lifecycle.ignore_changes 保证 Terraform apply 不会回滚 wrangler 的真实代码。
+# ============================================================================
+
+# ---- Tier 1: 叶子服务 (user, ai, graph, cleanup) — 无 Service Binding ----
+resource "cloudflare_workers_script" "tier1" {
+  for_each = {
+    for k, w in local.workers : k => w
+    if w.tier == 1
+  }
+
   account_id          = var.account_id
   name                = each.value.worker_name
   content             = local.sentinel_script
@@ -222,11 +257,9 @@ resource "cloudflare_workers_script" "svc" {
     }
   }
 
-  # ---- Queue producer bindings (Ingestion / Cleanup) ----
+  # ---- Queue producer bindings (Cleanup only) ----
   dynamic "queue_binding" {
-    for_each = each.key == "ingestion" ? [
-      { binding = "INGEST_QUEUE", queue = cloudflare_queue.ingestion.name }
-      ] : each.key == "cleanup" ? [
+    for_each = each.key == "cleanup" ? [
       { binding = "CLEANUP_QUEUE", queue = cloudflare_queue.cleanup.name }
     ] : []
     content {
@@ -235,23 +268,123 @@ resource "cloudflare_workers_script" "svc" {
     }
   }
 
-  # ---- Service Bindings ----
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes = [
+      content,
+      module,
+      compatibility_date,
+      compatibility_flags,
+      plain_text_binding,
+      secret_text_binding,
+      webassembly_binding,
+    ]
+  }
+}
+
+# ---- Tier 2: ingestion — Service Binding → graph (Tier1) ----
+resource "cloudflare_workers_script" "ingestion" {
+  account_id          = var.account_id
+  name                = local.workers["ingestion"].worker_name
+  content             = local.sentinel_script
+  module              = true
+  compatibility_date  = "2024-10-01"
+  compatibility_flags = ["nodejs_compat"]
+
+  tags = [
+    local.tag_environment,
+    local.tag_project,
+    "Service=ingestion",
+    local.tag_lifecycle,
+  ]
+
+  # ---- KV ----
+  dynamic "kv_namespace_binding" {
+    for_each = [
+      for item in local.kv_binding_map : item if item.svc == "ingestion"
+    ]
+    content {
+      name         = kv_namespace_binding.value.binding
+      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${kv_namespace_binding.value.binding}"].id
+    }
+  }
+
+  # ---- Queue producer binding ----
+  queue_binding {
+    binding = "INGEST_QUEUE"
+    queue   = cloudflare_queue.ingestion.name
+  }
+
+  # ---- Service Binding → Graph (Tier1, 必须先创建) ----
   dynamic "service_binding" {
-    for_each = concat(
-      each.key == "gateway" ? local.gateway_service_bindings : [],
-      each.key == "ingestion" ? local.ingestion_service_bindings : [],
-    )
+    for_each = local.ingestion_service_bindings
     content {
       name        = service_binding.value.binding
-      service     = local.workers[service_binding.value.target].worker_name
+      service     = cloudflare_workers_script.tier1["graph"].name
       environment = var.environment
     }
   }
 
-  # 注意:
-  #   • Workers AI binding → 由 wrangler.toml [ai] 块负责 (Provider v4 无此块)
-  #   • Durable Object → 由 wrangler.toml [[migrations]] tag=v1 负责
-  #   • 普通 [vars] 环境变量 → 由 wrangler.toml [vars] + Dashboard Variables 覆盖
+  # 显式依赖: graph Worker 必须先创建
+  depends_on = [cloudflare_workers_script.tier1["graph"]]
+
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes = [
+      content,
+      module,
+      compatibility_date,
+      compatibility_flags,
+      plain_text_binding,
+      secret_text_binding,
+      webassembly_binding,
+    ]
+  }
+}
+
+# ---- Tier 3: gateway — Service Bindings → 全部 5 个下游 ----
+resource "cloudflare_workers_script" "gateway" {
+  account_id          = var.account_id
+  name                = local.workers["gateway"].worker_name
+  content             = local.sentinel_script
+  module              = true
+  compatibility_date  = "2024-10-01"
+  compatibility_flags = ["nodejs_compat"]
+
+  tags = [
+    local.tag_environment,
+    local.tag_project,
+    "Service=gateway",
+    local.tag_lifecycle,
+  ]
+
+  # ---- KV ----
+  dynamic "kv_namespace_binding" {
+    for_each = [
+      for item in local.kv_binding_map : item if item.svc == "gateway"
+    ]
+    content {
+      name         = kv_namespace_binding.value.binding
+      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${kv_namespace_binding.value.binding}"].id
+    }
+  }
+
+  # ---- Service Bindings → 5 个下游 (Tier1 + Tier2 必须先创建) ----
+  dynamic "service_binding" {
+    for_each = local.gateway_service_bindings
+    content {
+      name = service_binding.value.binding
+      # ingestion 在 Tier2, 其余在 Tier1
+      service     = service_binding.value.target == "ingestion" ? cloudflare_workers_script.ingestion.name : cloudflare_workers_script.tier1[service_binding.value.target].name
+      environment = var.environment
+    }
+  }
+
+  # 显式依赖: 全部 Tier1 + ingestion 必须先创建
+  depends_on = [
+    cloudflare_workers_script.tier1,
+    cloudflare_workers_script.ingestion,
+  ]
 
   lifecycle {
     create_before_destroy = true
@@ -276,8 +409,9 @@ resource "cloudflare_workers_cron_trigger" "cleanup_daily" {
   account_id  = var.account_id
   script_name = local.workers["cleanup"].worker_name
   schedules   = local.workers["cleanup"].cron
-  # 治理: Environment=${var.environment} Project=${var.project_name}
-  #       Service=cleanup Lifecycle=long-lived
+
+  # cleanup Worker (Tier1) 必须先存在, cron trigger 引用其 worker_name
+  depends_on = [cloudflare_workers_script.tier1["cleanup"]]
 }
 
 # ============================================================================
@@ -307,6 +441,9 @@ resource "cloudflare_workers_domain" "svc" {
   environment = var.environment
   # 治理: Environment=${var.environment} Project=${var.project_name}
   #       Service=${each.key} Lifecycle=long-lived
+
+  # 对应 Worker 必须先创建
+  depends_on = [cloudflare_workers_script.gateway]
 }
 
 # ============================================================================
@@ -314,7 +451,7 @@ resource "cloudflare_workers_domain" "svc" {
 # 接入第 7 个 Worker 仅需改动以下三处，无需动结构代码：
 #
 # (1) local.workers 新增:
-#     web = { worker_name="decision-web-service", service="web", has_db=false, cron=[] }
+#     web = { worker_name="${local.res_prefix}-web", service="web", has_db=false, cron=[], tier=1 }
 # (2) Gateway 如需转发到 Web，在 local.gateway_service_bindings 追加:
 #     { binding="WEB_SERVICE", target="web" }
 # (3) KV 缓存在 local.kv_binding_map 追加:
