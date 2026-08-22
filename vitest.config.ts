@@ -9,7 +9,7 @@ import {defineConfig} from 'vitest/config';
  * The default Node environment is used because our unit tests exercise
  * domain logic and shared utilities (WebCrypto is available natively in
  * Node ≥ 20). Workers-pool integration tests that need D1/KV/R2 bindings
- * would use @cloudflare/vitest-pool-workers instead.
+ * would require a separate vitest config (not currently in use).
  */
 export default defineConfig({
   test: {
