@@ -13,8 +13,8 @@
  * The response is returned verbatim (status + body), so the Gateway behaves
  * as a transparent proxy with auth/ratelimit sidecars.
  */
-import {withIdentityHeaders} from './middlewares/tenant.js';
-import type {AuthContext} from './middlewares/auth.js';
+import { withIdentityHeaders } from './middlewares/tenant.js';
+import type { AuthContext } from './middlewares/auth.js';
 
 /** Dummy origin used for Service Binding calls (host is ignored by the
  *  platform; only the path + querystring are routed to the bound Worker). */
@@ -37,9 +37,9 @@ export function buildDownstreamPath(originalUrl: string): string {
 
 /** Forward the inbound request to the downstream Service Binding. */
 export async function forwardRequest(
-    request: Request,
-    binding: Fetcher,
-    auth: AuthContext,
+  request: Request,
+  binding: Fetcher,
+  auth: AuthContext,
 ): Promise<Response> {
   const headers = withIdentityHeaders(request.headers, auth);
   const path = buildDownstreamPath(request.url);

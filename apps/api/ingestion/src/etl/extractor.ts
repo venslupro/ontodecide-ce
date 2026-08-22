@@ -8,15 +8,15 @@
  * escaped quotes; for production-grade parsing, swap in `papaparse` (the
  * worker bundle can include it under `nodejs_compat`).
  */
-import {ERROR_CODES, throwError} from '@ontodecide/shared';
+import { ERROR_CODES, throwError } from '@ontodecide/shared';
 
 /** A record extracted from the source file. */
 export type ExtractedRecord = Record<string, unknown>;
 
 /** Extract records from a byte buffer of the given format. */
 export async function extract(
-    bytes: Uint8Array,
-    format: 'csv' | 'json' | 'parquet' | 'webhook',
+  bytes: Uint8Array,
+  format: 'csv' | 'json' | 'parquet' | 'webhook',
 ): Promise<ExtractedRecord[]> {
   switch (format) {
     case 'json':
@@ -28,7 +28,10 @@ export async function extract(
       // branch is only hit when a webhook is enqueued for retry.
       return extractJson(bytes);
     case 'parquet':
-      throwError(ERROR_CODES.INGEST_FORMAT_UNSUPPORTED, 'Parquet is not supported in Workers; convert to CSV or JSON.');
+      throwError(
+        ERROR_CODES.INGEST_FORMAT_UNSUPPORTED,
+        'Parquet is not supported in Workers; convert to CSV or JSON.',
+      );
       break;
     default:
       throwError(ERROR_CODES.INGEST_FORMAT_UNSUPPORTED, `Unknown format: ${format as string}`);
@@ -47,15 +50,15 @@ function extractJson(bytes: Uint8Array): ExtractedRecord[] {
     parsed = JSON.parse(text);
   } catch (err) {
     throwError(
-        ERROR_CODES.INGEST_MAPPING_FAILED,
-        `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      ERROR_CODES.INGEST_MAPPING_FAILED,
+      `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
   if (Array.isArray(parsed)) {
     return parsed.filter((row) => row && typeof row === 'object') as ExtractedRecord[];
   }
   if (parsed && typeof parsed === 'object' && 'records' in parsed) {
-    const records = (parsed as {records: unknown[]}).records;
+    const records = (parsed as { records: unknown[] }).records;
     if (Array.isArray(records)) {
       return records.filter((row) => row && typeof row === 'object') as ExtractedRecord[];
     }

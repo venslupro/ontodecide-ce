@@ -1,7 +1,7 @@
 /**
  * DTOs for the Ingestion service.
  */
-import type {IngestPayload} from '../types/graph.js';
+import type { IngestPayload } from '../types/graph.js';
 
 /** Sync ingestion request: small payloads (<=10 entities). */
 export type IngestSyncDto = IngestPayload;

@@ -4,9 +4,9 @@
  * Uses the Messages API. As with OpenAI, the request can be routed through
  * the Cloudflare AI Gateway when `AI_GATEWAY_ID` is set.
  */
-import type {LlmOptions, LlmResponse} from '@ontodecide/shared';
-import type {ILLMProvider} from './provider.interface.js';
-import type {AiEnv} from '../../types/env.js';
+import type { LlmOptions, LlmResponse } from '@ontodecide/shared';
+import type { ILLMProvider } from './provider.interface.js';
+import type { AiEnv } from '../../types/env.js';
 
 interface AnthropicMessage {
   role: 'user' | 'assistant';
@@ -14,7 +14,7 @@ interface AnthropicMessage {
 }
 
 interface AnthropicResponse {
-  content?: Array<{type: string; text?: string}>;
+  content?: Array<{ type: string; text?: string }>;
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
@@ -32,10 +32,10 @@ export class AnthropicProvider implements ILLMProvider {
     if (!apiKey) {
       throw new Error('ANTHROPIC_API_KEY is not set.');
     }
-    const url = this.env.AI_GATEWAY_ID ?
-      `https://gateway.ai.cloudflare.com/v1/${this.env.AI_GATEWAY_ID}/anthropic/v1/messages` :
-      'https://api.anthropic.com/v1/messages';
-    const messages: AnthropicMessage[] = [{role: 'user', content: prompt}];
+    const url = this.env.AI_GATEWAY_ID
+      ? `https://gateway.ai.cloudflare.com/v1/${this.env.AI_GATEWAY_ID}/anthropic/v1/messages`
+      : 'https://api.anthropic.com/v1/messages';
+    const messages: AnthropicMessage[] = [{ role: 'user', content: prompt }];
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -61,8 +61,7 @@ export class AnthropicProvider implements ILLMProvider {
       usage: {
         promptTokens: data.usage?.input_tokens ?? this.estimateNeurons(prompt),
         completionTokens: data.usage?.output_tokens ?? this.estimateNeurons(content),
-        totalTokens:
-          (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0),
+        totalTokens: (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0),
       },
       provider: this.id,
       model,

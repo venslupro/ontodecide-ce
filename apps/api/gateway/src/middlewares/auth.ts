@@ -6,18 +6,11 @@
  * unit-tested without a Hono pipeline. The `authMiddleware` Hono handler
  * wraps it and stores the result in `c.var.auth`.
  */
-import type {MiddlewareHandler} from 'hono';
-import {
-  CACHE_KEYS,
-  ERROR_CODES,
-  JwtPayload,
-  HEADERS,
-  uuid,
-  verifyJwt,
-} from '@ontodecide/shared';
-import {jsonFailResponse} from '@ontodecide/shared/hono';
-import type {GatewayEnv} from '../types/env.js';
-import {PUBLIC_PREFIXES, ADMIN_PREFIXES} from '../routes.js';
+import type { MiddlewareHandler } from 'hono';
+import { CACHE_KEYS, ERROR_CODES, JwtPayload, HEADERS, uuid, verifyJwt } from '@ontodecide/shared';
+import { jsonFailResponse } from '@ontodecide/shared/hono';
+import type { GatewayEnv } from '../types/env.js';
+import { PUBLIC_PREFIXES, ADMIN_PREFIXES } from '../routes.js';
 
 export interface AuthContext {
   payload: JwtPayload;
@@ -37,10 +30,10 @@ export interface AuthFailure {
  *   verification fails or the token has been revoked via the KV blacklist.
  */
 export async function authenticate(
-    request: Request,
-    env: GatewayEnv,
-    traceId: string,
-): Promise<{ok: true; ctx: AuthContext} | {ok: false; failure: AuthFailure}> {
+  request: Request,
+  env: GatewayEnv,
+  traceId: string,
+): Promise<{ ok: true; ctx: AuthContext } | { ok: false; failure: AuthFailure }> {
   const authHeader = request.headers.get(HEADERS.AUTHORIZATION) ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(authHeader);
   if (!match) {
@@ -68,7 +61,7 @@ export async function authenticate(
       },
     };
   }
-  return {ok: true, ctx: {payload, traceId}};
+  return { ok: true, ctx: { payload, traceId } };
 }
 
 /**
@@ -82,7 +75,9 @@ const PWD_CHANGE_ALLOWED_PATHS: readonly string[] = [
 
 /** True when the path is allowed without authentication. */
 export function isPublicPath(pathname: string, publicPrefixes: readonly string[]): boolean {
-  return publicPrefixes.some((p) => pathname === p || pathname.startsWith(p + '/') || pathname === p);
+  return publicPrefixes.some(
+    (p) => pathname === p || pathname.startsWith(p + '/') || pathname === p,
+  );
 }
 
 /** True when the path requires the `admin` role. */
@@ -137,34 +132,23 @@ export const authMiddleware: MiddlewareHandler<{
 
   const result = await authenticate(c.req.raw, c.env, traceId);
   if (!result.ok) {
-    return jsonFailResponse(
-        c,
-        result.failure.code,
-        result.failure.message,
-        result.failure.status,
-    );
+    return jsonFailResponse(c, result.failure.code, result.failure.message, result.failure.status);
   }
   c.set('auth', result.ctx);
 
   // When the JWT carries pwd_change_required, restrict the caller to
   // only the change-password and logout endpoints.
-  if (result.ctx.payload.pwd_change_required &&
-      !PWD_CHANGE_ALLOWED_PATHS.includes(path)) {
+  if (result.ctx.payload.pwd_change_required && !PWD_CHANGE_ALLOWED_PATHS.includes(path)) {
     return jsonFailResponse(
-        c,
-        ERROR_CODES.USER_PASSWORD_CHANGE_REQUIRED,
-        'Password change required before accessing this resource.',
-        403,
+      c,
+      ERROR_CODES.USER_PASSWORD_CHANGE_REQUIRED,
+      'Password change required before accessing this resource.',
+      403,
     );
   }
 
   if (isAdminPath(path, ADMIN_PREFIXES) && !authorizeAdmin(result.ctx.payload)) {
-    return jsonFailResponse(
-        c,
-        ERROR_CODES.AUTH_FORBIDDEN,
-        'Admin role required.',
-        403,
-    );
+    return jsonFailResponse(c, ERROR_CODES.AUTH_FORBIDDEN, 'Admin role required.', 403);
   }
 
   await next();

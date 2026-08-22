@@ -8,7 +8,7 @@
  * The `max_retries`/`dead_letter_queue` settings live in `wrangler.toml`
  * and are managed by the platform.
  */
-import {z} from 'zod';
+import { z } from 'zod';
 import {
   OpenAPIHono,
   createRoute,
@@ -29,64 +29,54 @@ import {
   validators,
   type ConfigKey,
 } from '@ontodecide/shared';
-import type {IngestionEnv, IngestJobMessage} from './types/env.js';
+import type { IngestionEnv, IngestJobMessage } from './types/env.js';
 import {
   fileIngestHandler,
   jobStatusHandler,
   syncIngestHandler,
   webhookHandler,
 } from './handlers/ingestion.js';
-import {handleQueueBatch} from './queue/consumer.js';
+import { handleQueueBatch } from './queue/consumer.js';
 
 /** Zod schema for the job-status record returned by GET /ingest/jobs/:id. */
 const jobRecordSchema = z.object({
-  jobId: z.string().openapi({description: 'Id of the ingestion job.'}),
-  tenantId: z.string().openapi({description: 'Owning tenant id.'}),
+  jobId: z.string().openapi({ description: 'Id of the ingestion job.' }),
+  tenantId: z.string().openapi({ description: 'Owning tenant id.' }),
   status: z
-      .enum(['queued', 'running', 'succeeded', 'failed'])
-      .openapi({description: 'Current lifecycle status of the job.'}),
-  format: z.string().openapi({description: 'Source format of the file.'}),
-  ontologyType: z
-      .string()
-      .openapi({description: 'Ontology type the records map onto.'}),
-  objectKey: z
-      .string()
-      .openapi({description: 'R2 object key of the staged file.'}),
+    .enum(['queued', 'running', 'succeeded', 'failed'])
+    .openapi({ description: 'Current lifecycle status of the job.' }),
+  format: z.string().openapi({ description: 'Source format of the file.' }),
+  ontologyType: z.string().openapi({ description: 'Ontology type the records map onto.' }),
+  objectKey: z.string().openapi({ description: 'R2 object key of the staged file.' }),
   accepted: z
-      .number()
-      .int()
-      .nonnegative()
-      .optional()
-      .openapi({description: 'Number of records accepted.'}),
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .openapi({ description: 'Number of records accepted.' }),
   rejected: z
-      .number()
-      .int()
-      .nonnegative()
-      .optional()
-      .openapi({description: 'Number of records rejected.'}),
-  error: z.string().optional().openapi({description: 'Error message on failure.'}),
-  startedAt: z
-      .string()
-      .optional()
-      .openapi({description: 'ISO-8601 start timestamp.'}),
-  finishedAt: z
-      .string()
-      .optional()
-      .openapi({description: 'ISO-8601 finish timestamp.'}),
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .openapi({ description: 'Number of records rejected.' }),
+  error: z.string().optional().openapi({ description: 'Error message on failure.' }),
+  startedAt: z.string().optional().openapi({ description: 'ISO-8601 start timestamp.' }),
+  finishedAt: z.string().optional().openapi({ description: 'ISO-8601 finish timestamp.' }),
 });
 
-const app = new OpenAPIHono<{Bindings: IngestionEnv}>({
+const app = new OpenAPIHono<{ Bindings: IngestionEnv }>({
   defaultHook: (result, c) => {
     if (!result.success) {
       return c.json(
-          {
-            success: false,
-            error: {
-              code: ERROR_CODES.VALIDATION_FAILED,
-              message: 'Request validation failed.',
-            },
+        {
+          success: false,
+          error: {
+            code: ERROR_CODES.VALIDATION_FAILED,
+            message: 'Request validation failed.',
           },
-          400,
+        },
+        400,
       );
     }
     return;
@@ -99,7 +89,11 @@ let configValidated = false;
 const REQUIRED_KEYS: ConfigKey[] = [
   configKey('B2_KEY_ID', 'B2 Application Key ID', validators.nonEmpty),
   configKey('B2_KEY', 'B2 Application Key Secret', validators.nonEmpty),
-  configKey('B2_REGION', 'B2 region (e.g. us-west-004)', validators.pattern(/^us-\w+-\d+$/, 'B2 region format like us-west-004')),
+  configKey(
+    'B2_REGION',
+    'B2 region (e.g. us-west-004)',
+    validators.pattern(/^us-\w+-\d+$/, 'B2 region format like us-west-004'),
+  ),
   configKey('B2_INGESTION_BUCKET', 'B2 ingestion staging bucket name', validators.nonEmpty),
   configKey('INGEST_QUEUE', 'Queue producer for async ETL jobs'),
   configKey('JOBS', 'KV namespace for job-status records'),
@@ -127,9 +121,7 @@ app.use('*', async (c, next) => {
 // route must come through the Gateway (x-internal-call: 1 header).
 app.use('*', internalOnlyMiddleware(['/ingest/webhook']));
 app.onError(honoErrorHandler);
-app.notFound((c) =>
-  jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404),
-);
+app.notFound((c) => jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404));
 
 // OpenAPI spec + Swagger UI.
 app.doc('/openapi.json', (c) => ({
@@ -139,16 +131,12 @@ app.doc('/openapi.json', (c) => ({
     version: '0.1.0',
     description: 'Sync, async and webhook ingestion for OntoDecide.',
   },
-  servers: [{url: new URL(c.req.url).origin}],
+  servers: [{ url: new URL(c.req.url).origin }],
 }));
-app.get('/docs', (c) =>
-  c.html(swaggerUiHtml(`${new URL(c.req.url).origin}/openapi.json`)),
-);
+app.get('/docs', (c) => c.html(swaggerUiHtml(`${new URL(c.req.url).origin}/openapi.json`)));
 
 // GET /healthz — plain route (not part of the OpenAPI spec).
-app.get('/healthz', (c) =>
-  jsonOkResponse(c, {service: 'ingestion', version: '0.1.0'}),
-);
+app.get('/healthz', (c) => jsonOkResponse(c, { service: 'ingestion', version: '0.1.0' }));
 
 // POST /ingest/sync
 const syncIngestRoute = createRoute({
@@ -156,7 +144,7 @@ const syncIngestRoute = createRoute({
   path: '/ingest/sync',
   request: {
     body: {
-      content: {'application/json': {schema: ingestSyncSchema}},
+      content: { 'application/json': { schema: ingestSyncSchema } },
     },
   },
   responses: {
@@ -186,7 +174,7 @@ const webhookRoute = createRoute({
   path: '/ingest/webhook',
   request: {
     body: {
-      content: {'application/json': {schema: ingestSyncSchema}},
+      content: { 'application/json': { schema: ingestSyncSchema } },
     },
   },
   responses: {
@@ -203,7 +191,7 @@ const jobStatusRoute = createRoute({
   method: 'get',
   path: '/ingest/jobs/{id}',
   request: {
-    params: z.object({id: z.string()}),
+    params: z.object({ id: z.string() }),
   },
   responses: {
     200: jsonOk(jobRecordSchema, 'Job status record.'),
@@ -216,10 +204,7 @@ app.openapi(jobStatusRoute, jobStatusHandler);
 
 export default {
   fetch: app.fetch,
-  async queue(
-      batch: MessageBatch<IngestJobMessage>,
-      env: IngestionEnv,
-  ): Promise<void> {
+  async queue(batch: MessageBatch<IngestJobMessage>, env: IngestionEnv): Promise<void> {
     await handleQueueBatch(batch, env);
   },
 };

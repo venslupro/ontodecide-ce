@@ -3,12 +3,7 @@
  */
 
 /** Identifier for a supported LLM provider. */
-export type LlmProvider =
-  | 'workers-ai'
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'openrouter';
+export type LlmProvider = 'workers-ai' | 'openai' | 'anthropic' | 'google' | 'openrouter';
 
 /** Options passed to an `ILLMProvider.generate` call. */
 export interface LlmOptions {
@@ -79,12 +74,7 @@ export interface Recommendation {
 }
 
 /** Lifecycle status of a planning-agent task. */
-export type AgentTaskStatus =
-  | 'pending'
-  | 'in_progress'
-  | 'succeeded'
-  | 'failed'
-  | 'skipped';
+export type AgentTaskStatus = 'pending' | 'in_progress' | 'succeeded' | 'failed' | 'skipped';
 
 /** A single task planned by the autonomous agent. */
 export interface AgentTask {

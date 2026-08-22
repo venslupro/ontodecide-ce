@@ -5,7 +5,7 @@
  * invalid input at the boundary, which is the contract that the OpenAPI
  * route definitions rely on.
  */
-import {describe, it, expect} from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   loginSchema,
   refreshSchema,
@@ -32,19 +32,19 @@ describe('loginSchema', () => {
   });
 
   it('rejects a missing password', () => {
-    const result = loginSchema.safeParse({username: 'alice'});
+    const result = loginSchema.safeParse({ username: 'alice' });
     expect(result.success).toBe(false);
   });
 
   it('rejects a missing username', () => {
-    const result = loginSchema.safeParse({password: 'secret123'});
+    const result = loginSchema.safeParse({ password: 'secret123' });
     expect(result.success).toBe(false);
   });
 });
 
 describe('refreshSchema', () => {
   it('accepts a valid refresh token string', () => {
-    const result = refreshSchema.safeParse({refreshToken: 'abc.def.ghi'});
+    const result = refreshSchema.safeParse({ refreshToken: 'abc.def.ghi' });
     expect(result.success).toBe(true);
   });
 
@@ -76,7 +76,7 @@ describe('authTokensSchema', () => {
 
 describe('createUserSchema', () => {
   it('accepts a minimal valid body (username only)', () => {
-    const result = createUserSchema.safeParse({username: 'bob'});
+    const result = createUserSchema.safeParse({ username: 'bob' });
     expect(result.success).toBe(true);
   });
 
@@ -91,17 +91,17 @@ describe('createUserSchema', () => {
   });
 
   it('rejects a username shorter than 3 chars', () => {
-    const result = createUserSchema.safeParse({username: 'ab'});
+    const result = createUserSchema.safeParse({ username: 'ab' });
     expect(result.success).toBe(false);
   });
 
   it('accepts an email as username', () => {
-    const result = createUserSchema.safeParse({username: 'user@example.com'});
+    const result = createUserSchema.safeParse({ username: 'user@example.com' });
     expect(result.success).toBe(true);
   });
 
   it('accepts omission of username (email will be used instead)', () => {
-    const result = createUserSchema.safeParse({email: 'user@example.com'});
+    const result = createUserSchema.safeParse({ email: 'user@example.com' });
     expect(result.success).toBe(true);
   });
 
@@ -168,8 +168,7 @@ describe('userPublicSchema', () => {
   });
 
   it('rejects a non-boolean is_active', () => {
-    expect(userPublicSchema.safeParse({...validUser, is_active: 1}).success)
-        .toBe(false);
+    expect(userPublicSchema.safeParse({ ...validUser, is_active: 1 }).success).toBe(false);
   });
 });
 
@@ -191,60 +190,68 @@ describe('cleanupRequestSchema', () => {
   });
 
   it('accepts tenantId + mode=soft', () => {
-    expect(cleanupRequestSchema.safeParse({
-      tenantId: 'tenant_abc',
-      mode: 'soft',
-    }).success).toBe(true);
+    expect(
+      cleanupRequestSchema.safeParse({
+        tenantId: 'tenant_abc',
+        mode: 'soft',
+      }).success,
+    ).toBe(true);
   });
 
   it('rejects an invalid mode', () => {
-    expect(cleanupRequestSchema.safeParse({mode: 'nuclear'}).success)
-        .toBe(false);
+    expect(cleanupRequestSchema.safeParse({ mode: 'nuclear' }).success).toBe(false);
   });
 });
 
 describe('scenarioRequestSchema', () => {
   it('accepts a minimal request (topic only)', () => {
-    expect(scenarioRequestSchema.safeParse({topic: 'Market outlook'}).success)
-        .toBe(true);
+    expect(scenarioRequestSchema.safeParse({ topic: 'Market outlook' }).success).toBe(true);
   });
 
   it('accepts all optional fields', () => {
-    expect(scenarioRequestSchema.safeParse({
-      topic: 'Risk',
-      context: 'Some context',
-      tones: ['optimistic', 'pessimistic'],
-      provider: 'openai',
-    }).success).toBe(true);
+    expect(
+      scenarioRequestSchema.safeParse({
+        topic: 'Risk',
+        context: 'Some context',
+        tones: ['optimistic', 'pessimistic'],
+        provider: 'openai',
+      }).success,
+    ).toBe(true);
   });
 
   it('rejects an invalid tone', () => {
-    expect(scenarioRequestSchema.safeParse({
-      topic: 'Risk',
-      tones: ['happy'],
-    }).success).toBe(false);
+    expect(
+      scenarioRequestSchema.safeParse({
+        topic: 'Risk',
+        tones: ['happy'],
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects an invalid provider', () => {
-    expect(scenarioRequestSchema.safeParse({
-      topic: 'Risk',
-      provider: 'mistral',
-    }).success).toBe(false);
+    expect(
+      scenarioRequestSchema.safeParse({
+        topic: 'Risk',
+        provider: 'mistral',
+      }).success,
+    ).toBe(false);
   });
 });
 
 describe('ingestSyncSchema', () => {
   const validPayload = {
     tenant_id: 'tenant_abc',
-    entities: [{
-      id: 'e1',
-      tenant_id: 'tenant_abc',
-      type: 'asset',
-      attributes: {name: 'Asset 1'},
-      source: 'webhook',
-      confidence: 0.9,
-      timestamp: '2025-01-01T00:00:00Z',
-    }],
+    entities: [
+      {
+        id: 'e1',
+        tenant_id: 'tenant_abc',
+        type: 'asset',
+        attributes: { name: 'Asset 1' },
+        source: 'webhook',
+        confidence: 0.9,
+        timestamp: '2025-01-01T00:00:00Z',
+      },
+    ],
     relations: [],
     source: 'webhook',
   };
@@ -254,28 +261,34 @@ describe('ingestSyncSchema', () => {
   });
 
   it('rejects an empty entities array (min not enforced, but valid)', () => {
-    expect(ingestSyncSchema.safeParse({
-      ...validPayload,
-      entities: [],
-    }).success).toBe(true);
+    expect(
+      ingestSyncSchema.safeParse({
+        ...validPayload,
+        entities: [],
+      }).success,
+    ).toBe(true);
   });
 });
 
 describe('ingestFileSchema', () => {
   it('accepts a valid file upload request', () => {
-    expect(ingestFileSchema.safeParse({
-      objectKey: 'tenant_abc/staging/job1/data.csv',
-      format: 'csv',
-      ontologyType: 'asset',
-    }).success).toBe(true);
+    expect(
+      ingestFileSchema.safeParse({
+        objectKey: 'tenant_abc/staging/job1/data.csv',
+        format: 'csv',
+        ontologyType: 'asset',
+      }).success,
+    ).toBe(true);
   });
 
   it('rejects an unsupported format', () => {
-    expect(ingestFileSchema.safeParse({
-      objectKey: 'key',
-      format: 'xml',
-      ontologyType: 'asset',
-    }).success).toBe(false);
+    expect(
+      ingestFileSchema.safeParse({
+        objectKey: 'key',
+        format: 'xml',
+        ontologyType: 'asset',
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -284,7 +297,7 @@ describe('apiResponseSchema', () => {
     const schema = apiResponseSchema(loginSchema);
     const result = schema.safeParse({
       success: true,
-      data: {username: 'a', password: 'b'},
+      data: { username: 'a', password: 'b' },
     });
     expect(result.success).toBe(true);
   });
@@ -293,7 +306,7 @@ describe('apiResponseSchema', () => {
     const schema = apiResponseSchema(loginSchema);
     const result = schema.safeParse({
       success: false,
-      error: {code: 'AUTH_INVALID_CREDENTIALS', message: 'Bad creds.'},
+      error: { code: 'AUTH_INVALID_CREDENTIALS', message: 'Bad creds.' },
     });
     expect(result.success).toBe(true);
   });
@@ -313,11 +326,13 @@ describe('paginatedResponseSchema', () => {
 
   it('rejects a negative total', () => {
     const schema = paginatedResponseSchema(userRoleSchema);
-    expect(schema.safeParse({
-      total: -1,
-      page: 1,
-      size: 10,
-      list: [],
-    }).success).toBe(false);
+    expect(
+      schema.safeParse({
+        total: -1,
+        page: 1,
+        size: 10,
+        list: [],
+      }).success,
+    ).toBe(false);
   });
 });

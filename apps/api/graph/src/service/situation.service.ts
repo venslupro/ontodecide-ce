@@ -16,7 +16,7 @@ import {
   type SituationNode,
   sha256Hex,
 } from '@ontodecide/shared';
-import type {IGraphRepository} from '../repository/graph.repository.js';
+import type { IGraphRepository } from '../repository/graph.repository.js';
 
 export class SituationService {
   constructor(
@@ -25,11 +25,7 @@ export class SituationService {
   ) {}
 
   /** Render the situation view for the root entity. */
-  public async view(
-      tenantId: string,
-      rootId: string,
-      depth = 1,
-  ): Promise<SituationNode> {
+  public async view(tenantId: string, rootId: string, depth = 1): Promise<SituationNode> {
     const cacheKey = CACHE_KEYS.situation(tenantId, await sha256Hex(`${rootId}:${depth}`));
     const cached = await this.cache.get(cacheKey, 'json');
     if (cached) {
@@ -43,23 +39,15 @@ export class SituationService {
   }
 
   /** Run a 1-3 hop exploration from a root entity. */
-  public async explore(
-      tenantId: string,
-      request: ExploreRequest,
-  ): Promise<SituationNode[]> {
-    return this.repo.explore(
-        tenantId,
-        request.entityId,
-        request.depth ?? 2,
-        request.relationTypes,
-    );
+  public async explore(tenantId: string, request: ExploreRequest): Promise<SituationNode[]> {
+    return this.repo.explore(tenantId, request.entityId, request.depth ?? 2, request.relationTypes);
   }
 
   /** Find entities by type or attribute filter. */
   public async findEntities(
-      tenantId: string,
-      filter: {type?: string; attributes?: Record<string, unknown>},
-      limit = 100,
+    tenantId: string,
+    filter: { type?: string; attributes?: Record<string, unknown> },
+    limit = 100,
   ): Promise<EntityNode[]> {
     return this.repo.findEntities(tenantId, filter, limit);
   }

@@ -1,5 +1,24 @@
 # Ingestion Service Worker — multi-source data fusion.
 #
+# ============================================================
+# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform CREATES & GOVERNS:
+#       - Worker skeleton + 4D tags
+#       - Service Binding → GRAPH_SERVICE (Ingestion → Graph)
+#       - Queue producer "INGEST_QUEUE"  → queue=${project}-ingestion-${env}
+#       - Cloudflare Queue resources: ingestion + ingestion-dlq
+#       - KV namespace "JOBS"
+#   • Wrangler deploys:
+#       - script code · [vars] · B2_KEY_ID + B2_KEY secrets
+#       - [[queues.consumers]] block + dead_letter_queue link
+#         (consumer mapping is code-layer — Terraform only creates
+#         the bare Queue resources; DLQ ↔ consumer binding is
+#         a Wrangler responsibility)
+#   • EXTERNAL IaC: Backblaze B2 bucket (ingestion staging)
+#     — Terraform outputs required bucket tags schema in
+#       external_backblaze_b2; bucket created via B2 console.
+# ============================================================
+#
 # Two paths:
 #   * sync  : ≤10 entities → inline call to Graph via Service Binding.
 #   * async : larger files or webhooks → B2 staging → queue → consumer
@@ -26,15 +45,23 @@ cwd = "apps/api/ingestion"
 #
 # The loader (sync path) and queue consumer (async path) push entity batches
 # directly to Graph over this binding — no Gateway round-trip, zero cost.
+# `service` name matches local.workers["graph"].worker_name in main.tf.
 [[services]]
 binding = "GRAPH_SERVICE"
 service = "decision-graph-service"
 
-# ----- Async queue --------------------------------------------------------
+# ----- Async queue (Terraform CREATES queues; Wrangler maps consumers) ----
+# Queue names MUST match cloudflare_queue.ingestion.name and
+# cloudflare_queue.ingestion_dlq.name in main.tf:
+#   main = "${project_name}-ingestion-${environment}"
+#   dlq  = "${project_name}-ingestion-dlq-${environment}"
 [[queues.producers]]
 binding = "INGEST_QUEUE"
 queue   = "ontodecide-ingestion-production"
 
+# Consumer + dead_letter_queue are CODE-LEVEL declarations.
+# Terraform creates the raw Queue resources; wrangler wires the
+# consumer function + DLQ redirection onto them at deploy time.
 [[queues.consumers]]
 queue             = "ontodecide-ingestion-production"
 max_batch_size    = 5
@@ -42,12 +69,15 @@ max_batch_timeout = 30
 max_retries       = 3
 dead_letter_queue = "ontodecide-ingestion-dlq-production"
 
-# KV — wrangler auto-creates on first deploy.
+# ----- KV: async ingestion job tracking (Terraform-managed) ---------------
 [[kv_namespaces]]
 binding = "JOBS"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_JOBS_INGESTION_ID"
 
 [vars]
 # Backblaze B2 S3-compatible access: region + staging bucket name.
+# Bucket names MUST match Terraform output external_backblaze_b2
+# (tags: Environment / Project / Service=shared / Lifecycle=long-lived).
 B2_REGION           = "us-west-004"
 B2_INGESTION_BUCKET = "ontodecide-ingestion-staging-production"
 

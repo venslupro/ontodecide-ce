@@ -12,12 +12,7 @@
  * transaction under the 10ms CPU budget. A single `POST /entities` call
  * accepts entities + relations in one body, so each chunk is self-contained.
  */
-import {
-  CONFIG,
-  HEADERS,
-  type IngestPayload,
-  uuid,
-} from '@ontodecide/shared';
+import { CONFIG, HEADERS, type IngestPayload, uuid } from '@ontodecide/shared';
 
 const CHUNK_SIZE = 50;
 /** Dummy origin used for Service Binding calls (host is ignored). */
@@ -38,11 +33,11 @@ export interface LoadResult {
  * @param traceId       Trace id propagated from the original request.
  */
 export async function load(
-    graphBinding: Fetcher,
-    payload: IngestPayload,
-    traceId: string,
+  graphBinding: Fetcher,
+  payload: IngestPayload,
+  traceId: string,
 ): Promise<LoadResult> {
-  const {entities, relations} = payload;
+  const { entities, relations } = payload;
   let accepted = 0;
   let rejected = 0;
   const errors: string[] = [];
@@ -73,7 +68,7 @@ export async function load(
         errors.push(`Chunk ${i / CHUNK_SIZE}: HTTP ${response.status}`);
         continue;
       }
-      const json = (await response.json()) as {data?: {accepted?: number}};
+      const json = (await response.json()) as { data?: { accepted?: number } };
       accepted += json.data?.accepted ?? chunk.length;
     } catch (err) {
       rejected += chunk.length;
@@ -83,5 +78,5 @@ export async function load(
   // Mark CONFIG import as used (kept for the future chunk-size config).
   void CONFIG;
   void uuid;
-  return {accepted, rejected, errors};
+  return { accepted, rejected, errors };
 }

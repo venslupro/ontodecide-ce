@@ -20,9 +20,9 @@
  * Business errors are thrown as {@link throwError} so the global
  * `honoErrorHandler` can translate them into the standard envelope.
  */
-import type {Context} from 'hono';
-import type {z} from 'zod';
-import {getAuthContext} from '@ontodecide/shared/hono';
+import type { Context } from 'hono';
+import type { z } from 'zod';
+import { getAuthContext } from '@ontodecide/shared/hono';
 import {
   ERROR_CODES,
   HEADERS,
@@ -33,12 +33,12 @@ import {
   type IngestPayload,
   type OntologyType,
 } from '@ontodecide/shared';
-import type {ontologyTypeSchema} from '@ontodecide/shared';
-import type {GraphEnv} from '../types/env.js';
-import type {OntologyService} from '../service/ontology.service.js';
-import type {SituationService} from '../service/situation.service.js';
-import type {EntityService} from '../service/entity.service.js';
-import type {Neo4jRepository} from '../repository/neo4j.repository.js';
+import type { ontologyTypeSchema } from '@ontodecide/shared';
+import type { GraphEnv } from '../types/env.js';
+import type { OntologyService } from '../service/ontology.service.js';
+import type { SituationService } from '../service/situation.service.js';
+import type { EntityService } from '../service/entity.service.js';
+import type { Neo4jRepository } from '../repository/neo4j.repository.js';
 
 /** Per-request service bindings injected by the entry-point middleware. */
 export interface GraphVars {
@@ -49,7 +49,7 @@ export interface GraphVars {
 }
 
 /** Hono context typed with the Graph Worker's Bindings and Variables. */
-export type GraphContext = Context<{Bindings: GraphEnv; Variables: GraphVars}>;
+export type GraphContext = Context<{ Bindings: GraphEnv; Variables: GraphVars }>;
 
 /**
  * Mutable DTO shape of {@link OntologyType} (Zod-inferred). Used for response
@@ -80,7 +80,7 @@ export async function listOntologyHandler(c: GraphContext) {
 export async function upsertOntologyHandler(c: GraphContext) {
   const body = (await c.req.json()) as OntologyType;
   await c.var.ontology.upsert(tenant(c), body);
-  return c.json(ok({success: true}), 200);
+  return c.json(ok({ success: true }), 200);
 }
 
 /** POST /entities  body: IngestPayload */
@@ -127,7 +127,7 @@ export async function findEntityHandler(c: GraphContext) {
 export async function deleteEntityHandler(c: GraphContext) {
   const id = c.req.param('id')!;
   const deleted = await c.var.situation.deleteEntity(tenant(c), id);
-  return c.json(ok({deleted}), 200);
+  return c.json(ok({ deleted }), 200);
 }
 
 /** GET /situation/:id?depth=1 */
@@ -148,16 +148,11 @@ export async function exploreHandler(c: GraphContext) {
 /** POST /graph/query  body: CypherQueryRequest  (admin only) */
 export async function cypherHandler(c: GraphContext) {
   // Admin check is enforced by the Gateway; here we re-verify the role.
-  const {role} = getAuthContext(c);
+  const { role } = getAuthContext(c);
   if (role !== 'admin') {
     throwError(ERROR_CODES.AUTH_FORBIDDEN, 'Admin role required for custom Cypher.');
   }
   const body = (await c.req.json()) as CypherQueryRequest;
-  const rows = await c.var.repo.runCypher(
-      tenant(c),
-      body.statement,
-      body.parameters,
-      body.limit,
-  );
+  const rows = await c.var.repo.runCypher(tenant(c), body.statement, body.parameters, body.limit);
   return c.json(ok(rows), 200);
 }

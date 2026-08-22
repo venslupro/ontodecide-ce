@@ -1,5 +1,19 @@
 # AI Service Worker — multi-LLM decision intelligence.
 #
+# ============================================================
+# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform CREATES & GOVERNS:
+#       - Worker skeleton + 4D tags
+#       - D1 binding "DB" → shared decision-db
+#       - KV namespace "CACHE"
+#       - Gateway → AI Service Binding (binding=AI_SERVICE)
+#   • Wrangler deploys (NOT Terraform — Provider v4 lacks support):
+#       - [ai] AI binding     → Workers AI (Neurons / models catalog)
+#       - Durable Object "AGENT"  → PlanningAgent class
+#       - [[migrations]] tag=v1  → DO class code upload
+#       - [vars] plain-text · optional LLM provider secrets
+# ============================================================
+#
 # Identity model:
 #   • This Worker does NOT hold JWT_SECRET. It trusts Gateway-injected
 #     headers (enforced by `internalOnlyMiddleware()` — every route is
@@ -17,23 +31,26 @@ compatibility_flags = ["nodejs_compat"]
 command = "pnpm --filter=@ontodecide/ai exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
 cwd = "apps/api/ai"
 
-# Workers AI binding (free tier Neurons).
+# Workers AI binding (Wrangler-only — Terraform Provider v4 has no
+# ai_binding block on cloudflare_workers_script).
 [ai]
 binding = "AI"
 
-# D1: decisions / recommendations tables (shares decision-db).
-# wrangler auto-creates on first deploy.
+# ----- D1: shared decision-db (Terraform-managed) -------------------------
+# database_name matches cloudflare_d1_database.decision_db.name pattern.
 [[d1_databases]]
 binding        = "DB"
 database_name  = "ontodecide-decision-db-production"
 migrations_dir = "src/migrations"
 
-# Inference cache + neuron-budget counter.
-# wrangler auto-creates KV on first deploy.
+# ----- KV: inference cache + neuron-budget (Terraform-managed) ------------
 [[kv_namespaces]]
 binding = "CACHE"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_CACHE_AI_ID"
 
 # Durable Object: planning agent.
+# Terraform knows the CLASS NAME (outputs as durable_object_classes) but
+# the actual class CODE + binding is uploaded via Wrangler [[migrations]].
 [[durable_objects.bindings]]
 name       = "AGENT"
 class_name = "PlanningAgent"

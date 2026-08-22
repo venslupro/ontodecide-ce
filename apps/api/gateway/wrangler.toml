@@ -1,5 +1,20 @@
 # Gateway Worker — public entry point.
 #
+# ============================================================
+# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform (infrastructure/terraform/main.tf) CREATES & GOVERNS:
+#       - Worker name, compatibility_date/flags, tags
+#       - Service Bindings (USER_SERVICE / GRAPH_SERVICE / etc.)
+#       - KV namespaces JWT_BLACKLIST + RATE_LIMIT
+#       - Worker Domain (api.ontodecide.com, zone_id required)
+#       - lifecycle.ignore_changes on content / bindings so
+#         Terraform never rolls back Wrangler-deployed code
+#   • Wrangler (deploy-workers.yml) deploys:
+#       - Worker script code (src/index.ts bundle)
+#       - [vars] plain-text environment variables
+#       - JWT_SECRET runtime secret (via wrangler-action secrets:)
+# ============================================================
+#
 # Identity model:
 #   • This Gateway is the **sole** verifier of inbound Bearer JWTs. It holds
 #     JWT_SECRET; downstream workers do NOT. Downstream workers trust the
@@ -32,14 +47,10 @@ AI_DEFAULT_PROVIDER = "workers-ai"
 # ----- Service Bindings ---------------------------------------------------
 #
 # Gateway routes every /api/* request to one of these 5 downstream Workers.
-# Each `service` field MUST match the `name =` declared in the target
-# wrangler.toml (e.g. decision-user-service).  `binding` is the name the
-# code reads (e.g. env.USER_SERVICE → Fetcher).
-#
-# NOTE: Service Bindings resolve at deploy time against the same account.
-#       If you deploy to staging with suffixed worker names, update the
-#       `service` field here to match (Dashboard Variables & Secrets take
-#       precedence over the committed value — set it there for env splits).
+# Each `service` field MUST match local.workers[X].worker_name declared in
+# infrastructure/terraform/main.tf — Terraform pre-creates these bindings,
+# but wrangler.toml declares them so `wrangler types` generates accurate
+# Environment TS types (compile-time drift detection).
 [[services]]
 binding = "USER_SERVICE"
 service = "decision-user-service"
@@ -65,11 +76,24 @@ service = "decision-cleanup-service"
 #                          **ONLY Gateway + User Service hold this secret.**
 #                          Downstream services rely on injected headers.
 
-# KV bindings — wrangler auto-creates namespaces on first deploy.
-# After first deploy, find the assigned IDs in Dashboard → Workers →
-# decision-gateway → Settings → Variables and Secrets → KV Namespaces.
+# ----- KV Namespaces (Terraform-managed) ----------------------------------
+# Binding names MUST match local.kv_binding_map in main.tf.
+# DO NOT OMIT `id` — if you do, wrangler auto-creates a DUPLICATE namespace
+# parallel to the Terraform-managed one.
+#
+# How to populate `id` after first `terraform apply`:
+#   1. Run:  terraform -chdir=infrastructure/terraform output kv_namespaces
+#   2. Log into Cloudflare Dashboard → Workers KV → click the namespace
+#      named "${project_name}-${BINDING}-${environment}"
+#   3. Copy the Namespace ID and paste into the `id` field below.
+#
+# For local dev (`wrangler dev` / `wrangler types`) you can leave the
+# REPLACE_WITH_* placeholder; validation occurs at Worker startup and
+# during the CI Gate 4 (`wrangler types` followed by typecheck).
 [[kv_namespaces]]
 binding = "JWT_BLACKLIST"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_JWT_BLACKLIST_ID"
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_RATE_LIMIT_ID"

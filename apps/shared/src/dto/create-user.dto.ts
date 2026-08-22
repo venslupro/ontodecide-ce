@@ -4,7 +4,7 @@
  * Validation rules are intentionally simple; deep schema validation is the
  * responsibility of each service's handler (or a zod schema if added later).
  */
-import type {UserRole} from '../types/user.js';
+import type { UserRole } from '../types/user.js';
 
 export interface CreateUserDto {
   /** Unique username (3-32 chars, alphanumeric, dot, underscore, dash). */

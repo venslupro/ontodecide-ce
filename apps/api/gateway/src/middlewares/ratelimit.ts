@@ -7,10 +7,10 @@
  * The free-tier limit is 100k Worker requests/day, so a per-tenant limit of
  * 600 req/min is generous and leaves headroom for downstream service calls.
  */
-import type {MiddlewareHandler} from 'hono';
-import {ERROR_CODES, jsonResponse, fail} from '@ontodecide/shared';
-import type {GatewayEnv} from '../types/env.js';
-import type {GatewayVariables} from './auth.js';
+import type { MiddlewareHandler } from 'hono';
+import { ERROR_CODES, jsonResponse, fail } from '@ontodecide/shared';
+import type { GatewayEnv } from '../types/env.js';
+import type { GatewayVariables } from './auth.js';
 
 const WINDOW_SECONDS = 60;
 const DEFAULT_LIMIT = 600;
@@ -32,9 +32,9 @@ export interface RateLimitResult {
  * keeps KV key counts low.
  */
 export async function rateLimit(
-    kv: KVNamespace,
-    tenantId: string,
-    limit: number = DEFAULT_LIMIT,
+  kv: KVNamespace,
+  tenantId: string,
+  limit: number = DEFAULT_LIMIT,
 ): Promise<RateLimitResult> {
   const now = Math.floor(Date.now() / 1000);
   const windowStart = now - (now % WINDOW_SECONDS);
@@ -42,29 +42,29 @@ export async function rateLimit(
   const raw = await kv.get(key);
   const count = raw ? parseInt(raw, 10) : 0;
   if (count >= limit) {
-    return {allowed: false, count, limit, resetIn: WINDOW_SECONDS - (now - windowStart)};
+    return { allowed: false, count, limit, resetIn: WINDOW_SECONDS - (now - windowStart) };
   }
   // Best-effort increment: KV is eventually consistent, so a few over-limit
   // calls are acceptable under the free plan.
-  await kv.put(key, String(count + 1), {expirationTtl: WINDOW_SECONDS + 5});
-  return {allowed: true, count: count + 1, limit, resetIn: WINDOW_SECONDS - (now - windowStart)};
+  await kv.put(key, String(count + 1), { expirationTtl: WINDOW_SECONDS + 5 });
+  return { allowed: true, count: count + 1, limit, resetIn: WINDOW_SECONDS - (now - windowStart) };
 }
 
 /** Reject helper that returns a 429 envelope. */
 export function rateLimitResponse(result: RateLimitResult, traceId?: string): Response {
   return jsonResponse(
-      fail(
-          ERROR_CODES.AUTH_RATE_LIMITED,
-          `Rate limit exceeded. Try again in ${result.resetIn}s.`,
-          undefined,
-          traceId,
-      ),
-      429,
-      {
-        'Retry-After': String(result.resetIn),
-        'X-RateLimit-Limit': String(result.limit),
-        'X-RateLimit-Remaining': '0',
-      },
+    fail(
+      ERROR_CODES.AUTH_RATE_LIMITED,
+      `Rate limit exceeded. Try again in ${result.resetIn}s.`,
+      undefined,
+      traceId,
+    ),
+    429,
+    {
+      'Retry-After': String(result.resetIn),
+      'X-RateLimit-Limit': String(result.limit),
+      'X-RateLimit-Remaining': '0',
+    },
   );
 }
 

@@ -1,0 +1,243 @@
+# ============================================================
+# Infrastructure as Code — Terraform Workflow
+#
+# Manages LONG-LIVED Cloudflare resources (D1 / KV / Queues /
+# Worker Bindings / Cron / Domains) via Terraform's declarative
+# model — the "Shift Left" pillar of the hybrid architecture.
+#
+# TRIGGERS:
+#   • push to `main` with changes under infrastructure/terraform/**
+#     → fmt · validate · plan, then pauses for MANUAL APPROVAL
+#     (environments.production gate) before apply.
+#   • pull_request (main / staging) with TF file changes
+#     → fmt · validate · plan (READ-ONLY, no apply).
+#       Reviewers can see the real Cloudflare diff in PR checks.
+#   • workflow_dispatch → manual kickoff from Actions UI.
+#
+# PHASES:
+#   1. Static checks   — terraform fmt -check (canonical formatting)
+#                        + terraform validate (schema / references)
+#   2. Plan            — `terraform plan` renders the diff against
+#                        the real Cloudflare state.  The plan JSON
+#                        is uploaded as a build artifact for review.
+#   3. Apply (MANUAL)  — requires the `production` Environment
+#                        protection rule (Settings → Environments)
+#                        or manual review.  Apply is NEVER automatic.
+#
+# REQUIRED GITHUB SECRETS / VARS:
+#   (Set via Repo → Settings → Secrets and variables → Actions)
+#
+#   Secrets (shared with deploy-workers.yml):
+#     CF_API_TOKEN   — Cloudflare API token with wide admin scopes
+#                      (D1 · KV · Queue · Worker Script ·
+#                       Worker Domain · Account Settings read).
+#     CF_ACCOUNT_ID  — Cloudflare Account ID (32 hex chars)
+#   Variables (optional):
+#     TF_ZONE_ID     — (optional) DNS Zone ID for custom domains
+#
+#   The project name is derived from the GitHub repo name
+#   (github.event.repository.name) and the environment defaults
+#   to "production" (overridable via workflow_dispatch input).
+# ============================================================
+
+name: Terraform · Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/terraform/**/*.tf'
+      - 'infrastructure/terraform/**/*.tfvars'
+      - '.github/workflows/terraform.yml'
+      - '.terraform.lock.hcl'
+  pull_request:
+    branches:
+      - main
+      - staging
+    paths:
+      - 'infrastructure/terraform/**/*.tf'
+      - 'infrastructure/terraform/**/*.tfvars'
+      - '.github/workflows/terraform.yml'
+      - '.terraform.lock.hcl'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (production / staging)'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
+# Default working directory for all `run:` steps — saves
+# repeating `cd infrastructure/terraform` everywhere.
+defaults:
+  run:
+    working-directory: infrastructure/terraform
+
+env:
+  # Terraform Provider authentication — reuse the same CF_API_TOKEN
+  # already configured for deploy-workers.yml (no extra secret needed).
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+  # Input variables (injected via TF_VAR_ convention into variables.tf)
+  # CF_ACCOUNT_ID is a secret; repo name and environment are hardcoded.
+  TF_VAR_account_id:  ${{ secrets.CF_ACCOUNT_ID }}
+  TF_VAR_zone_id:     ${{ vars.TF_ZONE_ID }}
+  TF_VAR_project_name: ${{ github.event.repository.name }}
+  TF_VAR_environment: ${{ github.event.inputs.environment || 'production' }}
+
+jobs:
+  # -------------------------------------------------------------
+  # Phase 1 — Static validation (fmt + validate)
+  # -------------------------------------------------------------
+  validate:
+    name: Fmt · Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '~> 1.9'
+          terraform_wrapper: true
+
+      - name: Init (backend=false — state is managed externally)
+        run: terraform init -backend=false -input=false
+
+      - name: Format check (canonical HCL layout)
+        id: fmt
+        run: terraform fmt -check -recursive -list=false
+
+      - name: Validate schema + references
+        id: validate
+        run: terraform validate
+
+  # -------------------------------------------------------------
+  # Phase 2 — Plan (runs against REAL Cloudflare state)
+  #          terraform plan is READ-ONLY — it does not create or
+  #          modify resources.  Safe to run on every PR so reviewers
+  #          can see the infra diff before merge.
+  # -------------------------------------------------------------
+  plan:
+    name: Plan
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      plan_exit: ${{ steps.plan.outputs.exitcode }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '~> 1.9'
+          terraform_wrapper: true
+
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        with:
+          path: infrastructure/terraform/.terraform/providers
+          key: tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
+
+      - name: Init
+        run: terraform init -input=false
+
+      - name: Plan
+        id: plan
+        run: |
+          terraform plan \
+            -input=false \
+            -out=tfplan.binary \
+            -var-file=terraform.tfvars 2>/dev/null || \
+          terraform plan \
+            -input=false \
+            -out=tfplan.binary
+
+      - name: Render plan to JSON artifact
+        run: terraform show -json tfplan.binary > tfplan.json
+
+      - name: Render human-readable plan summary
+        run: terraform show tfplan.binary | tee tfplan-summary.txt
+
+      - name: Upload plan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.sha }}
+          path: |
+            infrastructure/terraform/tfplan.json
+            infrastructure/terraform/tfplan-summary.txt
+          retention-days: 30
+
+  # -------------------------------------------------------------
+  # Phase 3 — Apply (NEVER automatic — requires manual approval)
+  # -------------------------------------------------------------
+  apply:
+    name: Apply (Manual Approval Required)
+    needs: plan
+    # Apply ONLY on main branch — never on PR or feature branches.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # ↓↓↓ This gate is CRITICAL for the "Shift Left" promise.
+    # Create the `production` environment in Repo → Settings →
+    # Environments and enable "Required reviewers" so this job
+    # PAUSES until a designated human clicks "Approve & deploy".
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '~> 1.9'
+          terraform_wrapper: true
+
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        with:
+          path: infrastructure/terraform/.terraform/providers
+          key: tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
+
+      - name: Download previous plan artifacts (if available)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: tfplan-${{ github.sha }}
+          path: infrastructure/terraform/
+
+      - name: Init
+        run: terraform init -input=false
+
+      # Prefer reusing the plan from Phase 2 so the reviewer sees
+      # EXACTLY what will be applied.  If the binary is missing
+      # (artifact expired / workflow restarted) fall back to a
+      # fresh plan + apply.
+      - name: Apply saved plan or fresh plan
+        run: |
+          if [ -f tfplan.binary ]; then
+            echo ">>> Applying PREVIOUSLY REVIEWED plan (from Phase 2) <<<"
+            terraform apply -input=false tfplan.binary
+          else
+            echo ">>> Saved plan not found — generating fresh plan and applying <<<"
+            terraform apply \
+              -input=false \
+              -auto-approve \
+              -var-file=terraform.tfvars 2>/dev/null || \
+            terraform apply -input=false -auto-approve
+          fi
+
+      - name: Print outputs (resource IDs / names for human review)
+        run: |
+          echo "--- Terraform Outputs (resources created / updated) ---"
+          terraform output -json || true
+          echo "--- End Outputs ---"

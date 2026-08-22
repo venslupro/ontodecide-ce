@@ -22,12 +22,12 @@ export interface IGraphRepository {
   listOntology(tenantId: string): Promise<OntologyType[]>;
 
   /** Insert entity nodes (and optionally relations) for a tenant. */
-  upsertEntities(payload: IngestPayload): Promise<{accepted: number}>;
+  upsertEntities(payload: IngestPayload): Promise<{ accepted: number }>;
 
   /** Find entities by type or attributes. */
   findEntities(
     tenantId: string,
-    filter: {type?: string; attributes?: Record<string, unknown>},
+    filter: { type?: string; attributes?: Record<string, unknown> },
     limit?: number,
   ): Promise<EntityNode[]>;
 
@@ -62,4 +62,4 @@ export interface IGraphRepository {
 
 /** Re-export EntityRelation so callers do not depend on the shared module
  *  for graph-domain types. */
-export type {EntityRelation};
+export type { EntityRelation };

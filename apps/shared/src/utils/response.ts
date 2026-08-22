@@ -4,21 +4,21 @@
  * Every service returns the standard {@link ApiResponse} envelope so the
  * frontend (and tests) can rely on a single shape.
  */
-import type {ApiError, ApiResponse} from '../types/common.js';
+import type { ApiError, ApiResponse } from '../types/common.js';
 
 /** Build a 200 response with `data`. */
 export function ok<T>(data: T, traceId?: string): ApiResponse<T> {
-  return {success: true, data, traceId};
+  return { success: true, data, traceId };
 }
 
 /** Build an error envelope (no HTTP status; that is set by the caller). */
 export function fail(
-    code: string,
-    message: string,
-    details?: Record<string, string>,
-    traceId?: string,
+  code: string,
+  message: string,
+  details?: Record<string, string>,
+  traceId?: string,
 ): ApiResponse<never> {
-  return {success: false, error: {code, message, details}, traceId};
+  return { success: false, error: { code, message, details }, traceId };
 }
 
 /** Wrap a thrown value into an {@link ApiError}. */
@@ -27,7 +27,7 @@ export function toApiError(err: unknown): ApiError {
     return err;
   }
   const message = err instanceof Error ? err.message : 'Internal error';
-  return {code: 'INTERNAL', message};
+  return { code: 'INTERNAL', message };
 }
 
 /** A thrown {@link ApiError} that handlers can `catch` and serialise. */
@@ -52,12 +52,12 @@ export function throwError(code: string, message: string): never {
  * @param status HTTP status, defaults to 200.
  */
 export function jsonResponse<T>(
-    body: ApiResponse<T>,
-    status = 200,
-    headers: HeadersInit = {},
+  body: ApiResponse<T>,
+  status = 200,
+  headers: HeadersInit = {},
 ): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: {'Content-Type': 'application/json', ...headers},
+    headers: { 'Content-Type': 'application/json', ...headers },
   });
 }

@@ -1,7 +1,7 @@
 /**
  * DTOs for the AI scenario / recommendation features.
  */
-import type {LlmProvider, ScenarioTone} from '../types/ai.js';
+import type { LlmProvider, ScenarioTone } from '../types/ai.js';
 
 /** Request body for `POST /api/ai/scenario`. */
 export interface ScenarioRequestDto {

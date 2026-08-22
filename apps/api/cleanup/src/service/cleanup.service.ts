@@ -29,10 +29,10 @@ import {
   createArchiveB2Client,
   createIngestionB2Client,
 } from '@ontodecide/shared';
-import type {CleanupEnv} from '../types/env.js';
-import {drizzle} from 'drizzle-orm/d1';
-import {eq} from 'drizzle-orm';
-import {auditLogs, decisions, refreshTokens, users, systemConfig} from '@ontodecide/shared/db';
+import type { CleanupEnv } from '../types/env.js';
+import { drizzle } from 'drizzle-orm/d1';
+import { eq } from 'drizzle-orm';
+import { auditLogs, decisions, refreshTokens, users, systemConfig } from '@ontodecide/shared/db';
 
 export interface CleanupOutcome {
   tenantId: string;
@@ -47,10 +47,10 @@ export interface CleanupOutcome {
 
 /** Run the full purge for one tenant. */
 export async function cleanupTenant(
-    tenantId: string,
-    mode: 'soft' | 'hard',
-    env: CleanupEnv,
-    deleteAccount: boolean,
+  tenantId: string,
+  mode: 'soft' | 'hard',
+  env: CleanupEnv,
+  deleteAccount: boolean,
 ): Promise<CleanupOutcome> {
   const started = Date.now();
   const archiveClient = createArchiveB2Client(env);
@@ -125,29 +125,26 @@ export async function cleanupTenant(
  * retrieved even after the user account is fully deleted.
  */
 async function archiveUserMetadata(
-    tenantId: string,
-    env: CleanupEnv,
-    archiveClient: B2Client,
+  tenantId: string,
+  env: CleanupEnv,
+  archiveClient: B2Client,
 ): Promise<boolean> {
   const orm = drizzle(env.DB);
   const archiveKey = `archive/${tenantId}/${new Date().toISOString()}/user-metadata.json`;
 
   // Collect all metadata that should survive the user's deletion.
-  const userRows = await orm.select()
-      .from(users)
-      .where(eq(users.tenant_id, tenantId))
-      .all();
-  const auditRows = await orm.select()
-      .from(auditLogs)
-      .where(eq(auditLogs.tenant_id, tenantId))
-      .all();
-  const decisionRows = await orm.select()
-      .from(decisions)
-      .where(eq(decisions.tenant_id, tenantId))
-      .all();
-  const configRows = await orm.select()
-      .from(systemConfig)
-      .all();
+  const userRows = await orm.select().from(users).where(eq(users.tenant_id, tenantId)).all();
+  const auditRows = await orm
+    .select()
+    .from(auditLogs)
+    .where(eq(auditLogs.tenant_id, tenantId))
+    .all();
+  const decisionRows = await orm
+    .select()
+    .from(decisions)
+    .where(eq(decisions.tenant_id, tenantId))
+    .all();
+  const configRows = await orm.select().from(systemConfig).all();
 
   const snapshot = {
     tenantId,
@@ -183,38 +180,42 @@ async function deleteNeo4jTenant(tenantId: string, env: CleanupEnv): Promise<num
   const endpoint = `${env.NEO4J_URL.replace(/\/$/, '')}/db/${env.NEO4J_DATABASE}/tx/commit`;
   const auth = 'Basic ' + btoa(`${env.NEO4J_USER}:${env.NEO4J_PASSWORD}`);
   const body = JSON.stringify({
-    statements: [{
-      statement: `
+    statements: [
+      {
+        statement: `
         MATCH (n {tenant_id: $tenantId})
         DETACH DELETE n
         RETURN count(n) as deleted
       `,
-      parameters: {tenantId},
-    }],
+        parameters: { tenantId },
+      },
+    ],
   });
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'Authorization': auth,
+        Authorization: auth,
         'Content-Type': 'application/json',
-        'Accept': 'application/json;charset=UTF-8',
+        Accept: 'application/json;charset=UTF-8',
       },
       body,
     });
     if (!response.ok) {
       throwError(
-          ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-          `Neo4j DETACH DELETE HTTP ${response.status}: ${await response.text()}`,
+        ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
+        `Neo4j DETACH DELETE HTTP ${response.status}: ${await response.text()}`,
       );
     }
     const data = (await response.json()) as {
-      errors?: Array<{code: string; message: string}>;
-      results?: Array<{data: Array<{row: unknown[]}>}>;
+      errors?: Array<{ code: string; message: string }>;
+      results?: Array<{ data: Array<{ row: unknown[] }> }>;
     };
     if (data.errors && data.errors.length > 0) {
-      throwError(ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-          `Neo4j DETACH DELETE errors: ${JSON.stringify(data.errors)}`);
+      throwError(
+        ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
+        `Neo4j DETACH DELETE errors: ${JSON.stringify(data.errors)}`,
+      );
     }
     const deleted = data.results?.[0]?.data?.[0]?.row?.[0];
     return Number(deleted ?? 0);
@@ -222,8 +223,8 @@ async function deleteNeo4jTenant(tenantId: string, env: CleanupEnv): Promise<num
     // Neo4j unreachable — propagate; the consumer will mark this
     // tenant as failed, and the next cron run will retry.
     throwError(
-        ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-        `Neo4j cleanup (DETACH DELETE) failed: ${err instanceof Error ? err.message : String(err)}`,
+      ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
+      `Neo4j cleanup (DETACH DELETE) failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -231,15 +232,9 @@ async function deleteNeo4jTenant(tenantId: string, env: CleanupEnv): Promise<num
 /** Delete all tenant-owned rows from the D1 tables. */
 async function deleteD1Tenant(tenantId: string, db: D1Database): Promise<number> {
   const orm = drizzle(db);
-  const d1 = await orm.delete(decisions)
-      .where(eq(decisions.tenant_id, tenantId))
-      .run();
-  const d2 = await orm.delete(auditLogs)
-      .where(eq(auditLogs.tenant_id, tenantId))
-      .run();
-  const d3 = await orm.delete(refreshTokens)
-      .where(eq(refreshTokens.tenant_id, tenantId))
-      .run();
+  const d1 = await orm.delete(decisions).where(eq(decisions.tenant_id, tenantId)).run();
+  const d2 = await orm.delete(auditLogs).where(eq(auditLogs.tenant_id, tenantId)).run();
+  const d3 = await orm.delete(refreshTokens).where(eq(refreshTokens.tenant_id, tenantId)).run();
   return (d1.meta.changes ?? 0) + (d2.meta.changes ?? 0) + (d3.meta.changes ?? 0);
 }
 
@@ -249,7 +244,7 @@ async function purgeKvPrefix(kv: KVNamespace, prefix: string): Promise<number> {
   let cursor: string | undefined;
   // KV list is paginated; loop until exhausted.
   do {
-    const list = await kv.list({prefix, cursor});
+    const list = await kv.list({ prefix, cursor });
     for (const key of list.keys) {
       await kv.delete(key.name);
       deleted++;
@@ -264,7 +259,7 @@ async function purgeB2Prefix(client: B2Client, prefix: string): Promise<number> 
   let deleted = 0;
   let cursor: string | undefined;
   do {
-    const list = await client.list({prefix, cursor});
+    const list = await client.list({ prefix, cursor });
     for (const obj of list.objects) {
       await client.delete(obj.key);
       deleted++;
@@ -283,21 +278,20 @@ async function purgeB2Prefix(client: B2Client, prefix: string): Promise<number> 
  */
 async function deleteTenantAccount(tenantId: string, env: CleanupEnv): Promise<boolean> {
   const orm = drizzle(env.DB);
-  const result = await orm.delete(users)
-      .where(eq(users.tenant_id, tenantId))
-      .run();
+  const result = await orm.delete(users).where(eq(users.tenant_id, tenantId)).run();
   return (result.meta.changes ?? 0) > 0;
 }
 
 /** Mark the tenant's user row as cleared (soft mode — account stays). */
 async function markCleared(tenantId: string, env: CleanupEnv): Promise<void> {
   const orm = drizzle(env.DB);
-  await orm.update(users)
-      .set({
-        is_data_cleared: 1,
-        last_cleanup_at: nowIso(),
-        data_size_estimate: 0,
-      })
-      .where(eq(users.tenant_id, tenantId))
-      .run();
+  await orm
+    .update(users)
+    .set({
+      is_data_cleared: 1,
+      last_cleanup_at: nowIso(),
+      data_size_estimate: 0,
+    })
+    .where(eq(users.tenant_id, tenantId))
+    .run();
 }

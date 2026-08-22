@@ -8,8 +8,8 @@
  *   3. Coerce numeric fields where possible (latency, severity, etc.).
  *   4. Reject records that lack all attributes (degenerate input).
  */
-import {uuid, type EntityNode, type EntityRelation} from '@ontodecide/shared';
-import type {ExtractedRecord} from './extractor.js';
+import { uuid, type EntityNode, type EntityRelation } from '@ontodecide/shared';
+import type { ExtractedRecord } from './extractor.js';
 
 export interface TransformResult {
   entities: EntityNode[];
@@ -22,11 +22,11 @@ const DEFAULT_MAPPING: Record<string, string> = {};
 
 /** Transform raw records into entity / relation payloads. */
 export function transform(
-    records: ExtractedRecord[],
-    tenantId: string,
-    ontologyType: string,
-    source: string,
-    fieldMapping: Record<string, string> = DEFAULT_MAPPING,
+  records: ExtractedRecord[],
+  tenantId: string,
+  ontologyType: string,
+  source: string,
+  fieldMapping: Record<string, string> = DEFAULT_MAPPING,
 ): TransformResult {
   const entities: EntityNode[] = [];
   const relations: EntityRelation[] = [];
@@ -38,7 +38,7 @@ export function transform(
       continue;
     }
     const id = String(mapped.id ?? uuid());
-    const {id: _omit, ...attributes} = mapped;
+    const { id: _omit, ...attributes } = mapped;
     void _omit;
     entities.push({
       id,
@@ -55,7 +55,7 @@ export function transform(
     if (Array.isArray(relArray)) {
       for (const rel of relArray) {
         if (!rel || typeof rel !== 'object') continue;
-        const r = rel as {type?: string; target?: string; properties?: Record<string, unknown>};
+        const r = rel as { type?: string; target?: string; properties?: Record<string, unknown> };
         if (!r.type || !r.target) continue;
         relations.push({
           type: String(r.type).toUpperCase(),
@@ -66,14 +66,14 @@ export function transform(
       }
     }
   }
-  return {entities, relations, rejected};
+  return { entities, relations, rejected };
 }
 
 function applyMapping(
-    record: ExtractedRecord,
-    mapping: Record<string, string>,
+  record: ExtractedRecord,
+  mapping: Record<string, string>,
 ): Record<string, unknown> {
-  if (Object.keys(mapping).length === 0) return {...record};
+  if (Object.keys(mapping).length === 0) return { ...record };
   const out: Record<string, unknown> = {};
   for (const [sourceKey, targetKey] of Object.entries(mapping)) {
     if (sourceKey in record) {

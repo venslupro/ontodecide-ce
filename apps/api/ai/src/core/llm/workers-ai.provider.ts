@@ -5,9 +5,9 @@
  * Neurons/day) and requires no API key. The binding's response shape is
  * `{response: string}` for chat models.
  */
-import type {LlmOptions, LlmResponse} from '@ontodecide/shared';
-import type {ILLMProvider} from './provider.interface.js';
-import type {AiEnv} from '../../types/env.js';
+import type { LlmOptions, LlmResponse } from '@ontodecide/shared';
+import type { ILLMProvider } from './provider.interface.js';
+import type { AiEnv } from '../../types/env.js';
 
 interface WorkersAiResponse {
   response?: string;
@@ -30,8 +30,8 @@ export class WorkersAIProvider implements ILLMProvider {
     const model = options?.model ?? this.env.WORKERS_AI_MODEL;
     const inputs = {
       messages: [
-        ...(options?.systemPrompt ? [{role: 'system', content: options.systemPrompt}] : []),
-        {role: 'user', content: prompt},
+        ...(options?.systemPrompt ? [{ role: 'system', content: options.systemPrompt }] : []),
+        { role: 'user', content: prompt },
       ],
       stream: false,
     };

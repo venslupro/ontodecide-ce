@@ -4,9 +4,9 @@
  * Wraps {@link IGraphRepository} with caching (KV) so the frequent reads
  * during ingestion and situation rendering do not hit Neo4j directly.
  */
-import {CACHE_KEYS, CACHE_TTL, type OntologyType} from '@ontodecide/shared';
-import {Ontology} from '../domain/ontology.js';
-import type {IGraphRepository} from '../repository/graph.repository.js';
+import { CACHE_KEYS, CACHE_TTL, type OntologyType } from '@ontodecide/shared';
+import { Ontology } from '../domain/ontology.js';
+import type { IGraphRepository } from '../repository/graph.repository.js';
 
 export class OntologyService {
   constructor(

@@ -9,8 +9,8 @@
  * and Swagger UI at `/docs` — even though the actual handlers live in the
  * downstream services.
  */
-import {z} from '@hono/zod-openapi';
-import {type OpenAPIHono, jsonOk, jsonError} from '@ontodecide/shared/hono';
+import { z } from '@hono/zod-openapi';
+import { type OpenAPIHono, jsonOk, jsonError } from '@ontodecide/shared/hono';
 import {
   loginSchema,
   refreshSchema,
@@ -43,7 +43,7 @@ import {
   cleanupRequestSchema,
   cleanupStatusSchema,
 } from '@ontodecide/shared';
-import type {GatewayEnv} from './types/env.js';
+import type { GatewayEnv } from './types/env.js';
 
 export interface RouteTarget {
   /** URL prefix matched against `request.pathname`. */
@@ -62,26 +62,26 @@ export interface RouteTarget {
  */
 export const ROUTES: readonly RouteTarget[] = [
   // Public auth routes — no JWT required, but they are rate-limited.
-  {prefix: '/api/auth/', binding: (env) => env.USER_SERVICE},
+  { prefix: '/api/auth/', binding: (env) => env.USER_SERVICE },
   // Public account application — no JWT required, rate-limited.
-  {prefix: '/api/applications', binding: (env) => env.USER_SERVICE},
+  { prefix: '/api/applications', binding: (env) => env.USER_SERVICE },
   // Admin operations: cleanup routes belong to Cleanup service.
-  {prefix: '/api/admin/cleanup', binding: (env) => env.CLEANUP_SERVICE},
+  { prefix: '/api/admin/cleanup', binding: (env) => env.CLEANUP_SERVICE },
   // User admin routes belong to User service.
-  {prefix: '/api/admin/users', binding: (env) => env.USER_SERVICE},
+  { prefix: '/api/admin/users', binding: (env) => env.USER_SERVICE },
   // Other admin routes (config, audit) also go to User service.
-  {prefix: '/api/admin/', binding: (env) => env.USER_SERVICE},
+  { prefix: '/api/admin/', binding: (env) => env.USER_SERVICE },
   // Graph service handles all `/api/graph/*` and `/api/ontology*` calls.
-  {prefix: '/api/graph', binding: (env) => env.GRAPH_SERVICE},
-  {prefix: '/api/ontology', binding: (env) => env.GRAPH_SERVICE},
-  {prefix: '/api/entities', binding: (env) => env.GRAPH_SERVICE},
-  {prefix: '/api/situation', binding: (env) => env.GRAPH_SERVICE},
+  { prefix: '/api/graph', binding: (env) => env.GRAPH_SERVICE },
+  { prefix: '/api/ontology', binding: (env) => env.GRAPH_SERVICE },
+  { prefix: '/api/entities', binding: (env) => env.GRAPH_SERVICE },
+  { prefix: '/api/situation', binding: (env) => env.GRAPH_SERVICE },
   // Ingestion service.
-  {prefix: '/api/ingest', binding: (env) => env.INGESTION_SERVICE},
+  { prefix: '/api/ingest', binding: (env) => env.INGESTION_SERVICE },
   // AI service.
-  {prefix: '/api/ai/', binding: (env) => env.AI_SERVICE},
+  { prefix: '/api/ai/', binding: (env) => env.AI_SERVICE },
   // User profile (self).
-  {prefix: '/api/user', binding: (env) => env.USER_SERVICE},
+  { prefix: '/api/user', binding: (env) => env.USER_SERVICE },
 ];
 
 /** Routes that bypass JWT verification (still rate-limited). */
@@ -92,9 +92,7 @@ export const PUBLIC_PREFIXES: readonly string[] = [
 ];
 
 /** Routes that require the `admin` role. */
-export const ADMIN_PREFIXES: readonly string[] = [
-  '/api/admin/',
-];
+export const ADMIN_PREFIXES: readonly string[] = ['/api/admin/'];
 
 // ---------------------------------------------------------------------------
 // OpenAPI metadata for proxied routes.
@@ -106,16 +104,16 @@ export const ADMIN_PREFIXES: readonly string[] = [
 // ---------------------------------------------------------------------------
 
 /** Bearer JWT security requirement applied to protected routes. */
-const BEARER_AUTH = [{Bearer: []}];
+const BEARER_AUTH = [{ Bearer: [] }];
 
 /** Path-parameter schema for a generic `{id}` segment. */
 const idParam = z.object({
-  id: z.string().openapi({param: {name: 'id', in: 'path'}}),
+  id: z.string().openapi({ param: { name: 'id', in: 'path' } }),
 });
 
 /** Path-parameter schema for a `{taskId}` segment. */
 const taskIdParam = z.object({
-  taskId: z.string().openapi({param: {name: 'taskId', in: 'path'}}),
+  taskId: z.string().openapi({ param: { name: 'taskId', in: 'path' } }),
 });
 
 /**
@@ -124,9 +122,7 @@ const taskIdParam = z.object({
  * Call once on the app's `openAPIRegistry` after creating the
  * `OpenAPIHono` instance.
  */
-export function registerOpenApiSpec(
-    registry: OpenAPIHono['openAPIRegistry'],
-): void {
+export function registerOpenApiSpec(registry: OpenAPIHono['openAPIRegistry']): void {
   // Bearer security scheme used by all protected routes.
   registry.registerComponent('securitySchemes', 'Bearer', {
     type: 'http',
@@ -143,7 +139,7 @@ export function registerOpenApiSpec(
     security: [],
     summary: 'Login with username and password',
     request: {
-      body: {content: {'application/json': {schema: loginSchema}}},
+      body: { content: { 'application/json': { schema: loginSchema } } },
     },
     responses: {
       200: jsonOk(authTokensWithActivationSchema, 'Tokens issued (may require password change).'),
@@ -160,7 +156,7 @@ export function registerOpenApiSpec(
     security: [],
     summary: 'Refresh access token',
     request: {
-      body: {content: {'application/json': {schema: refreshSchema}}},
+      body: { content: { 'application/json': { schema: refreshSchema } } },
     },
     responses: {
       200: jsonOk(authTokensSchema, 'Tokens issued.'),
@@ -176,7 +172,7 @@ export function registerOpenApiSpec(
     security: BEARER_AUTH,
     summary: 'Logout and revoke the current token',
     responses: {
-      200: jsonOk(z.object({success: z.boolean()}), 'Logged out.'),
+      200: jsonOk(z.object({ success: z.boolean() }), 'Logged out.'),
       401: jsonError('Authentication required.'),
     },
   });
@@ -188,7 +184,7 @@ export function registerOpenApiSpec(
     security: BEARER_AUTH,
     summary: 'Change password (first-login activation)',
     request: {
-      body: {content: {'application/json': {schema: changePasswordSchema}}},
+      body: { content: { 'application/json': { schema: changePasswordSchema } } },
     },
     responses: {
       200: jsonOk(authTokensSchema, 'Password changed, full tokens issued.'),
@@ -206,7 +202,7 @@ export function registerOpenApiSpec(
     security: [],
     summary: 'Submit an account application',
     request: {
-      body: {content: {'application/json': {schema: accountApplicationSchema}}},
+      body: { content: { 'application/json': { schema: accountApplicationSchema } } },
     },
     responses: {
       201: jsonOk(applicationResultSchema, 'Account created.'),
@@ -236,7 +232,7 @@ export function registerOpenApiSpec(
     tags: ['Admin', 'Users'],
     security: BEARER_AUTH,
     summary: 'List users (paginated)',
-    request: {query: pageQuerySchema},
+    request: { query: pageQuerySchema },
     responses: {
       200: jsonOk(paginatedResponseSchema(userPublicSchema), 'User list.'),
       403: jsonError('Admin role required.'),
@@ -250,7 +246,7 @@ export function registerOpenApiSpec(
     security: BEARER_AUTH,
     summary: 'Create a new user',
     request: {
-      body: {content: {'application/json': {schema: createUserSchema}}},
+      body: { content: { 'application/json': { schema: createUserSchema } } },
     },
     responses: {
       200: jsonOk(credentialResultSchema, 'User created with temp password.'),
@@ -271,7 +267,7 @@ export function registerOpenApiSpec(
         content: {
           'application/json': {
             schema: z.object({
-              is_active: z.boolean().openapi({description: 'New state.'}),
+              is_active: z.boolean().openapi({ description: 'New state.' }),
             }),
           },
         },
@@ -290,7 +286,7 @@ export function registerOpenApiSpec(
     tags: ['Admin', 'Users'],
     security: BEARER_AUTH,
     summary: 'Reset user password',
-    request: {params: idParam},
+    request: { params: idParam },
     responses: {
       200: jsonOk(credentialResultSchema, 'New temp password.'),
       403: jsonError('Admin role required.'),
@@ -304,9 +300,9 @@ export function registerOpenApiSpec(
     tags: ['Admin', 'Users'],
     security: BEARER_AUTH,
     summary: 'Delete a user',
-    request: {params: idParam},
+    request: { params: idParam },
     responses: {
-      200: jsonOk(z.object({success: z.boolean()}), 'User deleted.'),
+      200: jsonOk(z.object({ success: z.boolean() }), 'User deleted.'),
       403: jsonError('Admin role required.'),
       404: jsonError('User not found.'),
     },
@@ -319,7 +315,7 @@ export function registerOpenApiSpec(
     tags: ['Admin', 'Audit'],
     security: BEARER_AUTH,
     summary: 'List audit log entries (paginated)',
-    request: {query: pageQuerySchema},
+    request: { query: pageQuerySchema },
     responses: {
       200: jsonOk(z.array(z.unknown()), 'Audit entries.'),
       403: jsonError('Admin role required.'),
@@ -349,8 +345,8 @@ export function registerOpenApiSpec(
         content: {
           'application/json': {
             schema: z.object({
-              key: z.string().openapi({description: 'Config key.'}),
-              value: z.string().openapi({description: 'New value.'}),
+              key: z.string().openapi({ description: 'Config key.' }),
+              value: z.string().openapi({ description: 'New value.' }),
             }),
           },
         },
@@ -382,7 +378,7 @@ export function registerOpenApiSpec(
     security: BEARER_AUTH,
     summary: 'Create or update an ontology type',
     request: {
-      body: {content: {'application/json': {schema: ontologyTypeSchema}}},
+      body: { content: { 'application/json': { schema: ontologyTypeSchema } } },
     },
     responses: {
       200: jsonOk(ontologyTypeSchema, 'Ontology type saved.'),
@@ -396,7 +392,7 @@ export function registerOpenApiSpec(
     tags: ['Graph', 'Entities'],
     security: BEARER_AUTH,
     summary: 'Find entities by type or attribute',
-    request: {query: pageQuerySchema},
+    request: { query: pageQuerySchema },
     responses: {
       200: jsonOk(z.array(entityNodeSchema), 'Matching entities.'),
       401: jsonError('Authentication required.'),
@@ -410,10 +406,10 @@ export function registerOpenApiSpec(
     security: BEARER_AUTH,
     summary: 'Upsert entities and relations',
     request: {
-      body: {content: {'application/json': {schema: ingestPayloadSchema}}},
+      body: { content: { 'application/json': { schema: ingestPayloadSchema } } },
     },
     responses: {
-      200: jsonOk(z.object({success: z.boolean()}), 'Entities upserted.'),
+      200: jsonOk(z.object({ success: z.boolean() }), 'Entities upserted.'),
       401: jsonError('Authentication required.'),
     },
   });
@@ -424,7 +420,7 @@ export function registerOpenApiSpec(
     tags: ['Graph', 'Entities'],
     security: BEARER_AUTH,
     summary: 'Get a single entity by id',
-    request: {params: idParam},
+    request: { params: idParam },
     responses: {
       200: jsonOk(situationNodeSchema, 'Entity with relations.'),
       401: jsonError('Authentication required.'),
@@ -438,9 +434,9 @@ export function registerOpenApiSpec(
     tags: ['Graph', 'Entities'],
     security: BEARER_AUTH,
     summary: 'Delete an entity',
-    request: {params: idParam},
+    request: { params: idParam },
     responses: {
-      200: jsonOk(z.object({success: z.boolean()}), 'Entity deleted.'),
+      200: jsonOk(z.object({ success: z.boolean() }), 'Entity deleted.'),
       401: jsonError('Authentication required.'),
       404: jsonError('Entity not found.'),
     },
@@ -452,7 +448,7 @@ export function registerOpenApiSpec(
     tags: ['Graph', 'Situation'],
     security: BEARER_AUTH,
     summary: 'Get the situation view for an entity',
-    request: {params: idParam},
+    request: { params: idParam },
     responses: {
       200: jsonOk(situationNodeSchema, 'Situation view.'),
       401: jsonError('Authentication required.'),
@@ -468,7 +464,7 @@ export function registerOpenApiSpec(
     summary: 'Explore the graph from a root entity',
     request: {
       body: {
-        content: {'application/json': {schema: exploreRequestSchema}},
+        content: { 'application/json': { schema: exploreRequestSchema } },
       },
     },
     responses: {
@@ -486,7 +482,7 @@ export function registerOpenApiSpec(
     request: {
       body: {
         content: {
-          'application/json': {schema: cypherQueryRequestSchema},
+          'application/json': { schema: cypherQueryRequestSchema },
         },
       },
     },
@@ -505,7 +501,7 @@ export function registerOpenApiSpec(
     security: BEARER_AUTH,
     summary: 'Synchronously ingest a small payload',
     request: {
-      body: {content: {'application/json': {schema: ingestSyncSchema}}},
+      body: { content: { 'application/json': { schema: ingestSyncSchema } } },
     },
     responses: {
       200: jsonOk(ingestSyncResultSchema, 'Ingestion result.'),
@@ -521,7 +517,7 @@ export function registerOpenApiSpec(
     security: BEARER_AUTH,
     summary: 'Enqueue async file ingestion',
     request: {
-      body: {content: {'application/json': {schema: ingestFileSchema}}},
+      body: { content: { 'application/json': { schema: ingestFileSchema } } },
     },
     responses: {
       200: jsonOk(ingestJobEnqueuedSchema, 'Job enqueued.'),
@@ -536,7 +532,7 @@ export function registerOpenApiSpec(
     security: [],
     summary: 'Webhook callback for ingestion',
     responses: {
-      200: jsonOk(z.object({success: z.boolean()}), 'Webhook processed.'),
+      200: jsonOk(z.object({ success: z.boolean() }), 'Webhook processed.'),
       401: jsonError('Invalid signature.'),
     },
   });
@@ -547,7 +543,7 @@ export function registerOpenApiSpec(
     tags: ['Ingestion'],
     security: BEARER_AUTH,
     summary: 'Get ingestion job status',
-    request: {params: idParam},
+    request: { params: idParam },
     responses: {
       200: jsonOk(z.unknown(), 'Job status.'),
       401: jsonError('Authentication required.'),
@@ -576,7 +572,7 @@ export function registerOpenApiSpec(
     summary: 'Generate scenario simulations',
     request: {
       body: {
-        content: {'application/json': {schema: scenarioRequestSchema}},
+        content: { 'application/json': { schema: scenarioRequestSchema } },
       },
     },
     responses: {
@@ -595,7 +591,7 @@ export function registerOpenApiSpec(
     request: {
       body: {
         content: {
-          'application/json': {schema: recommendationRequestSchema},
+          'application/json': { schema: recommendationRequestSchema },
         },
       },
     },
@@ -614,7 +610,7 @@ export function registerOpenApiSpec(
     summary: 'Start a planning-agent task',
     request: {
       body: {
-        content: {'application/json': {schema: agentPlanRequestSchema}},
+        content: { 'application/json': { schema: agentPlanRequestSchema } },
       },
     },
     responses: {
@@ -629,7 +625,7 @@ export function registerOpenApiSpec(
     tags: ['AI'],
     security: BEARER_AUTH,
     summary: 'Get planning-agent state',
-    request: {params: idParam},
+    request: { params: idParam },
     responses: {
       200: jsonOk(agentStateSchema, 'Agent state.'),
       401: jsonError('Authentication required.'),
@@ -643,7 +639,7 @@ export function registerOpenApiSpec(
     tags: ['AI'],
     security: BEARER_AUTH,
     summary: 'Trigger agent reflection',
-    request: {params: idParam},
+    request: { params: idParam },
     responses: {
       200: jsonOk(agentStateSchema, 'Updated agent state.'),
       401: jsonError('Authentication required.'),
@@ -657,7 +653,7 @@ export function registerOpenApiSpec(
     tags: ['AI'],
     security: BEARER_AUTH,
     summary: 'List past decisions (paginated)',
-    request: {query: pageQuerySchema},
+    request: { query: pageQuerySchema },
     responses: {
       200: jsonOk(z.array(z.unknown()), 'Decision history.'),
       401: jsonError('Authentication required.'),
@@ -673,7 +669,7 @@ export function registerOpenApiSpec(
     summary: 'Trigger a data cleanup run',
     request: {
       body: {
-        content: {'application/json': {schema: cleanupRequestSchema}},
+        content: { 'application/json': { schema: cleanupRequestSchema } },
       },
     },
     responses: {
@@ -689,7 +685,7 @@ export function registerOpenApiSpec(
     tags: ['Admin', 'Cleanup'],
     security: BEARER_AUTH,
     summary: 'Get cleanup task status',
-    request: {params: taskIdParam},
+    request: { params: taskIdParam },
     responses: {
       200: jsonOk(cleanupStatusSchema, 'Cleanup task status.'),
       403: jsonError('Admin role required.'),

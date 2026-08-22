@@ -1,7 +1,7 @@
 /**
  * Environment bindings for the Cleanup Service.
  */
-import type {BaseEnv} from '@ontodecide/shared';
+import type { BaseEnv } from '@ontodecide/shared';
 
 export interface CleanupEnv extends BaseEnv {
   /** Queue producer used to enqueue per-tenant cleanup jobs. */

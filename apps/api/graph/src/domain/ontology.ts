@@ -7,8 +7,8 @@
  *   - property and relation keys must match `[a-zA-Z][a-zA-Z0-9_]*`;
  *   - the ontology id is unique within a tenant.
  */
-import {ERROR_CODES, throwError} from '@ontodecide/shared';
-import type {OntologyType} from '@ontodecide/shared';
+import { ERROR_CODES, throwError } from '@ontodecide/shared';
+import type { OntologyType } from '@ontodecide/shared';
 
 const IDENT_RE = /^[a-zA-Z][a-zA-Z0-9_]{1,62}$/;
 

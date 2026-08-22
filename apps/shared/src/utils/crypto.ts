@@ -37,16 +37,16 @@ export function base64urlDecode(input: string): Uint8Array {
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const keyMaterial = await crypto.subtle.importKey(
-      'raw',
-      TEXT_ENCODER.encode(password),
-      'PBKDF2',
-      false,
-      ['deriveBits'],
+    'raw',
+    TEXT_ENCODER.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
   );
   const bits = await crypto.subtle.deriveBits(
-      {name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256'},
-      keyMaterial,
-      PBKDF2_KEY_LENGTH * 8,
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    keyMaterial,
+    PBKDF2_KEY_LENGTH * 8,
   );
   const hash = base64url(new Uint8Array(bits));
   return `pbkdf2$${PBKDF2_ITERATIONS}$${base64url(salt)}$${hash}`;
@@ -60,16 +60,16 @@ export async function verifyPassword(password: string, stored: string): Promise<
   const salt = base64urlDecode(parts[2]);
   const expected = parts[3];
   const keyMaterial = await crypto.subtle.importKey(
-      'raw',
-      TEXT_ENCODER.encode(password),
-      'PBKDF2',
-      false,
-      ['deriveBits'],
+    'raw',
+    TEXT_ENCODER.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
   );
   const bits = await crypto.subtle.deriveBits(
-      {name: 'PBKDF2', salt, iterations, hash: 'SHA-256'},
-      keyMaterial,
-      PBKDF2_KEY_LENGTH * 8,
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+    keyMaterial,
+    PBKDF2_KEY_LENGTH * 8,
   );
   return constantTimeEqual(base64url(new Uint8Array(bits)), expected);
 }
@@ -94,11 +94,11 @@ export function constantTimeEqual(a: string, b: string): boolean {
 /** HMAC-SHA256 sign `data` with `secret` and return base64url signature. */
 export async function hmacSign(secret: string, data: string): Promise<string> {
   const key = await crypto.subtle.importKey(
-      'raw',
-      TEXT_ENCODER.encode(secret),
-      {name: 'HMAC', hash: 'SHA-256'},
-      false,
-      ['sign'],
+    'raw',
+    TEXT_ENCODER.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
   );
   const sig = await crypto.subtle.sign('HMAC', key, TEXT_ENCODER.encode(data));
   return base64url(new Uint8Array(sig));
@@ -106,9 +106,9 @@ export async function hmacSign(secret: string, data: string): Promise<string> {
 
 /** Verify an HMAC-SHA256 signature in constant time. */
 export async function hmacVerify(
-    secret: string,
-    data: string,
-    signature: string,
+  secret: string,
+  data: string,
+  signature: string,
 ): Promise<boolean> {
   const expected = await hmacSign(secret, data);
   return constantTimeEqual(expected, signature);

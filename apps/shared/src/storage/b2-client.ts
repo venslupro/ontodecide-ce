@@ -10,7 +10,7 @@
  * All cryptographic operations use the Web Crypto API (SubtleCrypto),
  * which is available in Cloudflare Workers and modern Node.js.
  */
-import {nowIso} from '../utils/index.js';
+import { nowIso } from '../utils/index.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -57,7 +57,7 @@ export interface B2Client {
   put(key: string, body: ArrayBuffer | string, options?: B2PutOptions): Promise<void>;
   get(key: string): Promise<B2GetResult | null>;
   delete(key: string): Promise<void>;
-  list(options?: {prefix?: string; cursor?: string; limit?: number}): Promise<B2ListResult>;
+  list(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<B2ListResult>;
 }
 
 /**
@@ -88,12 +88,9 @@ class S3B2Client implements B2Client {
     private readonly config: B2ClientConfig,
   ) {}
 
-  async put(
-      key: string,
-      body: ArrayBuffer | string,
-      options?: B2PutOptions,
-  ): Promise<void> {
-    const bodyBytes = typeof body === 'string' ? new TextEncoder().encode(body) : new Uint8Array(body);
+  async put(key: string, body: ArrayBuffer | string, options?: B2PutOptions): Promise<void> {
+    const bodyBytes =
+      typeof body === 'string' ? new TextEncoder().encode(body) : new Uint8Array(body);
     const url = `${this.endpoint}/${this.config.bucket}/${key}`;
     const headers = await this.signRequest('PUT', url, bodyBytes, {
       'Content-Type': options?.contentType ?? 'application/octet-stream',
@@ -112,7 +109,7 @@ class S3B2Client implements B2Client {
   async get(key: string): Promise<B2GetResult | null> {
     const url = `${this.endpoint}/${this.config.bucket}/${key}`;
     const headers = await this.signRequest('GET', url, null);
-    const response = await fetch(url, {method: 'GET', headers});
+    const response = await fetch(url, { method: 'GET', headers });
     if (response.status === 404) return null;
     if (!response.ok) {
       throw new Error(`B2 GET ${key} failed: ${response.status} ${await response.text()}`);
@@ -127,14 +124,18 @@ class S3B2Client implements B2Client {
   async delete(key: string): Promise<void> {
     const url = `${this.endpoint}/${this.config.bucket}/${key}`;
     const headers = await this.signRequest('DELETE', url, null);
-    const response = await fetch(url, {method: 'DELETE', headers});
+    const response = await fetch(url, { method: 'DELETE', headers });
     // 204 = deleted; 404 = already gone (idempotent OK)
     if (!response.ok && response.status !== 404) {
       throw new Error(`B2 DELETE ${key} failed: ${response.status} ${await response.text()}`);
     }
   }
 
-  async list(options?: {prefix?: string; cursor?: string; limit?: number}): Promise<B2ListResult> {
+  async list(options?: {
+    prefix?: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<B2ListResult> {
     const maxKeys = options?.limit ?? 1000;
     const query: Record<string, string> = {
       'max-keys': String(maxKeys),
@@ -147,7 +148,7 @@ class S3B2Client implements B2Client {
     }
     const urlStr = url.toString();
     const headers = await this.signRequest('GET', urlStr, null);
-    const response = await fetch(urlStr, {method: 'GET', headers});
+    const response = await fetch(urlStr, { method: 'GET', headers });
     if (!response.ok) {
       throw new Error(`B2 LIST failed: ${response.status} ${await response.text()}`);
     }
@@ -159,10 +160,10 @@ class S3B2Client implements B2Client {
   // ------------------------------------------------------------------
 
   private async signRequest(
-      method: string,
-      url: string,
-      body: Uint8Array | null,
-      extraHeaders?: Record<string, string>,
+    method: string,
+    url: string,
+    body: Uint8Array | null,
+    extraHeaders?: Record<string, string>,
   ): Promise<Headers> {
     const parsed = new URL(url);
     const now = new Date();
@@ -175,7 +176,7 @@ class S3B2Client implements B2Client {
 
     const host = parsed.hostname;
     const headers: Record<string, string> = {
-      'Host': host,
+      Host: host,
       'x-amz-date': amzDate,
       'x-amz-content-sha256': actualPayloadHash,
       ...extraHeaders,
@@ -184,9 +185,12 @@ class S3B2Client implements B2Client {
     // Build canonical request
     const canonicalUri = this.encodePath(parsed.pathname);
     const canonicalQuery = this.encodeQuery(parsed.searchParams);
-    const signedHeaderKeys = Object.keys(headers).map((k) => k.toLowerCase()).sort();
+    const signedHeaderKeys = Object.keys(headers)
+      .map((k) => k.toLowerCase())
+      .sort();
     const canonicalHeaders = signedHeaderKeys
-        .map((k) => `${k}:${headers[this.toOriginalKey(k)]!.trim()}\n`).join('');
+      .map((k) => `${k}:${headers[this.toOriginalKey(k)]!.trim()}\n`)
+      .join('');
     const signedHeaders = signedHeaderKeys.join(';');
 
     const canonicalRequest = [
@@ -243,11 +247,16 @@ class S3B2Client implements B2Client {
   }
 
   private async hmac(key: ArrayBuffer | Uint8Array, message: string): Promise<ArrayBuffer> {
-    const keyData: ArrayBuffer = key instanceof Uint8Array ?
-      key.buffer.slice(key.byteOffset, key.byteOffset + key.byteLength) as ArrayBuffer :
-      key;
+    const keyData: ArrayBuffer =
+      key instanceof Uint8Array
+        ? (key.buffer.slice(key.byteOffset, key.byteOffset + key.byteLength) as ArrayBuffer)
+        : key;
     const cryptoKey = await crypto.subtle.importKey(
-        'raw', keyData, {name: 'HMAC', hash: 'SHA-256'}, false, ['sign'],
+      'raw',
+      keyData,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
     );
     return crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(message));
   }
@@ -259,7 +268,8 @@ class S3B2Client implements B2Client {
 
   private bufferToHex(buffer: ArrayBuffer): string {
     return Array.from(new Uint8Array(buffer))
-        .map((b) => b.toString(16).padStart(2, '0')).join('');
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
   }
 
   // ------------------------------------------------------------------
@@ -269,7 +279,10 @@ class S3B2Client implements B2Client {
   private encodePath(path: string): string {
     // S3 canonical URI: for the path-style endpoint, each path segment
     // (except the leading /) is URI-encoded.
-    return path.split('/').map((seg) => encodeURIComponent(seg)).join('/');
+    return path
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
   }
 
   private encodeQuery(searchParams: URLSearchParams): string {
@@ -359,11 +372,11 @@ class S3B2Client implements B2Client {
     // Find the original-cased header key.
     // Since we only add a handful of known headers, use a simple lookup.
     const map: Record<string, string> = {
-      'host': 'Host',
+      host: 'Host',
       'x-amz-date': 'x-amz-date',
       'x-amz-content-sha256': 'x-amz-content-sha256',
       'content-type': 'Content-Type',
-      'authorization': 'Authorization',
+      authorization: 'Authorization',
     };
     if (map[lowerKey]) return map[lowerKey];
     // For x-amz-meta-* headers, they were added lower-case already.

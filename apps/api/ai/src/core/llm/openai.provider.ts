@@ -6,12 +6,12 @@
  * Cloudflare AI Gateway so the platform can apply unified logging,
  * caching, and rate-limiting.
  */
-import type {LlmOptions, LlmResponse} from '@ontodecide/shared';
-import type {ILLMProvider} from './provider.interface.js';
-import type {AiEnv} from '../../types/env.js';
+import type { LlmOptions, LlmResponse } from '@ontodecide/shared';
+import type { ILLMProvider } from './provider.interface.js';
+import type { AiEnv } from '../../types/env.js';
 
 interface OpenAiChatResponse {
-  choices?: Array<{message?: {content?: string}}>;
+  choices?: Array<{ message?: { content?: string } }>;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -30,20 +30,20 @@ export class OpenAIProvider implements ILLMProvider {
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY is not set.');
     }
-    const url = this.env.AI_GATEWAY_ID ?
-      `https://gateway.ai.cloudflare.com/v1/${this.env.AI_GATEWAY_ID}/openai/chat/completions` :
-      'https://api.openai.com/v1/chat/completions';
+    const url = this.env.AI_GATEWAY_ID
+      ? `https://gateway.ai.cloudflare.com/v1/${this.env.AI_GATEWAY_ID}/openai/chat/completions`
+      : 'https://api.openai.com/v1/chat/completions';
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         model,
         messages: [
-          ...(options?.systemPrompt ? [{role: 'system', content: options.systemPrompt}] : []),
-          {role: 'user', content: prompt},
+          ...(options?.systemPrompt ? [{ role: 'system', content: options.systemPrompt }] : []),
+          { role: 'user', content: prompt },
         ],
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens ?? 2048,

@@ -24,7 +24,7 @@ import {
   buildCredentialEmail,
   DEFAULT_EMAIL_FROM,
 } from '@ontodecide/shared';
-import {User} from '../domain/user.entity.js';
+import { User } from '../domain/user.entity.js';
 import type {
   AuditEntry,
   IAuditRepository,
@@ -32,7 +32,7 @@ import type {
   IRefreshTokenRepository,
   IUserRepository,
 } from '../repository/user.repository.js';
-import type {UserEnv, UserRole} from '../types/env.js';
+import type { UserEnv, UserRole } from '../types/env.js';
 
 export interface CreateUserInput {
   /** Optional username. When omitted the system generates a unique one. */
@@ -96,9 +96,9 @@ export class UserManagementService {
    * password is returned in the API response as a fallback.
    */
   public async submitApplication(
-      email: string,
-      usageDays: number,
-      ctx: AuditContext,
+    email: string,
+    usageDays: number,
+    ctx: AuditContext,
   ): Promise<ApplicationResult> {
     const maxUsers = parseInt((await this.config.get('max_users')) ?? String(CONFIG.MAX_USERS), 10);
     const current = await this.users.countActive();
@@ -132,7 +132,7 @@ export class UserManagementService {
     await this.recordAudit(ctx, {
       action: 'create_user',
       targetUserId: user.id,
-      details: JSON.stringify({username: email, usageDays, expiresAt, tenantId: tid}),
+      details: JSON.stringify({ username: email, usageDays, expiresAt, tenantId: tid }),
       tenantId: user.tenantId,
     });
 
@@ -141,11 +141,10 @@ export class UserManagementService {
       apiKey: this.env?.EMAIL_API_KEY,
       from: this.env?.EMAIL_FROM ?? DEFAULT_EMAIL_FROM,
     };
-    const {subject, text, html} = buildCredentialEmail(
-        email, temporaryPassword, expiresAt);
-    const emailSent = await sendEmail({to: email, subject, text, html}, emailConfig);
+    const { subject, text, html } = buildCredentialEmail(email, temporaryPassword, expiresAt);
+    const emailSent = await sendEmail({ to: email, subject, text, html }, emailConfig);
 
-    return {user, temporaryPassword, emailSent};
+    return { user, temporaryPassword, emailSent };
   }
 
   /**
@@ -194,10 +193,10 @@ export class UserManagementService {
     await this.recordAudit(ctx, {
       action: 'create_user',
       targetUserId: user.id,
-      details: JSON.stringify({username, role, tenantId: tid}),
+      details: JSON.stringify({ username, role, tenantId: tid }),
       tenantId: user.tenantId,
     });
-    return {user, temporaryPassword};
+    return { user, temporaryPassword };
   }
 
   /**
@@ -212,17 +211,13 @@ export class UserManagementService {
    * `user.requiresPasswordChange` after a successful login and issuing
    * a short-lived activation-only token when true.
    */
-  public async login(
-      username: string,
-      password: string,
-      ctx: AuditContext,
-  ): Promise<User> {
+  public async login(username: string, password: string, ctx: AuditContext): Promise<User> {
     const user = await this.users.findByUsername(username);
     if (!user) {
       await this.recordAudit(ctx, {
         action: 'login',
         targetUserId: null,
-        details: JSON.stringify({reason: 'user_not_found', username}),
+        details: JSON.stringify({ reason: 'user_not_found', username }),
         tenantId: ctx.operatorTenantId,
       });
       throwError(ERROR_CODES.AUTH_INVALID_CREDENTIALS, 'Invalid credentials.');
@@ -232,7 +227,7 @@ export class UserManagementService {
       await this.recordAudit(ctx, {
         action: 'login',
         targetUserId: user!.id,
-        details: JSON.stringify({reason: 'bad_password'}),
+        details: JSON.stringify({ reason: 'bad_password' }),
         tenantId: user!.tenantId,
       });
       throwError(ERROR_CODES.AUTH_INVALID_CREDENTIALS, 'Invalid credentials.');
@@ -262,10 +257,10 @@ export class UserManagementService {
    * records an audit entry.
    */
   public async changePassword(
-      userId: string,
-      currentPassword: string,
-      newPassword: string,
-      ctx: AuditContext,
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    ctx: AuditContext,
   ): Promise<User> {
     const user = await this.requireUser(userId);
     const valid = await user.verifyPassword(currentPassword);
@@ -303,11 +298,7 @@ export class UserManagementService {
   }
 
   /** Enable or disable a user. */
-  public async setStatus(
-      userId: string,
-      isActive: boolean,
-      ctx: AuditContext,
-  ): Promise<User> {
+  public async setStatus(userId: string, isActive: boolean, ctx: AuditContext): Promise<User> {
     const user = await this.requireUser(userId);
     if (isActive) {
       user.enable();
@@ -342,7 +333,7 @@ export class UserManagementService {
     await this.recordAudit(ctx, {
       action: 'delete_user',
       targetUserId: user.id,
-      details: JSON.stringify({username: user.username}),
+      details: JSON.stringify({ username: user.username }),
       tenantId: user.tenantId,
     });
   }
@@ -353,21 +344,17 @@ export class UserManagementService {
   }
 
   /** List users (paged). */
-  public async listUsers(opts: {
-    role?: string;
-    page?: number;
-    size?: number;
-  }) {
+  public async listUsers(opts: { role?: string; page?: number; size?: number }) {
     const limit = opts.size ?? 50;
     const offset = ((opts.page ?? 1) - 1) * limit;
-    return this.users.list({role: opts.role, offset, limit});
+    return this.users.list({ role: opts.role, offset, limit });
   }
 
   /** Issue a refresh token and persist it. */
-  public async issueRefreshToken(user: User): Promise<{jti: string; expiresAt: string}> {
+  public async issueRefreshToken(user: User): Promise<{ jti: string; expiresAt: string }> {
     const jti = uuid();
     const expiresAt = new Date(
-        nowEpochSeconds() + CONFIG.REFRESH_TOKEN_TTL_SECONDS * 1000,
+      nowEpochSeconds() + CONFIG.REFRESH_TOKEN_TTL_SECONDS * 1000,
     ).toISOString();
     await this.refresh.save({
       jti,
@@ -377,7 +364,7 @@ export class UserManagementService {
       revoked: false,
       createdAt: nowIso(),
     });
-    return {jti, expiresAt};
+    return { jti, expiresAt };
   }
 
   /** Revoke a single refresh token (used by `/auth/refresh` rotation). */
@@ -386,13 +373,10 @@ export class UserManagementService {
   }
 
   /** Get the audit log for a tenant. */
-  public async listAudit(
-      tenantId: string,
-      opts: {page?: number; size?: number},
-  ) {
+  public async listAudit(tenantId: string, opts: { page?: number; size?: number }) {
     const limit = opts.size ?? 50;
     const offset = ((opts.page ?? 1) - 1) * limit;
-    return this.audit.listForTenant(tenantId, {offset, limit});
+    return this.audit.listForTenant(tenantId, { offset, limit });
   }
 
   /** Set a system-config value (admin only). */
@@ -414,8 +398,8 @@ export class UserManagementService {
   }
 
   private async recordAudit(
-      ctx: AuditContext,
-      entry: Omit<AuditEntry, 'id' | 'operatorId' | 'ip' | 'userAgent' | 'createdAt'>,
+    ctx: AuditContext,
+    entry: Omit<AuditEntry, 'id' | 'operatorId' | 'ip' | 'userAgent' | 'createdAt'>,
   ): Promise<void> {
     await this.audit.record({
       id: uuid(),
@@ -428,4 +412,4 @@ export class UserManagementService {
   }
 }
 
-export {PWD_CHANGE_TOKEN_TTL_SECONDS};
+export { PWD_CHANGE_TOKEN_TTL_SECONDS };

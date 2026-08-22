@@ -8,7 +8,7 @@
  * This Worker trusts Gateway-injected identity headers — it does NOT hold
  * the JWT signing secret.
  */
-import type {BaseEnv, IngestionGraphBinding} from '@ontodecide/shared';
+import type { BaseEnv, IngestionGraphBinding } from '@ontodecide/shared';
 
 export interface IngestionEnv extends BaseEnv, IngestionGraphBinding {
   /** Backblaze B2 S3-compatible credentials + bucket for staging files. */

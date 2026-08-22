@@ -6,10 +6,10 @@
  * - Verification checks signature, expiry, and (optionally) a KV-backed
  *   blacklist of revoked `jti` claims.
  */
-import type {JwtPayload} from '../types/user.js';
-import {base64url, base64urlDecode, hmacSign, hmacVerify} from './crypto.js';
+import type { JwtPayload } from '../types/user.js';
+import { base64url, base64urlDecode, hmacSign, hmacVerify } from './crypto.js';
 
-const JWT_HEADER = {alg: 'HS256', typ: 'JWT'};
+const JWT_HEADER = { alg: 'HS256', typ: 'JWT' };
 
 /** Encode a value as base64url(JSON.stringify(value)). */
 function encodeSegment(value: unknown): string {
@@ -27,11 +27,11 @@ function decodeSegment<T>(segment: string): T {
  * @param secret HMAC secret shared with downstream services.
  */
 export async function signJwt(
-    payload: Omit<JwtPayload, 'iat'>,
-    secret: string,
-    issuedAt = Math.floor(Date.now() / 1000),
+  payload: Omit<JwtPayload, 'iat'>,
+  secret: string,
+  issuedAt = Math.floor(Date.now() / 1000),
 ): Promise<string> {
-  const fullPayload: JwtPayload = {...payload, iat: issuedAt};
+  const fullPayload: JwtPayload = { ...payload, iat: issuedAt };
   const headerSegment = encodeSegment(JWT_HEADER);
   const payloadSegment = encodeSegment(fullPayload);
   const signingInput = `${headerSegment}.${payloadSegment}`;
@@ -44,17 +44,13 @@ export async function signJwt(
  * @param blacklistFn Optional async function returning `true` if the jti is revoked.
  */
 export async function verifyJwt(
-    token: string,
-    secret: string,
-    blacklistFn?: (jti: string) => Promise<boolean>,
+  token: string,
+  secret: string,
+  blacklistFn?: (jti: string) => Promise<boolean>,
 ): Promise<JwtPayload | null> {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
-  const [headerSeg, payloadSeg, signature] = parts as [
-    string,
-    string,
-    string,
-  ];
+  const [headerSeg, payloadSeg, signature] = parts as [string, string, string];
   const signingInput = `${headerSeg}.${payloadSeg}`;
   const valid = await hmacVerify(secret, signingInput, signature);
   if (!valid) return null;
@@ -76,11 +72,11 @@ export async function verifyJwt(
   return payload;
 }
 
-function isHeader(value: unknown): value is {alg: string; typ: string} {
+function isHeader(value: unknown): value is { alg: string; typ: string } {
   return (
     typeof value === 'object' &&
     value !== null &&
-    (value as {alg?: unknown}).alg === 'HS256' &&
-    (value as {typ?: unknown}).typ === 'JWT'
+    (value as { alg?: unknown }).alg === 'HS256' &&
+    (value as { typ?: unknown }).typ === 'JWT'
   );
 }

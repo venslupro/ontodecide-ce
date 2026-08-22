@@ -1,20 +1,14 @@
 /**
  * Unit tests for shared response envelope helpers.
  */
-import {describe, it, expect} from 'vitest';
-import {
-  ok,
-  fail,
-  throwError,
-  ApiErrorImpl,
-  toApiError,
-} from '../src/utils/response.js';
+import { describe, it, expect } from 'vitest';
+import { ok, fail, throwError, ApiErrorImpl, toApiError } from '../src/utils/response.js';
 
 describe('ok', () => {
   it('builds a success envelope with data', () => {
-    const result = ok({id: 1}, 'trace-123');
+    const result = ok({ id: 1 }, 'trace-123');
     expect(result.success).toBe(true);
-    expect(result.data).toEqual({id: 1});
+    expect(result.data).toEqual({ id: 1 });
     expect(result.traceId).toBe('trace-123');
   });
 
@@ -36,11 +30,10 @@ describe('fail', () => {
   });
 
   it('includes details when provided', () => {
-    const result = fail(
-        'VALIDATION_FAILED',
-        'Invalid input.',
-        {field: 'username', reason: 'too short'},
-    );
+    const result = fail('VALIDATION_FAILED', 'Invalid input.', {
+      field: 'username',
+      reason: 'too short',
+    });
     expect(result.error!.details).toEqual({
       field: 'username',
       reason: 'too short',
@@ -50,8 +43,7 @@ describe('fail', () => {
 
 describe('throwError', () => {
   it('throws an ApiErrorImpl with the given code and message', () => {
-    expect(() => throwError('AUTH_FORBIDDEN', 'No access.'))
-        .toThrow(ApiErrorImpl);
+    expect(() => throwError('AUTH_FORBIDDEN', 'No access.')).toThrow(ApiErrorImpl);
     try {
       throwError('AUTH_FORBIDDEN', 'No access.');
     } catch (err) {

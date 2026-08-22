@@ -43,6 +43,4 @@ export interface PageQuery {
 }
 
 /** Standard service result wrapping either a value or an error. */
-export type Result<T, E = ApiError> =
-  | {ok: true; value: T}
-  | {ok: false; error: E};
+export type Result<T, E = ApiError> = { ok: true; value: T } | { ok: false; error: E };

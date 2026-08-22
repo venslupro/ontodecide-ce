@@ -29,12 +29,12 @@ import {
   validators,
   type ConfigKey,
 } from '@ontodecide/shared';
-import {z} from 'zod';
-import type {GraphEnv} from './types/env.js';
-import {Neo4jRepository} from './repository/neo4j.repository.js';
-import {OntologyService} from './service/ontology.service.js';
-import {SituationService} from './service/situation.service.js';
-import {EntityService} from './service/entity.service.js';
+import { z } from 'zod';
+import type { GraphEnv } from './types/env.js';
+import { Neo4jRepository } from './repository/neo4j.repository.js';
+import { OntologyService } from './service/ontology.service.js';
+import { SituationService } from './service/situation.service.js';
+import { EntityService } from './service/entity.service.js';
 import {
   type GraphVars,
   cypherHandler,
@@ -48,19 +48,14 @@ import {
   upsertOntologyHandler,
 } from './handlers/graph.js';
 
-const app = new OpenAPIHono<{Bindings: GraphEnv; Variables: GraphVars}>({
+const app = new OpenAPIHono<{ Bindings: GraphEnv; Variables: GraphVars }>({
   // Translate Zod validation failures into the standard error envelope.
   // On success, return `undefined` so @hono/zod-validator proceeds to the
   // handler; on failure, return the 400 envelope to short-circuit it.
   defaultHook: (result, c) =>
-    result.success ?
-      undefined :
-      jsonFailResponse(
-          c,
-          ERROR_CODES.VALIDATION_FAILED,
-          'Validation failed.',
-          400,
-      ),
+    result.success
+      ? undefined
+      : jsonFailResponse(c, ERROR_CODES.VALIDATION_FAILED, 'Validation failed.', 400),
 });
 
 /** Cache config validation result — runs once per Worker instance. */
@@ -118,14 +113,12 @@ app.doc('/openapi.json', (c) => ({
     version: '0.1.0',
     description: 'Ontology, entity, and situation-view endpoints.',
   },
-  servers: [{url: new URL(c.req.url).origin}],
+  servers: [{ url: new URL(c.req.url).origin }],
 }));
 app.get('/docs', (c) => c.html(swaggerUiHtml('/openapi.json')));
 
 // Health check.
-app.get('/healthz', (c) =>
-  jsonOkResponse(c, {service: 'graph', version: '0.1.0'}),
-);
+app.get('/healthz', (c) => jsonOkResponse(c, { service: 'graph', version: '0.1.0' }));
 
 // Routes (Gateway strips the /api prefix; paths are root-relative here).
 const listOntologyRoute = createRoute({
@@ -142,12 +135,12 @@ const upsertOntologyRoute = createRoute({
   path: '/ontology',
   request: {
     body: {
-      content: {'application/json': {schema: ontologyTypeSchema}},
+      content: { 'application/json': { schema: ontologyTypeSchema } },
       required: true,
     },
   },
   responses: {
-    200: jsonOk(z.object({success: z.boolean()}), 'Ontology type upserted.'),
+    200: jsonOk(z.object({ success: z.boolean() }), 'Ontology type upserted.'),
     400: jsonError('Validation failed.'),
     403: jsonError('Forbidden.'),
   },
@@ -158,12 +151,12 @@ const upsertEntitiesRoute = createRoute({
   path: '/entities',
   request: {
     body: {
-      content: {'application/json': {schema: ingestPayloadSchema}},
+      content: { 'application/json': { schema: ingestPayloadSchema } },
       required: true,
     },
   },
   responses: {
-    200: jsonOk(z.object({accepted: z.number().int()}), 'Entities upserted.'),
+    200: jsonOk(z.object({ accepted: z.number().int() }), 'Entities upserted.'),
     400: jsonError('Validation failed.'),
     403: jsonError('tenant_id mismatch.'),
   },
@@ -173,7 +166,7 @@ const findEntitiesRoute = createRoute({
   method: 'get',
   path: '/entities',
   request: {
-    query: z.object({type: z.string().optional()}),
+    query: z.object({ type: z.string().optional() }),
   },
   responses: {
     200: jsonOk(z.array(entityNodeSchema), 'Matching entities.'),
@@ -185,7 +178,7 @@ const findEntityRoute = createRoute({
   method: 'get',
   path: '/entities/{id}',
   request: {
-    params: z.object({id: z.string()}),
+    params: z.object({ id: z.string() }),
   },
   responses: {
     200: jsonOk(entityNodeSchema, 'The entity.'),
@@ -198,10 +191,10 @@ const deleteEntityRoute = createRoute({
   method: 'delete',
   path: '/entities/{id}',
   request: {
-    params: z.object({id: z.string()}),
+    params: z.object({ id: z.string() }),
   },
   responses: {
-    200: jsonOk(z.object({deleted: z.number().int()}), 'Entities deleted.'),
+    200: jsonOk(z.object({ deleted: z.number().int() }), 'Entities deleted.'),
     400: jsonError('Validation failed.'),
   },
 });
@@ -210,9 +203,9 @@ const situationRoute = createRoute({
   method: 'get',
   path: '/situation/{id}',
   request: {
-    params: z.object({id: z.string()}),
+    params: z.object({ id: z.string() }),
     query: z.object({
-      depth: z.string().openapi({description: 'Traversal depth (1..3).'}).optional(),
+      depth: z.string().openapi({ description: 'Traversal depth (1..3).' }).optional(),
     }),
   },
   responses: {
@@ -227,7 +220,7 @@ const exploreRoute = createRoute({
   path: '/graph/explore',
   request: {
     body: {
-      content: {'application/json': {schema: exploreRequestSchema}},
+      content: { 'application/json': { schema: exploreRequestSchema } },
       required: true,
     },
   },
@@ -242,7 +235,7 @@ const cypherRoute = createRoute({
   path: '/graph/query',
   request: {
     body: {
-      content: {'application/json': {schema: cypherQueryRequestSchema}},
+      content: { 'application/json': { schema: cypherQueryRequestSchema } },
       required: true,
     },
   },
@@ -263,9 +256,7 @@ app.openapi(situationRoute, situationHandler);
 app.openapi(exploreRoute, exploreHandler);
 app.openapi(cypherRoute, cypherHandler);
 
-app.notFound((c) =>
-  jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404),
-);
+app.notFound((c) => jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404));
 app.onError(honoErrorHandler);
 
 export default {

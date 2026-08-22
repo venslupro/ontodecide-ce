@@ -25,6 +25,7 @@ module.exports = {
   extends: [
     'google',
     'plugin:@typescript-eslint/recommended',
+    'prettier',
   ],
   env: {
     es2022: true,

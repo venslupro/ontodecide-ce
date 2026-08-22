@@ -20,8 +20,8 @@ import {
   SituationNode,
   throwError,
 } from '@ontodecide/shared';
-import type {GraphEnv, Neo4jResponse} from '../types/env.js';
-import type {EntityRelation, IGraphRepository} from './graph.repository.js';
+import type { GraphEnv, Neo4jResponse } from '../types/env.js';
+import type { EntityRelation, IGraphRepository } from './graph.repository.js';
 
 interface Neo4jRow {
   row: unknown[];
@@ -70,16 +70,16 @@ export class Neo4jRepository implements IGraphRepository {
       MATCH (ot:OntologyType {tenant_id: $tenantId})
       RETURN ot.id, ot.name, ot.properties, ot.relations
     `;
-    const rows = await this.execute(statement, {tenantId});
+    const rows = await this.execute(statement, { tenantId });
     return rows.map((row) => this.decodeOntology(row));
   }
 
-  public async upsertEntities(payload: IngestPayload): Promise<{accepted: number}> {
+  public async upsertEntities(payload: IngestPayload): Promise<{ accepted: number }> {
     // Single-transaction batch: keep the request under the 10ms CPU budget
     // by limiting batches to ~50 entities (Ingestion Service is responsible
     // for chunking larger files).
     if (payload.entities.length === 0) {
-      return {accepted: 0};
+      return { accepted: 0 };
     }
     const entityStatements = payload.entities.map((entity) => {
       const params = {
@@ -125,13 +125,13 @@ export class Neo4jRepository implements IGraphRepository {
     });
     const statements = [...entityStatements, ...relationStatements];
     await this.executeBatch(statements);
-    return {accepted: payload.entities.length};
+    return { accepted: payload.entities.length };
   }
 
   public async findEntities(
-      tenantId: string,
-      filter: {type?: string; attributes?: Record<string, unknown>},
-      limit = 100,
+    tenantId: string,
+    filter: { type?: string; attributes?: Record<string, unknown> },
+    limit = 100,
   ): Promise<EntityNode[]> {
     const typeClause = filter.type ? 'AND e.type = $type' : '';
     const statement = `
@@ -154,7 +154,7 @@ export class Neo4jRepository implements IGraphRepository {
       RETURN e.id, e.type, e.attributes, e.source, e.confidence, e.timestamp
       LIMIT 1
     `;
-    const rows = await this.execute(statement, {tenantId, id: entityId});
+    const rows = await this.execute(statement, { tenantId, id: entityId });
     if (rows.length === 0) return null;
     return this.decodeEntity(rows[0], tenantId);
   }
@@ -165,16 +165,12 @@ export class Neo4jRepository implements IGraphRepository {
       DETACH DELETE e
       RETURN count(e) as deleted
     `;
-    const rows = await this.execute(statement, {tenantId, id: entityId});
+    const rows = await this.execute(statement, { tenantId, id: entityId });
     const row = rows[0]?.row as unknown[];
     return Number(row?.[0] ?? 0);
   }
 
-  public async situationView(
-      tenantId: string,
-      rootId: string,
-      depth = 1,
-  ): Promise<SituationNode> {
+  public async situationView(tenantId: string, rootId: string, depth = 1): Promise<SituationNode> {
     const safeDepth = Math.min(Math.max(depth, 1), 3);
     const statement = `
       MATCH (e:Entity {tenant_id: $tenantId, id: $id})
@@ -184,16 +180,19 @@ export class Neo4jRepository implements IGraphRepository {
         target: {id: n.id, type: n.type, attributes: n.attributes}
       }) as relations
     `;
-    const rows = await this.execute(statement, {tenantId, id: rootId});
+    const rows = await this.execute(statement, { tenantId, id: rootId });
     if (rows.length === 0) {
       throwError(ERROR_CODES.GRAPH_ENTITY_NOT_FOUND, `Entity ${rootId} not found.`);
     }
     const entity = this.decodeEntity(rows[0], tenantId);
     const relRow = rows[0]?.row as unknown[];
-    const relations = (relRow?.[1] as Array<{
-      rel: string[];
-      target: {id: string; type: string; attributes: string};
-    }> | undefined) ?? [];
+    const relations =
+      (relRow?.[1] as
+        | Array<{
+            rel: string[];
+            target: { id: string; type: string; attributes: string };
+          }>
+        | undefined) ?? [];
     return {
       entity,
       relations: relations.map((r) => ({
@@ -208,15 +207,14 @@ export class Neo4jRepository implements IGraphRepository {
   }
 
   public async explore(
-      tenantId: string,
-      rootId: string,
-      depth: number,
-      relationTypes?: string[],
+    tenantId: string,
+    rootId: string,
+    depth: number,
+    relationTypes?: string[],
   ): Promise<SituationNode[]> {
     const safeDepth = Math.min(Math.max(depth, 1), 3);
-    const relFilter = relationTypes && relationTypes.length > 0 ?
-      `WHERE type(r) IN $relationTypes` :
-      '';
+    const relFilter =
+      relationTypes && relationTypes.length > 0 ? `WHERE type(r) IN $relationTypes` : '';
     const statement = `
       MATCH (e:Entity {tenant_id: $tenantId, id: $id})
       MATCH (e)-[r*1..${safeDepth}]-(n:Entity {tenant_id: $tenantId})
@@ -233,10 +231,13 @@ export class Neo4jRepository implements IGraphRepository {
     return rows.map((row) => {
       const entity = this.decodeEntity(row, tenantId);
       const relRow = row.row as unknown[];
-      const relations = (relRow[1] as Array<{
-        rel: string;
-        target: {id: string; type: string; attributes: string};
-      }> | undefined) ?? [];
+      const relations =
+        (relRow[1] as
+          | Array<{
+              rel: string;
+              target: { id: string; type: string; attributes: string };
+            }>
+          | undefined) ?? [];
       return {
         entity,
         relations: relations.map((r) => ({
@@ -252,22 +253,19 @@ export class Neo4jRepository implements IGraphRepository {
   }
 
   public async runCypher(
-      tenantId: string,
-      statement: string,
-      parameters: Record<string, unknown> = {},
-      limit = 100,
+    tenantId: string,
+    statement: string,
+    parameters: Record<string, unknown> = {},
+    limit = 100,
   ): Promise<Record<string, unknown>[]> {
     // Defensive: forbid write operations on the custom-query endpoint.
     if (/\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP)\b/i.test(statement)) {
-      throwError(
-          ERROR_CODES.AUTH_FORBIDDEN,
-          'Custom queries may only read.',
-      );
+      throwError(ERROR_CODES.AUTH_FORBIDDEN, 'Custom queries may only read.');
     }
-    const safeStatement = statement.includes('LIMIT') ?
-      statement :
-      `${statement.replace(/;$/, '')} LIMIT $limit`;
-    const params = {...parameters, tenantId, limit};
+    const safeStatement = statement.includes('LIMIT')
+      ? statement
+      : `${statement.replace(/;$/, '')} LIMIT $limit`;
+    const params = { ...parameters, tenantId, limit };
     const rows = await this.execute(safeStatement, params);
     return rows.map((row) => {
       const obj: Record<string, unknown> = {};
@@ -293,33 +291,33 @@ export class Neo4jRepository implements IGraphRepository {
       DETACH DELETE n
       RETURN count(n) as deleted
     `;
-    const rows = await this.execute(statement, {tenantId});
+    const rows = await this.execute(statement, { tenantId });
     const row = rows[0]?.row as unknown[];
     return Number(row?.[0] ?? 0);
   }
 
   /** Execute a single Cypher statement on the shared database. */
   private async execute(
-      statement: string,
-      parameters: Record<string, unknown>,
+    statement: string,
+    parameters: Record<string, unknown>,
   ): Promise<Neo4jRow[]> {
     const endpoint = this.endpointFor();
     const body = JSON.stringify({
-      statements: [{statement, parameters}],
+      statements: [{ statement, parameters }],
     });
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'Authorization': this.authHeader,
+        Authorization: this.authHeader,
         'Content-Type': 'application/json',
-        'Accept': 'application/json;charset=UTF-8',
+        Accept: 'application/json;charset=UTF-8',
       },
       body,
     });
     if (!response.ok) {
       throwError(
-          ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-          `Neo4j HTTP ${response.status}: ${await response.text()}`,
+        ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
+        `Neo4j HTTP ${response.status}: ${await response.text()}`,
       );
     }
     const data = (await response.json()) as Neo4jResponse;
@@ -332,23 +330,23 @@ export class Neo4jRepository implements IGraphRepository {
 
   /** Execute multiple Cypher statements in one HTTP round-trip. */
   private async executeBatch(
-      statements: Array<{statement: string; parameters: Record<string, unknown>}>,
+    statements: Array<{ statement: string; parameters: Record<string, unknown> }>,
   ): Promise<Neo4jRow[]> {
     const endpoint = this.endpointFor();
-    const body = JSON.stringify({statements});
+    const body = JSON.stringify({ statements });
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'Authorization': this.authHeader,
+        Authorization: this.authHeader,
         'Content-Type': 'application/json',
-        'Accept': 'application/json;charset=UTF-8',
+        Accept: 'application/json;charset=UTF-8',
       },
       body,
     });
     if (!response.ok) {
       throwError(
-          ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
-          `Neo4j HTTP ${response.status}: ${await response.text()}`,
+        ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
+        `Neo4j HTTP ${response.status}: ${await response.text()}`,
       );
     }
     const data = (await response.json()) as Neo4jResponse;
@@ -362,7 +360,10 @@ export class Neo4jRepository implements IGraphRepository {
   /** Decode a Neo4j row into an EntityNode. */
   private decodeEntity(row: Neo4jRow, tenantId: string): EntityNode {
     const values = row.row as unknown[];
-    const attributes = typeof values[2] === 'string' ? JSON.parse(values[2] as string) : (values[2] as Record<string, unknown>);
+    const attributes =
+      typeof values[2] === 'string'
+        ? JSON.parse(values[2] as string)
+        : (values[2] as Record<string, unknown>);
     return {
       id: String(values[0]),
       tenant_id: tenantId,
@@ -377,8 +378,10 @@ export class Neo4jRepository implements IGraphRepository {
   /** Decode a Neo4j row into an OntologyType. */
   private decodeOntology(row: Neo4jRow): OntologyType {
     const values = row.row as unknown[];
-    const props = typeof values[2] === 'string' ? JSON.parse(values[2] as string) : (values[2] as string[]);
-    const rels = typeof values[3] === 'string' ? JSON.parse(values[3] as string) : (values[3] as string[]);
+    const props =
+      typeof values[2] === 'string' ? JSON.parse(values[2] as string) : (values[2] as string[]);
+    const rels =
+      typeof values[3] === 'string' ? JSON.parse(values[3] as string) : (values[3] as string[]);
     return {
       id: String(values[0]),
       name: String(values[1]),
@@ -390,7 +393,7 @@ export class Neo4jRepository implements IGraphRepository {
 
 /** Suppress unused-import warning when `EntityRelation` is not referenced in
  *  some build configurations (e.g. when only the interface is consumed). */
-export type {EntityRelation};
+export type { EntityRelation };
 
 /**
  * Sanitise a relation type for direct insertion into a Cypher statement.
@@ -401,10 +404,7 @@ export type {EntityRelation};
  */
 function sanitizeRelationType(label: string): string {
   if (!/^[A-Z][A-Z0-9_]{0,62}$/.test(label)) {
-    throwError(
-        ERROR_CODES.VALIDATION_FAILED,
-        `Invalid relation type label: ${label}`,
-    );
+    throwError(ERROR_CODES.VALIDATION_FAILED, `Invalid relation type label: ${label}`);
   }
   return label;
 }

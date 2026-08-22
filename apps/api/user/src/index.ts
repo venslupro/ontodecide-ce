@@ -7,7 +7,7 @@
  * accepts calls that carry the `x-internal-call` marker set by the
  * Gateway (public auth routes are exempted).
  */
-import {z} from 'zod';
+import { z } from 'zod';
 import {
   OpenAPIHono,
   createRoute,
@@ -34,22 +34,22 @@ import {
   validateAndLogConfig,
   validators,
 } from '@ontodecide/shared';
-import type {UserEnv} from './types/env.js';
+import type { UserEnv } from './types/env.js';
 import {
   D1AuditRepository,
   D1ConfigRepository,
   D1RefreshTokenRepository,
   D1UserRepository,
 } from './repository/d1.user.repository.js';
-import {UserManagementService} from './service/user.service.js';
+import { UserManagementService } from './service/user.service.js';
 import {
   loginHandler,
   logoutHandler,
   refreshHandler,
   changePasswordHandler,
 } from './handlers/auth.js';
-import {profileHandler} from './handlers/user.js';
-import {submitApplicationHandler} from './handlers/application.js';
+import { profileHandler } from './handlers/user.js';
+import { submitApplicationHandler } from './handlers/application.js';
 import {
   createUserHandler,
   deleteUserHandler,
@@ -75,7 +75,11 @@ type UserContext = {
 let configValidated = false;
 
 const REQUIRED_KEYS = [
-  configKey('JWT_SECRET', 'HMAC-SHA256 signing key (≥32 chars, high entropy)', validators.jwtSecret()),
+  configKey(
+    'JWT_SECRET',
+    'HMAC-SHA256 signing key (≥32 chars, high entropy)',
+    validators.jwtSecret(),
+  ),
   configKey('DB', 'D1 database for users, audit_logs, refresh_tokens'),
   configKey('CACHE', 'KV cache namespace'),
 ];
@@ -88,14 +92,14 @@ const app = new OpenAPIHono<UserContext>({
   defaultHook: (result, c) => {
     if (!result.success) {
       return c.json(
-          {
-            success: false,
-            error: {
-              code: ERROR_CODES.VALIDATION_FAILED,
-              message: 'Request validation failed.',
-            },
+        {
+          success: false,
+          error: {
+            code: ERROR_CODES.VALIDATION_FAILED,
+            message: 'Request validation failed.',
           },
-          400,
+        },
+        400,
       );
     }
     return;
@@ -124,19 +128,18 @@ app.use('*', internalOnlyMiddleware(['/auth/', '/applications']));
 /** Create the DDD service layer per request from D1 + Neo4j bindings. */
 app.use('*', async (c, next) => {
   const service = new UserManagementService(
-      new D1UserRepository(c.env.DB),
-      new D1AuditRepository(c.env.DB),
-      new D1RefreshTokenRepository(c.env.DB),
-      new D1ConfigRepository(c.env.DB),
-      c.env, // NEO4J_URL / NEO4J_USER / NEO4J_PASSWORD bindings
+    new D1UserRepository(c.env.DB),
+    new D1AuditRepository(c.env.DB),
+    new D1RefreshTokenRepository(c.env.DB),
+    new D1ConfigRepository(c.env.DB),
+    c.env, // NEO4J_URL / NEO4J_USER / NEO4J_PASSWORD bindings
   );
   c.set('service', service);
   await next();
 });
 
 app.onError(honoErrorHandler);
-app.notFound((c) =>
-  jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404));
+app.notFound((c) => jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404));
 
 // --- Security scheme -----------------------------------------------------
 
@@ -152,13 +155,12 @@ const healthRoute = createRoute({
   method: 'get',
   path: '/healthz',
   responses: {
-    200: jsonOk(z.object({service: z.string(), version: z.string()}),
-        'Service health.'),
+    200: jsonOk(z.object({ service: z.string(), version: z.string() }), 'Service health.'),
   },
 });
 app.openapi(healthRoute, (c) =>
-  c.json(ok({service: 'user', version: '0.1.0'},
-      c.req.header('x-trace-id')), 200));
+  c.json(ok({ service: 'user', version: '0.1.0' }, c.req.header('x-trace-id')), 200),
+);
 
 // Auth routes (public, rate-limited at the gateway).
 
@@ -169,7 +171,7 @@ const loginRoute = createRoute({
   summary: 'Login with username + password',
   request: {
     body: {
-      content: {'application/json': {schema: loginSchema}},
+      content: { 'application/json': { schema: loginSchema } },
     },
   },
   responses: {
@@ -191,7 +193,7 @@ const refreshRoute = createRoute({
   summary: 'Rotate tokens with a refresh token',
   request: {
     body: {
-      content: {'application/json': {schema: refreshSchema}},
+      content: { 'application/json': { schema: refreshSchema } },
     },
   },
   responses: {
@@ -212,11 +214,11 @@ const logoutRoute = createRoute({
   summary: 'Revoke the current refresh token',
   request: {
     body: {
-      content: {'application/json': {schema: refreshSchema}},
+      content: { 'application/json': { schema: refreshSchema } },
     },
   },
   responses: {
-    200: jsonOk(z.object({success: z.boolean()}), 'Logout acknowledged.'),
+    200: jsonOk(z.object({ success: z.boolean() }), 'Logout acknowledged.'),
   },
 });
 app.openapi(logoutRoute, async (c) => {
@@ -229,10 +231,10 @@ const changePasswordRoute = createRoute({
   path: '/auth/change-password',
   tags: ['Auth'],
   summary: 'Change password (first-login activation)',
-  security: [{bearerAuth: []}],
+  security: [{ bearerAuth: [] }],
   request: {
     body: {
-      content: {'application/json': {schema: changePasswordSchema}},
+      content: { 'application/json': { schema: changePasswordSchema } },
     },
   },
   responses: {
@@ -256,7 +258,7 @@ const applicationRoute = createRoute({
   summary: 'Submit an account application',
   request: {
     body: {
-      content: {'application/json': {schema: accountApplicationSchema}},
+      content: { 'application/json': { schema: accountApplicationSchema } },
     },
   },
   responses: {
@@ -277,7 +279,7 @@ const profileRoute = createRoute({
   path: '/user/profile',
   tags: ['User'],
   summary: 'Get the current user profile',
-  security: [{bearerAuth: []}],
+  security: [{ bearerAuth: [] }],
   responses: {
     200: jsonOk(userPublicSchema, 'User profile.'),
     403: jsonError('Missing identity headers.'),
@@ -295,21 +297,24 @@ const listUsersRoute = createRoute({
   path: '/admin/users',
   tags: ['Admin'],
   summary: 'List users (paginated)',
-  security: [{bearerAuth: []}],
+  security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      page: z.string().optional().openapi({description: 'Page number.'}),
-      size: z.string().optional().openapi({description: 'Page size.'}),
-      role: z.string().optional().openapi({description: 'Filter by role.'}),
+      page: z.string().optional().openapi({ description: 'Page number.' }),
+      size: z.string().optional().openapi({ description: 'Page size.' }),
+      role: z.string().optional().openapi({ description: 'Filter by role.' }),
     }),
   },
   responses: {
-    200: jsonOk(z.object({
-      total: z.number(),
-      page: z.number(),
-      size: z.number(),
-      list: z.array(userPublicSchema),
-    }), 'Paginated user list.'),
+    200: jsonOk(
+      z.object({
+        total: z.number(),
+        page: z.number(),
+        size: z.number(),
+        list: z.array(userPublicSchema),
+      }),
+      'Paginated user list.',
+    ),
   },
 });
 app.openapi(listUsersRoute, async (c) => {
@@ -322,10 +327,10 @@ const createUserRoute = createRoute({
   path: '/admin/users',
   tags: ['Admin'],
   summary: 'Create a new user',
-  security: [{bearerAuth: []}],
+  security: [{ bearerAuth: [] }],
   request: {
     body: {
-      content: {'application/json': {schema: createUserSchema}},
+      content: { 'application/json': { schema: createUserSchema } },
     },
   },
   responses: {
@@ -344,15 +349,19 @@ const updateStatusRoute = createRoute({
   path: '/admin/users/{id}/status',
   tags: ['Admin'],
   summary: 'Enable or disable a user',
-  security: [{bearerAuth: []}],
+  security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string().openapi({description: 'User id.'}),
+      id: z.string().openapi({ description: 'User id.' }),
     }),
     body: {
-      content: {'application/json': {schema: z.object({
-        is_active: z.boolean(),
-      })}},
+      content: {
+        'application/json': {
+          schema: z.object({
+            is_active: z.boolean(),
+          }),
+        },
+      },
     },
   },
   responses: {
@@ -371,16 +380,19 @@ const resetPasswordRoute = createRoute({
   path: '/admin/users/{id}/reset',
   tags: ['Admin'],
   summary: 'Reset a user password',
-  security: [{bearerAuth: []}],
+  security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string().openapi({description: 'User id.'}),
+      id: z.string().openapi({ description: 'User id.' }),
     }),
   },
   responses: {
-    200: jsonOk(z.object({
-      temporary_password: z.string(),
-    }), 'New temporary password.'),
+    200: jsonOk(
+      z.object({
+        temporary_password: z.string(),
+      }),
+      'New temporary password.',
+    ),
     404: jsonError('User not found.'),
   },
 });
@@ -394,14 +406,14 @@ const deleteUserRoute = createRoute({
   path: '/admin/users/{id}',
   tags: ['Admin'],
   summary: 'Soft-delete a user',
-  security: [{bearerAuth: []}],
+  security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string().openapi({description: 'User id.'}),
+      id: z.string().openapi({ description: 'User id.' }),
     }),
   },
   responses: {
-    200: jsonOk(z.object({success: z.boolean()}), 'User deleted.'),
+    200: jsonOk(z.object({ success: z.boolean() }), 'User deleted.'),
     403: jsonError('Cannot delete the bootstrap admin.'),
     404: jsonError('User not found.'),
   },
@@ -418,7 +430,7 @@ const listAuditRoute = createRoute({
   path: '/admin/audit',
   tags: ['Admin'],
   summary: 'List audit log entries',
-  security: [{bearerAuth: []}],
+  security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
       page: z.string().optional(),
@@ -426,22 +438,27 @@ const listAuditRoute = createRoute({
     }),
   },
   responses: {
-    200: jsonOk(z.object({
-      total: z.number(),
-      page: z.number(),
-      size: z.number(),
-      list: z.array(z.object({
-        id: z.string(),
-        tenantId: z.string(),
-        operatorId: z.string(),
-        action: z.string(),
-        targetUserId: z.string().nullable(),
-        details: z.string().nullable(),
-        ip: z.string().nullable(),
-        userAgent: z.string().nullable(),
-        createdAt: z.string(),
-      })),
-    }), 'Paginated audit log.'),
+    200: jsonOk(
+      z.object({
+        total: z.number(),
+        page: z.number(),
+        size: z.number(),
+        list: z.array(
+          z.object({
+            id: z.string(),
+            tenantId: z.string(),
+            operatorId: z.string(),
+            action: z.string(),
+            targetUserId: z.string().nullable(),
+            details: z.string().nullable(),
+            ip: z.string().nullable(),
+            userAgent: z.string().nullable(),
+            createdAt: z.string(),
+          }),
+        ),
+      }),
+      'Paginated audit log.',
+    ),
     403: jsonError('Missing tenant id.'),
   },
 });
@@ -455,10 +472,9 @@ const listConfigRoute = createRoute({
   path: '/admin/config',
   tags: ['Admin'],
   summary: 'List system configuration',
-  security: [{bearerAuth: []}],
+  security: [{ bearerAuth: [] }],
   responses: {
-    200: jsonOk(z.record(z.string(), z.string()),
-        'All configuration values.'),
+    200: jsonOk(z.record(z.string(), z.string()), 'All configuration values.'),
   },
 });
 app.openapi(listConfigRoute, async (c) => {
@@ -471,17 +487,21 @@ const setConfigRoute = createRoute({
   path: '/admin/config',
   tags: ['Admin'],
   summary: 'Set a configuration value',
-  security: [{bearerAuth: []}],
+  security: [{ bearerAuth: [] }],
   request: {
     body: {
-      content: {'application/json': {schema: z.object({
-        key: z.string(),
-        value: z.string(),
-      })}},
+      content: {
+        'application/json': {
+          schema: z.object({
+            key: z.string(),
+            value: z.string(),
+          }),
+        },
+      },
     },
   },
   responses: {
-    200: jsonOk(z.object({success: z.boolean()}), 'Config updated.'),
+    200: jsonOk(z.object({ success: z.boolean() }), 'Config updated.'),
     400: jsonError('Validation failed.'),
   },
 });
@@ -499,12 +519,10 @@ app.doc('/openapi.json', (c) => ({
     version: '0.1.0',
     description: 'Account lifecycle, authentication, and audit logging.',
   },
-  servers: [{url: new URL(c.req.url).origin}],
+  servers: [{ url: new URL(c.req.url).origin }],
 }));
 
-app.get('/docs', (c) =>
-  c.html(swaggerUiHtml(`${new URL(c.req.url).origin}/openapi.json`)),
-);
+app.get('/docs', (c) => c.html(swaggerUiHtml(`${new URL(c.req.url).origin}/openapi.json`)));
 
 // --- Worker export --------------------------------------------------------
 

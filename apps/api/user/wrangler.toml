@@ -1,5 +1,14 @@
 # User Service Worker — authentication and account management.
 #
+# ============================================================
+# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform CREATES & GOVERNS:
+#       - Worker skeleton + 4D tags
+#       - D1 binding "DB" → cloudflare_d1_database.decision_db.id
+#       - KV namespace "CACHE"
+#   • Wrangler deploys: script code · [vars] · JWT_SECRET + EMAIL_API_KEY
+# ============================================================
+#
 # Identity model:
 #   • This Worker **signs** JWTs (login/refresh) so it holds JWT_SECRET.
 #     It is one of only two services (Gateway + User) that know the secret.
@@ -19,18 +28,28 @@ compatibility_flags = ["nodejs_compat"]
 command = "pnpm --filter=@ontodecide/user exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
 cwd = "apps/api/user"
 
-# Shared D1: users / audit_logs / refresh_tokens / system_config.
-# wrangler auto-creates the database on first deploy.
-# After first deploy, find the assigned ID in Dashboard → Workers →
-# decision-user-service → Settings → Variables and Secrets → D1 Databases.
+# ----- D1: shared decision-db (Terraform-managed) -------------------------
+# database_name MUST match "${project_name}-decision-db-${environment}"
+# from main.tf → cloudflare_d1_database.decision_db.name.
+#
+# Use `database_name` here (not `database_id`) so the same wrangler.toml
+# works across environments with different project/env names — Terraform
+# provisions the D1 under the computed name, and Wrangler resolves the
+# name → ID at deploy time.
+#
+# Migration SQL lives in src/migrations/*.sql and runs via
+# scripts/migrate.sh --remote in the post-deploy migrate-d1 CI job.
 [[d1_databases]]
-binding       = "DB"
-database_name = "ontodecide-decision-db-production"
+binding        = "DB"
+database_name  = "ontodecide-decision-db-production"
 migrations_dir = "src/migrations"
 
-# KV — wrangler auto-creates on first deploy.
+# ----- KV: session / user lookup cache (Terraform-managed) ----------------
+# binding MUST match local.kv_binding_map entry for svc="user".
+# DO NOT OMIT `id` — otherwise wrangler auto-creates a duplicate namespace.
 [[kv_namespaces]]
 binding = "CACHE"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_CACHE_USER_ID"
 
 [vars]
 AI_DEFAULT_PROVIDER = "workers-ai"

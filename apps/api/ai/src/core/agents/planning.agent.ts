@@ -20,9 +20,9 @@ import {
   throwError,
   uuid,
 } from '@ontodecide/shared';
-import {planPrompt, reflectPrompt, SYSTEM_PROMPT} from '../scenarios/prompts.js';
-import type {AiEnv} from '../../types/env.js';
-import {ProviderFactory} from '../llm/provider.factory.js';
+import { planPrompt, reflectPrompt, SYSTEM_PROMPT } from '../scenarios/prompts.js';
+import type { AiEnv } from '../../types/env.js';
+import { ProviderFactory } from '../llm/provider.factory.js';
 
 type StorageState = AgentState;
 
@@ -47,17 +47,17 @@ export class PlanningAgent {
     if (url.pathname === '/start' && request.method === 'POST') {
       const body = (await request.json()) as AgentRequest;
       await this.plan(body.goal);
-      return jsonResponse({state: this.state});
+      return jsonResponse({ state: this.state });
     }
     if (url.pathname === '/state' && request.method === 'GET') {
       this.state = await this.loadState();
-      return jsonResponse({state: this.state});
+      return jsonResponse({ state: this.state });
     }
     if (url.pathname === '/reflect' && request.method === 'POST') {
       await this.reflect();
-      return jsonResponse({state: this.state});
+      return jsonResponse({ state: this.state });
     }
-    return new Response('Not Found', {status: 404});
+    return new Response('Not Found', { status: 404 });
   }
 
   /** Decompose the goal into tasks. */
@@ -87,7 +87,10 @@ export class PlanningAgent {
   }
 
   /** Execute each planned task via the LLM. */
-  private async executeTasks(provider: ReturnType<ProviderFactory['get']>, options: LlmOptions): Promise<void> {
+  private async executeTasks(
+    provider: ReturnType<ProviderFactory['get']>,
+    options: LlmOptions,
+  ): Promise<void> {
     if (!this.state) return;
     for (const task of this.state.tasks) {
       if (task.status === 'succeeded' || task.status === 'skipped') continue;
@@ -96,8 +99,8 @@ export class PlanningAgent {
       this.state.updatedAt = nowIso();
       try {
         const response = await provider.generate(
-            `Goal: ${this.state.goal}\nTask: ${task.description}`,
-            {...options, temperature: 0.4, maxTokens: 512},
+          `Goal: ${this.state.goal}\nTask: ${task.description}`,
+          { ...options, temperature: 0.4, maxTokens: 512 },
         );
         task.result = response.content;
         task.status = 'succeeded';
@@ -138,25 +141,24 @@ export class PlanningAgent {
     this.state.updatedAt = nowIso();
     await this.persist();
     // Also persist a row in D1 for dashboard history.
-    await this.env.DB
-        .prepare(
-            `INSERT INTO agent_runs
+    await this.env.DB.prepare(
+      `INSERT INTO agent_runs
              (id, tenant_id, goal, status, task_count,
               completed_count, provider, finished_at, result)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-            uuid(),
-            'agent', // tenant_id is set by the caller via headers when the DO is invoked; for now 'agent' is a placeholder
-            this.state.goal,
-            this.state.status,
-            this.state.tasks.length,
-            this.state.tasks.filter((t) => t.status === 'succeeded').length,
-            provider.id,
-            nowIso(),
-            response.content,
-        )
-        .run();
+    )
+      .bind(
+        uuid(),
+        'agent', // tenant_id is set by the caller via headers when the DO is invoked; for now 'agent' is a placeholder
+        this.state.goal,
+        this.state.status,
+        this.state.tasks.length,
+        this.state.tasks.filter((t) => t.status === 'succeeded').length,
+        provider.id,
+        nowIso(),
+        response.content,
+      )
+      .run();
   }
 
   /** Load state from durable storage (cached on the instance). */
@@ -189,10 +191,10 @@ function parseTasks(content: string): AgentTask[] {
   } catch {
     return [];
   }
-  const arr = (parsed as {tasks?: unknown[]})?.tasks ?? parsed;
+  const arr = (parsed as { tasks?: unknown[] })?.tasks ?? parsed;
   if (!Array.isArray(arr)) return [];
   return arr.map((entry, idx) => {
-    const obj = entry as {id?: string; description?: string};
+    const obj = entry as { id?: string; description?: string };
     return {
       id: typeof obj.id === 'string' ? obj.id : uuid(),
       description: typeof obj.description === 'string' ? obj.description : `Task ${idx + 1}`,
@@ -204,6 +206,6 @@ function parseTasks(content: string): AgentTask[] {
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
-    headers: {'Content-Type': 'application/json'},
+    headers: { 'Content-Type': 'application/json' },
   });
 }

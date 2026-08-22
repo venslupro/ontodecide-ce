@@ -5,14 +5,14 @@
  * implementation. This keeps the domain free of Cloudflare-specific
  * types and makes the service unit-testable with an in-memory fake.
  */
-import type {User} from '../domain/user.entity.js';
-import type {UserSnapshot} from '../domain/user.entity.js';
+import type { User } from '../domain/user.entity.js';
+import type { UserSnapshot } from '../domain/user.entity.js';
 
 export interface IUserRepository {
   findById(id: string): Promise<User | null>;
   findByUsername(username: string): Promise<User | null>;
   findByTenant(tenantId: string): Promise<User | null>;
-  list(opts?: {role?: string; offset?: number; limit?: number}): Promise<{
+  list(opts?: { role?: string; offset?: number; limit?: number }): Promise<{
     total: number;
     items: UserSnapshot[];
   }>;
@@ -29,8 +29,8 @@ export interface IAuditRepository {
   record(entry: AuditEntry): Promise<void>;
   listForTenant(
     tenantId: string,
-    opts?: {offset?: number; limit?: number},
-  ): Promise<{total: number; items: AuditEntry[]}>;
+    opts?: { offset?: number; limit?: number },
+  ): Promise<{ total: number; items: AuditEntry[] }>;
 }
 
 export interface AuditEntry {

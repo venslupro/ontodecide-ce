@@ -1,8 +1,24 @@
 # Cleanup Service Worker — daily retention enforcement + manual purge.
 #
+# ============================================================
+# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform CREATES & GOVERNS:
+#       - Worker skeleton + 4D tags
+#       - D1 binding "DB" → shared decision-db
+#       - 5 KV namespaces (USER_CACHE / GRAPH_CACHE / INGESTION_JOBS /
+#         AI_CACHE / CLEANUP_JOBS) — for cross-service cache invalidation
+#       - Queue producer "CLEANUP_QUEUE" + cleanup / cleanup-dlq Queues
+#       - cloudflare_workers_cron_trigger.cleanup_daily  (0 3 * * * UTC)
+#   • Wrangler deploys:
+#       - script code · [vars] · NEO4J_PASSWORD + B2_KEY_ID + B2_KEY
+#       - [triggers].crons  (redundant with Terraform's cron trigger —
+#         kept here so `wrangler types` + `wrangler dev` work locally)
+#       - [[queues.consumers]] + dead_letter_queue wiring
+# ============================================================
+#
 # Exports:
 #   * `fetch`     — admin endpoints (POST /cleanup, GET /cleanup/status/:id)
-#   * `scheduled` — daily cron trigger at 03:00 UTC (see [triggers] below)
+#   * `scheduled` — daily cron trigger at 03:00 UTC (Terraform-managed)
 #   * `queue`     — consumer for cleanup-queue
 #
 # Identity model:
@@ -23,10 +39,14 @@ command = "pnpm --filter=@ontodecide/cleanup exec tsc -p tsconfig.json --noEmit 
 cwd = "apps/api/cleanup"
 
 # Daily cleanup at 03:00 UTC.
+# Terraform cloudflare_workers_cron_trigger.cleanup_daily also provisions
+# this; both MUST stay in sync.  If you change the cron here, update
+# local.workers["cleanup"].cron in infrastructure/terraform/main.tf too.
 [triggers]
 crons = ["0 3 * * *"]
 
 # ----- Queue: per-tenant cleanup messages + DLQ --------------------------
+# Names MUST match cloudflare_queue.cleanup(.cleanup_dlq).name pattern.
 [[queues.producers]]
 binding = "CLEANUP_QUEUE"
 queue   = "ontodecide-cleanup-production"
@@ -38,26 +58,32 @@ max_batch_timeout = 30
 max_retries       = 3
 dead_letter_queue = "ontodecide-cleanup-dlq-production"
 
-# D1: shared decision-db. wrangler auto-creates on first deploy.
+# ----- D1: shared decision-db (Terraform-managed) -------------------------
 [[d1_databases]]
 binding        = "DB"
 database_name  = "ontodecide-decision-db-production"
 
-# KV — wrangler auto-creates on first deploy.
+# ----- KV: cross-service cache invalidation (Terraform-managed) -----------
+# 5 bindings MUST match local.kv_binding_map entries with svc="cleanup".
 [[kv_namespaces]]
 binding = "USER_CACHE"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_USER_CACHE_CLEANUP_ID"
 
 [[kv_namespaces]]
 binding = "GRAPH_CACHE"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_GRAPH_CACHE_CLEANUP_ID"
 
 [[kv_namespaces]]
 binding = "INGESTION_JOBS"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_INGESTION_JOBS_CLEANUP_ID"
 
 [[kv_namespaces]]
 binding = "AI_CACHE"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_AI_CACHE_CLEANUP_ID"
 
 [[kv_namespaces]]
 binding = "CLEANUP_JOBS"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_CLEANUP_JOBS_CLEANUP_ID"
 
 [vars]
 NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"

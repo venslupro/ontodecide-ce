@@ -1,0 +1,12 @@
+# 示例 tfvars — 使用前复制为 terraform.tfvars 并填入真实值。
+# *严禁* 将此文件中的真实 token 提交到 git —— terraform.tfvars 已在 .gitignore 中排除。
+
+account_id   = "0123456789abcdef0123456789abcdef"   # 32 位 Cloudflare Account ID
+zone_id      = ""                                     # 留空则跳过自定义域名创建
+project_name = "ontodecide"
+environment  = "production"
+
+# 外部依赖默认值 (默认与 wrangler.toml 一致，真实 B2 桶 / Neo4j 由外部 IaC 管理)
+b2_region           = "us-west-004"
+b2_ingestion_bucket = "ontodecide-ingestion-staging-production"
+b2_archive_bucket   = "ontodecide-tenant-archive-production"

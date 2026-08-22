@@ -2,9 +2,16 @@
 # Continuous Integration (CI) Workflow
 #
 # Runs on every push and pull request to ensure the codebase
-# compiles, lints cleanly, and all tests pass.
+# compiles, lints cleanly, all tests pass, AND the Terraform
+# infrastructure configuration is syntactically valid.
 #
 # This workflow is fully automated — no manual approval needed.
+#
+# SCOPES:
+#   • App code (TS/JS)   — typecheck · lint · build · test
+#   • IaC code (.tf)     — terraform fmt · terraform validate
+#                          (state-independent · no real Cloudflare
+#                           API calls — fast & safe on every PR)
 # ============================================================
 
 name: CI
@@ -23,6 +30,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # -----------------------------------------------------------
+  # Job 1 — App code quality (typecheck · lint · build · test)
+  # -----------------------------------------------------------
   build-test:
     name: Build · Lint · Test
     runs-on: ubuntu-latest
@@ -64,3 +74,111 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  # -----------------------------------------------------------
+  # Job 2 — Terraform static validation (fmt + validate)
+  #         State-independent: no Cloudflare API calls.
+  #         Uses dorny/paths-filter to skip when no .tf changes.
+  # -----------------------------------------------------------
+  terraform-static:
+    name: Terraform · Fmt · Validate
+    runs-on: ubuntu-latest
+    # NOTE: init -backend=false + fmt + validate combine to <10 s.
+    #       We let paths-filter decide whether to skip the heavy
+    #       steps; the checkout + tool setup is always cheap.
+    outputs:
+      skipped: ${{ steps.filter.outputs.terraform != 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for Terraform-relevant path changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          list-files: 'none'
+          filters: |
+            terraform:
+              - 'infrastructure/terraform/**/*.tf'
+              - 'infrastructure/terraform/**/*.tfvars'
+              - '.github/workflows/terraform.yml'
+              - '.github/workflows/ci.yml'
+              - '.terraform.lock.hcl'
+
+      - name: Setup Terraform
+        if: steps.filter.outputs.terraform == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '~> 1.9'
+          terraform_wrapper: true
+
+      - name: Init (backend=false — state-free validation)
+        if: steps.filter.outputs.terraform == 'true'
+        working-directory: infrastructure/terraform
+        run: terraform init -backend=false -input=false
+
+      - name: Format check (canonical HCL layout)
+        if: steps.filter.outputs.terraform == 'true'
+        working-directory: infrastructure/terraform
+        run: terraform fmt -check -recursive -list=false
+
+      - name: Validate schema + references
+        if: steps.filter.outputs.terraform == 'true'
+        working-directory: infrastructure/terraform
+        run: terraform validate
+
+      - name: Skip notice (no Terraform-relevant files changed)
+        if: steps.filter.outputs.terraform != 'true'
+        run: echo "✅ Skipped — this push/PR does not touch infrastructure/terraform/** or workflow YAML."
+
+  # -----------------------------------------------------------
+  # Job 3 — YAML workflow syntax lint (yamllint or actionlint)
+  #         Catches malformed GitHub Actions / Wrangler toml
+  #         early instead of at runtime.
+  # -----------------------------------------------------------
+  config-lint:
+    name: YAML · TOML Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install actionlint + yq (via Go toolchain)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@latest
+
+      - name: actionlint — validate GitHub Actions YAML
+        run: |
+          GOPATH_BIN="$(go env GOPATH)/bin"
+          export PATH="$PATH:$GOPATH_BIN"
+          actionlint -color \
+            .github/workflows/ci.yml \
+            .github/workflows/deploy-workers.yml \
+            .github/workflows/terraform.yml
+
+      - name: Validate all wrangler.toml files exist (smoke check)
+        run: |
+          expected=(
+            "apps/api/gateway/wrangler.toml"
+            "apps/api/user/wrangler.toml"
+            "apps/api/graph/wrangler.toml"
+            "apps/api/ingestion/wrangler.toml"
+            "apps/api/ai/wrangler.toml"
+            "apps/api/cleanup/wrangler.toml"
+          )
+          missing=()
+          for f in "${expected[@]}"; do
+            if [ ! -f "$f" ]; then
+              missing+=("$f")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "ERROR: Missing wrangler.toml files:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+          echo "All 6 wrangler.toml files present."

@@ -6,12 +6,12 @@
  * OpenAI-compatible schema (Google Gemini via its OpenAI-compatible
  * endpoint, OpenRouter aggregation, etc.).
  */
-import type {LlmOptions, LlmProvider, LlmResponse} from '@ontodecide/shared';
-import type {ILLMProvider} from './provider.interface.js';
-import type {AiEnv} from '../../types/env.js';
+import type { LlmOptions, LlmProvider, LlmResponse } from '@ontodecide/shared';
+import type { ILLMProvider } from './provider.interface.js';
+import type { AiEnv } from '../../types/env.js';
 
 interface GatewayChatResponse {
-  choices?: Array<{message?: {content?: string}}>;
+  choices?: Array<{ message?: { content?: string } }>;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -40,15 +40,15 @@ export class AIGatewayProvider implements ILLMProvider {
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
         'cf-aig-model': model,
       },
       body: JSON.stringify({
         model,
         messages: [
-          ...(options?.systemPrompt ? [{role: 'system', content: options.systemPrompt}] : []),
-          {role: 'user', content: prompt},
+          ...(options?.systemPrompt ? [{ role: 'system', content: options.systemPrompt }] : []),
+          { role: 'user', content: prompt },
         ],
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens ?? 2048,

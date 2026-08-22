@@ -9,7 +9,7 @@
  * The cron path is the design doc's §4.6 main flow; the queue consumer
  * executes the per-tenant purge (multi-step: Neo4j → D1 → KV → R2 → mark).
  */
-import {z} from 'zod';
+import { z } from 'zod';
 import {
   OpenAPIHono,
   createRoute,
@@ -29,26 +29,23 @@ import {
   validators,
   type ConfigKey,
 } from '@ontodecide/shared';
-import type {CleanupEnv, CleanupMessage} from './types/env.js';
-import {
-  cleanupStatusHandler,
-  triggerCleanupHandler,
-} from './handlers/admin.js';
-import {runDailyCleanup} from './cron/trigger.js';
-import {handleCleanupBatch} from './queue/consumer.js';
+import type { CleanupEnv, CleanupMessage } from './types/env.js';
+import { cleanupStatusHandler, triggerCleanupHandler } from './handlers/admin.js';
+import { runDailyCleanup } from './cron/trigger.js';
+import { handleCleanupBatch } from './queue/consumer.js';
 
-const app = new OpenAPIHono<{Bindings: CleanupEnv}>({
+const app = new OpenAPIHono<{ Bindings: CleanupEnv }>({
   defaultHook: (result, c) => {
     if (!result.success) {
       return c.json(
-          {
-            success: false,
-            error: {
-              code: ERROR_CODES.VALIDATION_FAILED,
-              message: 'Request validation failed.',
-            },
+        {
+          success: false,
+          error: {
+            code: ERROR_CODES.VALIDATION_FAILED,
+            message: 'Request validation failed.',
           },
-          400,
+        },
+        400,
       );
     }
     return;
@@ -63,7 +60,11 @@ const REQUIRED_KEYS: ConfigKey[] = [
   configKey('DB', 'D1 database for users + audit_logs'),
   configKey('B2_KEY_ID', 'B2 Application Key ID', validators.nonEmpty),
   configKey('B2_KEY', 'B2 Application Key Secret', validators.nonEmpty),
-  configKey('B2_REGION', 'B2 region (e.g. us-west-004)', validators.pattern(/^us-\w+-\d+$/, 'B2 region format like us-west-004')),
+  configKey(
+    'B2_REGION',
+    'B2 region (e.g. us-west-004)',
+    validators.pattern(/^us-\w+-\d+$/, 'B2 region format like us-west-004'),
+  ),
   configKey('B2_INGESTION_BUCKET', 'B2 ingestion staging bucket', validators.nonEmpty),
   configKey('B2_ARCHIVE_BUCKET', 'B2 archive backup bucket', validators.nonEmpty),
   configKey('USER_CACHE', 'KV namespace for user cache'),
@@ -95,14 +96,10 @@ app.use('*', async (c, next) => {
 // All Cleanup routes are internal-only (called by the Gateway).
 app.use('*', internalOnlyMiddleware());
 app.onError(honoErrorHandler);
-app.notFound((c) =>
-  jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404),
-);
+app.notFound((c) => jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404));
 
 // GET /healthz — plain route (not part of the OpenAPI spec).
-app.get('/healthz', (c) =>
-  jsonOkResponse(c, {service: 'cleanup', version: '0.1.0'}),
-);
+app.get('/healthz', (c) => jsonOkResponse(c, { service: 'cleanup', version: '0.1.0' }));
 
 // POST /cleanup
 const triggerCleanupRoute = createRoute({
@@ -110,11 +107,11 @@ const triggerCleanupRoute = createRoute({
   path: '/cleanup',
   request: {
     body: {
-      content: {'application/json': {schema: cleanupRequestSchema}},
+      content: { 'application/json': { schema: cleanupRequestSchema } },
     },
   },
   responses: {
-    202: jsonOk(z.object({taskId: z.string()}), 'Cleanup task enqueued.'),
+    202: jsonOk(z.object({ taskId: z.string() }), 'Cleanup task enqueued.'),
     400: jsonError('Validation failed.'),
     403: jsonError('Forbidden.'),
   },
@@ -126,7 +123,7 @@ const cleanupStatusRoute = createRoute({
   method: 'get',
   path: '/cleanup/status/{id}',
   request: {
-    params: z.object({id: z.string()}),
+    params: z.object({ id: z.string() }),
   },
   responses: {
     200: jsonOk(cleanupStatusSchema, 'Cleanup task status.'),
@@ -145,32 +142,25 @@ app.doc('/openapi.json', (c) => ({
     version: '0.1.0',
     description: 'Daily data-retention enforcement + manual purge.',
   },
-  servers: [{url: new URL(c.req.url).origin}],
+  servers: [{ url: new URL(c.req.url).origin }],
 }));
-app.get('/docs', (c) =>
-  c.html(swaggerUiHtml(`${new URL(c.req.url).origin}/openapi.json`)),
-);
+app.get('/docs', (c) => c.html(swaggerUiHtml(`${new URL(c.req.url).origin}/openapi.json`)));
 
 export default {
   fetch: app.fetch,
-  async scheduled(
-      _event: ScheduledEvent,
-      env: CleanupEnv,
-      ctx: ExecutionContext,
-  ): Promise<void> {
+  async scheduled(_event: ScheduledEvent, env: CleanupEnv, ctx: ExecutionContext): Promise<void> {
     // Use `waitUntil` so the cron invocation can return immediately and
     // let the platform bill the work to the cron request's CPU budget.
-    ctx.waitUntil(runDailyCleanup(env).catch((err) => {
-      // In production, surface this to a log stream; the prototype just
-      // swallows the error so the cron keeps firing daily.
-      void err;
-    }));
+    ctx.waitUntil(
+      runDailyCleanup(env).catch((err) => {
+        // In production, surface this to a log stream; the prototype just
+        // swallows the error so the cron keeps firing daily.
+        void err;
+      }),
+    );
   },
 
-  async queue(
-      batch: MessageBatch<CleanupMessage>,
-      env: CleanupEnv,
-  ): Promise<void> {
+  async queue(batch: MessageBatch<CleanupMessage>, env: CleanupEnv): Promise<void> {
     await handleCleanupBatch(batch, env);
   },
 };

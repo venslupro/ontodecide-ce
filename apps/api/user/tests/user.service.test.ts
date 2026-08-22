@@ -5,8 +5,8 @@
  * point of the dependency-inversion design — the service is fully testable
  * without a D1 binding.
  */
-import {describe, it, expect, beforeEach} from 'vitest';
-import {UserManagementService} from '../src/service/user.service.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { UserManagementService } from '../src/service/user.service.js';
 import type {
   AuditEntry,
   IAuditRepository,
@@ -15,19 +15,17 @@ import type {
   IUserRepository,
   RefreshTokenRecord,
 } from '../src/repository/user.repository.js';
-import type {User} from '../src/domain/user.entity.js';
-import type {UserSnapshot} from '../src/domain/user.entity.js';
-import type {UserRole} from '../src/types/env.js';
-import {
-  hashPassword,
-} from '@ontodecide/shared';
+import type { User } from '../src/domain/user.entity.js';
+import type { UserSnapshot } from '../src/domain/user.entity.js';
+import type { UserRole } from '../src/types/env.js';
+import { hashPassword } from '@ontodecide/shared';
 
 // ---------------------------------------------------------------------------
 // In-memory fakes
 // ---------------------------------------------------------------------------
 
 class InMemoryUserRepo implements IUserRepository {
-  public users = new Map<string, User & {_passwordHash: string}>();
+  public users = new Map<string, User & { _passwordHash: string }>();
   public deleted = new Set<string>();
 
   async findById(id: string): Promise<User | null> {
@@ -48,11 +46,13 @@ class InMemoryUserRepo implements IUserRepository {
     return null;
   }
 
-  async list(opts: {
-    role?: string;
-    offset?: number;
-    limit?: number;
-  } = {}): Promise<{total: number; items: UserSnapshot[]}> {
+  async list(
+    opts: {
+      role?: string;
+      offset?: number;
+      limit?: number;
+    } = {},
+  ): Promise<{ total: number; items: UserSnapshot[] }> {
     let all = [...this.users.values()];
     if (opts.role) {
       all = all.filter((u) => u.role === opts.role);
@@ -67,7 +67,7 @@ class InMemoryUserRepo implements IUserRepository {
   }
 
   async save(user: User): Promise<void> {
-    this.users.set(user.id, user as unknown as User & {_passwordHash: string});
+    this.users.set(user.id, user as unknown as User & { _passwordHash: string });
   }
 
   async delete(id: string): Promise<void> {
@@ -98,9 +98,9 @@ class InMemoryAuditRepo implements IAuditRepository {
   }
 
   async listForTenant(
-      tenantId: string,
-      opts?: {offset?: number; limit?: number},
-  ): Promise<{total: number; items: AuditEntry[]}> {
+    tenantId: string,
+    opts?: { offset?: number; limit?: number },
+  ): Promise<{ total: number; items: AuditEntry[] }> {
     const filtered = this.entries.filter((e) => e.tenantId === tenantId);
     const offset = opts?.offset ?? 0;
     const limit = opts?.limit ?? 50;
@@ -125,14 +125,14 @@ class InMemoryRefreshRepo implements IRefreshTokenRepository {
   async revoke(jti: string): Promise<void> {
     const t = this.tokens.get(jti);
     if (t) {
-      this.tokens.set(jti, {...t, revoked: true});
+      this.tokens.set(jti, { ...t, revoked: true });
     }
   }
 
   async revokeAllForUser(userId: string): Promise<void> {
     for (const [jti, t] of this.tokens) {
       if (t.userId === userId) {
-        this.tokens.set(jti, {...t, revoked: true});
+        this.tokens.set(jti, { ...t, revoked: true });
       }
     }
   }
@@ -154,7 +154,7 @@ class InMemoryConfigRepo implements IConfigRepository {
   }
 
   async all(): Promise<Record<string, string>> {
-    return {...this.config};
+    return { ...this.config };
   }
 }
 
@@ -168,7 +168,7 @@ function makeService(config: Record<string, string> = {}) {
   const refresh = new InMemoryRefreshRepo();
   const configRepo = new InMemoryConfigRepo(config);
   const service = new UserManagementService(users, audit, refresh, configRepo);
-  return {service, users, audit, refresh, configRepo};
+  return { service, users, audit, refresh, configRepo };
 }
 
 const auditCtx = {
@@ -184,9 +184,8 @@ const auditCtx = {
 
 describe('UserManagementService.createUser', () => {
   it('creates a user with a temporary password', async () => {
-    const {service, users} = makeService();
-    const result = await service.createUser(
-        {username: 'alice'}, auditCtx);
+    const { service, users } = makeService();
+    const result = await service.createUser({ username: 'alice' }, auditCtx);
 
     expect(result.user.username).toBe('alice');
     expect(result.user.role).toBe('analyst');
@@ -195,29 +194,30 @@ describe('UserManagementService.createUser', () => {
   });
 
   it('respects the max_users cap', async () => {
-    const {service} = makeService({max_users: '1'});
-    await service.createUser({username: 'first'}, auditCtx);
-    await expect(service.createUser({username: 'second'}, auditCtx))
-        .rejects.toThrow('Maximum of 1 users reached.');
+    const { service } = makeService({ max_users: '1' });
+    await service.createUser({ username: 'first' }, auditCtx);
+    await expect(service.createUser({ username: 'second' }, auditCtx)).rejects.toThrow(
+      'Maximum of 1 users reached.',
+    );
   });
 
   it('rejects a duplicate username', async () => {
-    const {service} = makeService();
-    await service.createUser({username: 'dup'}, auditCtx);
-    await expect(service.createUser({username: 'dup'}, auditCtx))
-        .rejects.toThrow('Username \'dup\' is taken.');
+    const { service } = makeService();
+    await service.createUser({ username: 'dup' }, auditCtx);
+    await expect(service.createUser({ username: 'dup' }, auditCtx)).rejects.toThrow(
+      "Username 'dup' is taken.",
+    );
   });
 
   it('respects the provided role override', async () => {
-    const {service} = makeService();
-    const {user} = await service.createUser(
-        {username: 'bob', role: 'viewer'}, auditCtx);
+    const { service } = makeService();
+    const { user } = await service.createUser({ username: 'bob', role: 'viewer' }, auditCtx);
     expect(user.role).toBe('viewer');
   });
 
   it('writes an audit log entry on create', async () => {
-    const {service, audit} = makeService();
-    await service.createUser({username: 'audited'}, auditCtx);
+    const { service, audit } = makeService();
+    await service.createUser({ username: 'audited' }, auditCtx);
     expect(audit.entries).toHaveLength(1);
     expect(audit.entries[0].action).toBe('create_user');
   });
@@ -225,46 +225,45 @@ describe('UserManagementService.createUser', () => {
 
 describe('UserManagementService.login', () => {
   it('authenticates with the correct password', async () => {
-    const {service} = makeService();
-    const {temporaryPassword} = await service.createUser(
-        {username: 'alice'}, auditCtx);
+    const { service } = makeService();
+    const { temporaryPassword } = await service.createUser({ username: 'alice' }, auditCtx);
     const user = await service.login('alice', temporaryPassword, auditCtx);
     expect(user.username).toBe('alice');
     expect(user.snapshot().state).not.toBe('pending');
   });
 
   it('throws on a wrong password', async () => {
-    const {service} = makeService();
-    await service.createUser({username: 'alice'}, auditCtx);
-    await expect(service.login('alice', 'wrong-password', auditCtx))
-        .rejects.toThrow('Invalid credentials.');
+    const { service } = makeService();
+    await service.createUser({ username: 'alice' }, auditCtx);
+    await expect(service.login('alice', 'wrong-password', auditCtx)).rejects.toThrow(
+      'Invalid credentials.',
+    );
   });
 
   it('throws on a non-existent user', async () => {
-    const {service} = makeService();
-    await expect(service.login('ghost', 'pw', auditCtx))
-        .rejects.toThrow('Invalid credentials.');
+    const { service } = makeService();
+    await expect(service.login('ghost', 'pw', auditCtx)).rejects.toThrow('Invalid credentials.');
   });
 });
 
 describe('UserManagementService.setStatus', () => {
   it('disables a user', async () => {
-    const {service} = makeService();
-    const {user} = await service.createUser({username: 'bob'}, auditCtx);
+    const { service } = makeService();
+    const { user } = await service.createUser({ username: 'bob' }, auditCtx);
     const updated = await service.setStatus(user.id, false, auditCtx);
     expect(updated.snapshot().isActive).toBe(false);
   });
 
   it('re-enables a disabled user', async () => {
-    const {service} = makeService();
-    const {user} = await service.createUser({username: 'bob'}, auditCtx);
+    const { service } = makeService();
+    const { user } = await service.createUser({ username: 'bob' }, auditCtx);
     await service.setStatus(user.id, false, auditCtx);
     const reEnabled = await service.setStatus(user.id, true, auditCtx);
     expect(reEnabled.snapshot().isActive).toBe(true);
   });
 
   it('throws when disabling a bootstrap admin', async () => {
-    const {service, users} = makeService();
+    const { service, users } = makeService();
     // Simulate a bootstrap admin row.
     const adminHash = await hashPassword('admin-pw');
     const admin = {
@@ -283,26 +282,32 @@ describe('UserManagementService.setStatus', () => {
       dataSizeEstimate: 0,
       // Entity methods (we only need disable for this test)
       snapshot: () => ({
-        id: 'admin-1', tenantId: 'tenant_admin', username: 'admin',
-        email: null, role: 'admin', isActive: true, isDataCleared: false,
-        state: 'active', createdAt: new Date().toISOString(),
-        lastLoginAt: null, lastCleanupAt: null,
-        dataRetentionDays: 30, dataSizeEstimate: 0,
+        id: 'admin-1',
+        tenantId: 'tenant_admin',
+        username: 'admin',
+        email: null,
+        role: 'admin',
+        isActive: true,
+        isDataCleared: false,
+        state: 'active',
+        createdAt: new Date().toISOString(),
+        lastLoginAt: null,
+        lastCleanupAt: null,
+        dataRetentionDays: 30,
+        dataSizeEstimate: 0,
       }),
     };
     // The User entity's disable() throws for admin role — we test via
     // the service which calls user.disable().
     await users.save(admin as unknown as User);
-    await expect(service.setStatus('admin-1', false, auditCtx))
-        .rejects.toThrow();
+    await expect(service.setStatus('admin-1', false, auditCtx)).rejects.toThrow();
   });
 });
 
 describe('UserManagementService.resetPassword', () => {
   it('resets the password and revokes all refresh tokens', async () => {
-    const {service, refresh} = makeService();
-    const {user, temporaryPassword} = await service.createUser(
-        {username: 'alice'}, auditCtx);
+    const { service, refresh } = makeService();
+    const { user, temporaryPassword } = await service.createUser({ username: 'alice' }, auditCtx);
     // Issue a refresh token.
     await service.issueRefreshToken(user);
     const newPw = await service.resetPassword(user.id, auditCtx);
@@ -315,16 +320,17 @@ describe('UserManagementService.resetPassword', () => {
   });
 
   it('throws for a non-existent user', async () => {
-    const {service} = makeService();
-    await expect(service.resetPassword('ghost-id', auditCtx))
-        .rejects.toThrow('User ghost-id not found.');
+    const { service } = makeService();
+    await expect(service.resetPassword('ghost-id', auditCtx)).rejects.toThrow(
+      'User ghost-id not found.',
+    );
   });
 });
 
 describe('UserManagementService.deleteUser', () => {
   it('marks user inactive and revokes tokens (real deletion done by Cleanup worker)', async () => {
-    const {service, users, refresh} = makeService();
-    const {user} = await service.createUser({username: 'bob'}, auditCtx);
+    const { service, users, refresh } = makeService();
+    const { user } = await service.createUser({ username: 'bob' }, auditCtx);
     await service.issueRefreshToken(user);
     await service.deleteUser(user.id, auditCtx);
     // User service no longer drops the D1 row — that's the Cleanup
@@ -339,7 +345,7 @@ describe('UserManagementService.deleteUser', () => {
   });
 
   it('throws when deleting the bootstrap admin', async () => {
-    const {service, users} = makeService();
+    const { service, users } = makeService();
     const adminHash = await hashPassword('admin-pw');
     const admin = {
       id: 'admin-1',
@@ -356,40 +362,49 @@ describe('UserManagementService.deleteUser', () => {
       dataRetentionDays: 30,
       dataSizeEstimate: 0,
       snapshot: () => ({
-        id: 'admin-1', tenantId: 'tenant_admin', username: 'admin',
-        email: null, role: 'admin', isActive: true, isDataCleared: false,
-        state: 'active', createdAt: new Date().toISOString(),
-        lastLoginAt: null, lastCleanupAt: null,
-        dataRetentionDays: 30, dataSizeEstimate: 0,
+        id: 'admin-1',
+        tenantId: 'tenant_admin',
+        username: 'admin',
+        email: null,
+        role: 'admin',
+        isActive: true,
+        isDataCleared: false,
+        state: 'active',
+        createdAt: new Date().toISOString(),
+        lastLoginAt: null,
+        lastCleanupAt: null,
+        dataRetentionDays: 30,
+        dataSizeEstimate: 0,
       }),
     };
     await users.save(admin as unknown as User);
-    await expect(service.deleteUser('admin-1', auditCtx))
-        .rejects.toThrow('Cannot delete the bootstrap admin.');
+    await expect(service.deleteUser('admin-1', auditCtx)).rejects.toThrow(
+      'Cannot delete the bootstrap admin.',
+    );
   });
 });
 
 describe('UserManagementService.getUser', () => {
   it('returns the user entity', async () => {
-    const {service} = makeService();
-    const {user} = await service.createUser({username: 'alice'}, auditCtx);
+    const { service } = makeService();
+    const { user } = await service.createUser({ username: 'alice' }, auditCtx);
     const found = await service.getUser(user.id);
     expect(found.id).toBe(user.id);
   });
 
   it('throws for a non-existent user', async () => {
-    const {service} = makeService();
+    const { service } = makeService();
     await expect(service.getUser('ghost')).rejects.toThrow();
   });
 });
 
 describe('UserManagementService.listUsers', () => {
   it('returns a paginated list', async () => {
-    const {service} = makeService();
+    const { service } = makeService();
     for (let i = 0; i < 5; i++) {
-      await service.createUser({username: `user${i}`}, auditCtx);
+      await service.createUser({ username: `user${i}` }, auditCtx);
     }
-    const {total, items} = await service.listUsers({page: 1, size: 3});
+    const { total, items } = await service.listUsers({ page: 1, size: 3 });
     expect(total).toBe(5);
     expect(items).toHaveLength(3);
   });
@@ -397,7 +412,7 @@ describe('UserManagementService.listUsers', () => {
 
 describe('UserManagementService.config', () => {
   it('sets and gets a config value', async () => {
-    const {service} = makeService();
+    const { service } = makeService();
     await service.setConfig('key', 'value', auditCtx);
     const all = await service.getAllConfig();
     expect(all['key']).toBe('value');
@@ -406,9 +421,9 @@ describe('UserManagementService.config', () => {
 
 describe('UserManagementService.listAudit', () => {
   it('returns audit entries for a tenant', async () => {
-    const {service} = makeService();
-    const {user} = await service.createUser({username: 'alice'}, auditCtx);
-    const {total, items} = await service.listAudit(user.tenantId, {});
+    const { service } = makeService();
+    const { user } = await service.createUser({ username: 'alice' }, auditCtx);
+    const { total, items } = await service.listAudit(user.tenantId, {});
     expect(total).toBe(1);
     expect(items[0].action).toBe('create_user');
   });
@@ -416,9 +431,9 @@ describe('UserManagementService.listAudit', () => {
 
 describe('UserManagementService.refreshToken', () => {
   it('issues and revokes a refresh token', async () => {
-    const {service, refresh} = makeService();
-    const {user} = await service.createUser({username: 'alice'}, auditCtx);
-    const {jti} = await service.issueRefreshToken(user);
+    const { service, refresh } = makeService();
+    const { user } = await service.createUser({ username: 'alice' }, auditCtx);
+    const { jti } = await service.issueRefreshToken(user);
     expect(refresh.tokens.has(jti)).toBe(true);
     await service.revokeRefreshToken(jti);
     expect(refresh.tokens.get(jti)!.revoked).toBe(true);

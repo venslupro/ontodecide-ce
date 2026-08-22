@@ -58,13 +58,15 @@ export interface ConfigKey {
  */
 export const validators = {
   /** String must be at least `n` characters. */
-  minLength: (n: number) => (value: unknown): string | null => {
-    if (typeof value !== 'string') return `must be a string`;
-    if (value.length < n) {
-      return `must be at least ${n} characters (got ${value.length})`;
-    }
-    return null;
-  },
+  minLength:
+    (n: number) =>
+    (value: unknown): string | null => {
+      if (typeof value !== 'string') return `must be a string`;
+      if (value.length < n) {
+        return `must be at least ${n} characters (got ${value.length})`;
+      }
+      return null;
+    },
 
   /**
    * String must be a valid URL.
@@ -80,7 +82,8 @@ export const validators = {
    * // Neo4j connection URL (accepts neo4j:, neo4j+s:, neo4j+ssc:, http:, https:)
    * validators.url(['http', 'https', 'neo4j', 'neo4j+s', 'neo4j+ssc'])
    */
-  url: (allowedProtocols: string[] = ['http', 'https']) =>
+  url:
+    (allowedProtocols: string[] = ['http', 'https']) =>
     (value: unknown): string | null => {
       if (typeof value !== 'string') return `must be a string`;
       try {
@@ -131,24 +134,28 @@ export const validators = {
   },
 
   /** String must start with the given prefix. */
-  startsWith: (prefix: string) => (value: unknown): string | null => {
-    if (typeof value !== 'string') return `must be a string`;
-    if (!value.startsWith(prefix)) {
-      return `must start with "${prefix}" (got: ${JSON.stringify(value)})`;
-    }
-    return null;
-  },
+  startsWith:
+    (prefix: string) =>
+    (value: unknown): string | null => {
+      if (typeof value !== 'string') return `must be a string`;
+      if (!value.startsWith(prefix)) {
+        return `must start with "${prefix}" (got: ${JSON.stringify(value)})`;
+      }
+      return null;
+    },
 
   /** String must match a regex pattern. */
-  pattern: (regex: RegExp, label?: string) => (value: unknown): string | null => {
-    if (typeof value !== 'string') return `must be a string`;
-    if (!regex.test(value)) {
-      return label ?
-        `must match ${label} (got: ${JSON.stringify(value)})` :
-        `must match ${regex} (got: ${JSON.stringify(value)})`;
-    }
-    return null;
-  },
+  pattern:
+    (regex: RegExp, label?: string) =>
+    (value: unknown): string | null => {
+      if (typeof value !== 'string') return `must be a string`;
+      if (!regex.test(value)) {
+        return label
+          ? `must match ${label} (got: ${JSON.stringify(value)})`
+          : `must match ${regex} (got: ${JSON.stringify(value)})`;
+      }
+      return null;
+    },
 
   /** String must be a valid email address. */
   email: (value: unknown): string | null => {
@@ -183,7 +190,8 @@ export const validators = {
    * validators.jwtSecret  // default: min 32 chars
    * validators.jwtSecret(64) // require 64+ chars (HMAC-SHA512)
    */
-  jwtSecret: (minLength: number = 32) =>
+  jwtSecret:
+    (minLength: number = 32) =>
     (value: unknown): string | null => {
       if (typeof value !== 'string') return `must be a string`;
       if (value.length < minLength) {
@@ -192,11 +200,22 @@ export const validators = {
       // Common weak secrets that would pass the length check.
       const weakSecrets = new Set([
         // Generic weak keys
-        'secret', 'key', 'changeme', 'password', 'admin',
-        'jwt', 'jwt_secret', 'signing_key', 'signing-secret',
+        'secret',
+        'key',
+        'changeme',
+        'password',
+        'admin',
+        'jwt',
+        'jwt_secret',
+        'signing_key',
+        'signing-secret',
         // Common placeholder values
-        'your-secret-key', 'super-secret-key', 'my-secret-key',
-        'development', 'staging', 'production',
+        'your-secret-key',
+        'super-secret-key',
+        'my-secret-key',
+        'development',
+        'staging',
+        'production',
         // Too common to be safe
         '12345678901234567890123456789012',
         '0987654321098765432109876543210',
@@ -216,8 +235,9 @@ export const validators = {
       const hasSymbol = /[^a-zA-Z0-9]/.test(value);
       const varietyCount = [hasLower, hasUpper, hasDigit, hasSymbol].filter(Boolean).length;
       if (varietyCount < 2) {
-        return `lacks character variety — mix at least 2 of ` +
-          `[lowercase, uppercase, digits, symbols]`;
+        return (
+          `lacks character variety — mix at least 2 of ` + `[lowercase, uppercase, digits, symbols]`
+        );
       }
       return null;
     },
@@ -232,11 +252,11 @@ export const validators = {
  * configKey('JWT_SECRET', 'HMAC signing key')
  */
 export function configKey(
-    key: string,
-    description: string,
-    validate?: (value: unknown) => string | null,
+  key: string,
+  description: string,
+  validate?: (value: unknown) => string | null,
 ): ConfigKey {
-  return {key, description, validate};
+  return { key, description, validate };
 }
 
 // ─── Core validation engine ───────────────────────────────────────────────────
@@ -255,21 +275,22 @@ export function configKey(
  * @returns Array of findings (empty = all good).
  */
 export function validateWorkerConfig(
-    env: Record<string, unknown>,
-    requiredKeys: ConfigKey[],
-    optionalKeys: ConfigKey[] = [],
-    serviceName: string = 'worker',
+  env: Record<string, unknown>,
+  requiredKeys: ConfigKey[],
+  optionalKeys: ConfigKey[] = [],
+  serviceName: string = 'worker',
 ): ConfigFinding[] {
   const findings: ConfigFinding[] = [];
 
-  for (const {key, description, validate} of requiredKeys) {
+  for (const { key, description, validate } of requiredKeys) {
     const value = env[key];
     const present = isPresent(value);
     if (!present) {
       findings.push({
         key,
         severity: 'error',
-        description: `Missing required config: ${description}. ` +
+        description:
+          `Missing required config: ${description}. ` +
           `Set it in Cloudflare Dashboard → Worker → Variables and Secrets, ` +
           `or push via \`wrangler secret put ${key}\`.`,
       });
@@ -289,14 +310,15 @@ export function validateWorkerConfig(
     }
   }
 
-  for (const {key, description, validate} of optionalKeys) {
+  for (const { key, description, validate } of optionalKeys) {
     const value = env[key];
     const present = isPresent(value);
     if (!present) {
       findings.push({
         key,
         severity: 'warning',
-        description: `Missing optional config: ${description}. ` +
+        description:
+          `Missing optional config: ${description}. ` +
           `Some features of the ${serviceName} service may not work.`,
       });
       continue;
@@ -322,14 +344,9 @@ export function validateWorkerConfig(
  * Log all config findings at the appropriate severity level.
  * Uses console.error for `error` severity, console.warn for `warning`.
  */
-export function logConfigFindings(
-    findings: ConfigFinding[],
-    serviceName: string = 'worker',
-): void {
+export function logConfigFindings(findings: ConfigFinding[], serviceName: string = 'worker'): void {
   if (findings.length === 0) {
-    console.info(
-        `[config] ${serviceName}: all required configuration is present.`,
-    );
+    console.info(`[config] ${serviceName}: all required configuration is present.`);
     return;
   }
 
@@ -337,18 +354,14 @@ export function logConfigFindings(
   const warnings = findings.filter((f) => f.severity === 'warning');
 
   if (errors.length > 0) {
-    console.error(
-        `[config] ${serviceName}: ${errors.length} REQUIRED config(s) issue(s):`,
-    );
+    console.error(`[config] ${serviceName}: ${errors.length} REQUIRED config(s) issue(s):`);
     for (const f of errors) {
       console.error(`  ✗ ${f.key} — ${f.description}`);
     }
   }
 
   if (warnings.length > 0) {
-    console.warn(
-        `[config] ${serviceName}: ${warnings.length} optional config(s) issue(s):`,
-    );
+    console.warn(`[config] ${serviceName}: ${warnings.length} optional config(s) issue(s):`);
     for (const f of warnings) {
       console.warn(`  ⚠ ${f.key} — ${f.description}`);
     }
@@ -364,10 +377,10 @@ export function logConfigFindings(
  *          a 503 in health-check when required keys are missing).
  */
 export function validateAndLogConfig(
-    env: Record<string, unknown>,
-    requiredKeys: ConfigKey[],
-    optionalKeys: ConfigKey[] = [],
-    serviceName: string = 'worker',
+  env: Record<string, unknown>,
+  requiredKeys: ConfigKey[],
+  optionalKeys: ConfigKey[] = [],
+  serviceName: string = 'worker',
 ): ConfigFinding[] {
   const findings = validateWorkerConfig(env, requiredKeys, optionalKeys, serviceName);
   logConfigFindings(findings, serviceName);

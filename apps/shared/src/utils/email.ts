@@ -36,10 +36,7 @@ export const DEFAULT_EMAIL_FROM = 'venslu.pro@gmail.com';
  *   operations on email delivery — the credentials are still returned
  *   in the API response as a fallback).
  */
-export async function sendEmail(
-    message: EmailMessage,
-    config: EmailConfig,
-): Promise<boolean> {
+export async function sendEmail(message: EmailMessage, config: EmailConfig): Promise<boolean> {
   if (!config.apiKey) {
     // Graceful no-op in local dev / unit-test environments.
     return false;
@@ -48,7 +45,7 @@ export async function sendEmail(
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
+        Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -72,9 +69,9 @@ export async function sendEmail(
  * auto-generated username, temporary password, and expiration date.
  */
 export function buildCredentialEmail(
-    username: string,
-    password: string,
-    expiresAt: string,
+  username: string,
+  password: string,
+  expiresAt: string,
 ): { subject: string; text: string; html: string } {
   const expiry = new Date(expiresAt).toLocaleString('en-US', {
     year: 'numeric',
@@ -108,5 +105,5 @@ export function buildCredentialEmail(
     '<p><em>After expiration, your account and all associated data',
     'will be automatically deleted.</em></p>',
   ].join('\n');
-  return {subject, text, html};
+  return { subject, text, html };
 }

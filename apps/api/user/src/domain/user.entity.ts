@@ -11,7 +11,7 @@
  * mutate status. This keeps the state-machine logic in one place and
  * makes the repository's job simpler.
  */
-import type {UserDbRow, UserRole} from '../types/env.js';
+import type { UserDbRow, UserRole } from '../types/env.js';
 
 export type UserState = 'pending' | 'active' | 'disabled' | 'data_cleared';
 
@@ -145,7 +145,7 @@ export class User {
 
   /** True when the supplied plaintext password verifies against the hash. */
   public async verifyPassword(plaintext: string): Promise<boolean> {
-    const {verifyPassword} = await import('@ontodecide/shared');
+    const { verifyPassword } = await import('@ontodecide/shared');
     return verifyPassword(plaintext, this.passwordHash);
   }
 
@@ -204,7 +204,7 @@ export class User {
   }
 
   /** Update the email / retention fields. */
-  public updateProfile(params: {email?: string; dataRetentionDays?: number}): void {
+  public updateProfile(params: { email?: string; dataRetentionDays?: number }): void {
     if (params.email !== undefined) this.email = params.email;
     if (params.dataRetentionDays !== undefined) {
       this.dataRetentionDays = params.dataRetentionDays;

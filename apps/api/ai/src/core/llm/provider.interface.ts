@@ -10,7 +10,7 @@
  * constructor (injected via {@link ProviderFactory}); this keeps
  * {@link generate} focused on the call itself rather than on wiring.
  */
-import type {LlmOptions, LlmProvider, LlmResponse} from '@ontodecide/shared';
+import type { LlmOptions, LlmProvider, LlmResponse } from '@ontodecide/shared';
 
 export interface ILLMProvider {
   /** Stable identifier of this provider (matches `LlmProvider`). */

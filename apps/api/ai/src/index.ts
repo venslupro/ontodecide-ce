@@ -30,14 +30,14 @@ import {
   jsonOk,
   jsonOkResponse,
 } from '@ontodecide/shared/hono';
-import {z} from 'zod';
-import type {AiEnv} from './types/env.js';
-import {PlanningAgent} from './core/agents/planning.agent.js';
-import {ProviderFactory} from './core/llm/provider.factory.js';
-import {NeuronBudgetManager} from './core/budget.service.js';
-import {D1DecisionRepository} from './repository/decision.repository.js';
-import {ScenarioService} from './service/scenario.service.js';
-import {RecommendationService} from './service/recommendation.service.js';
+import { z } from 'zod';
+import type { AiEnv } from './types/env.js';
+import { PlanningAgent } from './core/agents/planning.agent.js';
+import { ProviderFactory } from './core/llm/provider.factory.js';
+import { NeuronBudgetManager } from './core/budget.service.js';
+import { D1DecisionRepository } from './repository/decision.repository.js';
+import { ScenarioService } from './service/scenario.service.js';
+import { RecommendationService } from './service/recommendation.service.js';
 import {
   agentStateHandler,
   historyHandler,
@@ -49,7 +49,7 @@ import {
 } from './handlers/ai.js';
 
 // Re-export the Durable Object class so Wrangler can register it.
-export {PlanningAgent};
+export { PlanningAgent };
 
 export interface AiBindings {
   env: AiEnv;
@@ -111,7 +111,7 @@ function createBindings(env: AiEnv): AiBindings {
 }
 
 function buildApp(b: AiBindings) {
-  const app = new OpenAPIHono<{Bindings: AiEnv}>();
+  const app = new OpenAPIHono<{ Bindings: AiEnv }>();
 
   // All AI routes are internal-only (called by the Gateway).
   app.use('*', internalOnlyMiddleware());
@@ -123,7 +123,7 @@ function buildApp(b: AiBindings) {
     method: 'get',
     path: '/healthz',
     responses: {
-      200: {description: 'Service health.'},
+      200: { description: 'Service health.' },
     },
   });
 
@@ -131,7 +131,7 @@ function buildApp(b: AiBindings) {
     method: 'get',
     path: '/ai/providers',
     responses: {
-      200: {description: 'Configured LLM providers.'},
+      200: { description: 'Configured LLM providers.' },
     },
   });
 
@@ -140,7 +140,7 @@ function buildApp(b: AiBindings) {
     path: '/ai/scenario',
     request: {
       body: {
-        content: {'application/json': {schema: scenarioRequestSchema}},
+        content: { 'application/json': { schema: scenarioRequestSchema } },
       },
     },
     responses: {
@@ -154,7 +154,7 @@ function buildApp(b: AiBindings) {
     path: '/ai/recommend',
     request: {
       body: {
-        content: {'application/json': {schema: recommendationRequestSchema}},
+        content: { 'application/json': { schema: recommendationRequestSchema } },
       },
     },
     responses: {
@@ -168,11 +168,11 @@ function buildApp(b: AiBindings) {
     path: '/ai/agent/plan',
     request: {
       body: {
-        content: {'application/json': {schema: agentPlanRequestSchema}},
+        content: { 'application/json': { schema: agentPlanRequestSchema } },
       },
     },
     responses: {
-      202: {description: 'Agent run started.'},
+      202: { description: 'Agent run started.' },
     },
   });
 
@@ -188,7 +188,7 @@ function buildApp(b: AiBindings) {
     method: 'post',
     path: '/ai/agent/{id}/reflect',
     responses: {
-      200: {description: 'Reflection triggered.'},
+      200: { description: 'Reflection triggered.' },
     },
   });
 
@@ -203,14 +203,13 @@ function buildApp(b: AiBindings) {
       }),
     },
     responses: {
-      200: {description: 'Decision history page.'},
+      200: { description: 'Decision history page.' },
     },
   });
 
   // -- Route registration ---------------------------------------------------
 
-  app.openapi(healthRoute, (c) =>
-    jsonOkResponse(c, {service: 'ai', version: '0.1.0'}));
+  app.openapi(healthRoute, (c) => jsonOkResponse(c, { service: 'ai', version: '0.1.0' }));
 
   app.openapi(providersRoute, async (c) => {
     const data = await providersHandler(b.factory);
@@ -218,14 +217,12 @@ function buildApp(b: AiBindings) {
   });
 
   app.openapi(scenarioRoute, async (c) => {
-    const result = await scenarioHandler(
-        c, c.req.valid('json'), b.scenarios, b.factory);
+    const result = await scenarioHandler(c, c.req.valid('json'), b.scenarios, b.factory);
     return c.json(ok(result, c.req.header(HEADERS.TRACE_ID)), 200);
   });
 
   app.openapi(recommendRoute, async (c) => {
-    const result = await recommendHandler(
-        c, c.req.valid('json'), b.recommendations, b.factory);
+    const result = await recommendHandler(c, c.req.valid('json'), b.recommendations, b.factory);
     return c.json(ok(result, c.req.header(HEADERS.TRACE_ID)), 200);
   });
 
@@ -237,9 +234,8 @@ function buildApp(b: AiBindings) {
   app.openapi(agentStateRoute, async (c) => {
     const state = await agentStateHandler(c, b.env);
     return c.json(
-        ok(state as z.infer<typeof agentStateSchema>,
-            c.req.header(HEADERS.TRACE_ID)),
-        200,
+      ok(state as z.infer<typeof agentStateSchema>, c.req.header(HEADERS.TRACE_ID)),
+      200,
     );
   });
 
@@ -260,15 +256,13 @@ function buildApp(b: AiBindings) {
     info: {
       title: 'OntoDecide AI Service',
       version: '0.1.0',
-      description:
-        'Scenario simulation, recommendation and autonomous agent API.',
+      description: 'Scenario simulation, recommendation and autonomous agent API.',
     },
   });
 
   app.get('/docs', (c) => c.html(scalarHtml()));
 
-  app.notFound((c) =>
-    jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.'));
+  app.notFound((c) => jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.'));
 
   return app;
 }

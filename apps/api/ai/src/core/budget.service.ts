@@ -9,7 +9,7 @@
  * The counter is stored in KV under `neuron:<YYYY-MM-DD>` and auto-evicts
  * after 26 hours so stale data never causes false rejections.
  */
-import {CACHE_KEYS, CACHE_TTL, CONFIG, dayKey} from '@ontodecide/shared';
+import { CACHE_KEYS, CACHE_TTL, CONFIG, dayKey } from '@ontodecide/shared';
 
 export class NeuronBudgetManager {
   constructor(private readonly cache: KVNamespace) {}
@@ -32,16 +32,16 @@ export class NeuronBudgetManager {
    * real usage via the result; otherwise the pre-estimated `cost` is used.
    */
   public async executeWithBudget<T>(
-      estimatedCost: number,
-      fn: () => Promise<{result: T; actualCost?: number}>,
-      fallbackFn: () => Promise<T>,
+    estimatedCost: number,
+    fn: () => Promise<{ result: T; actualCost?: number }>,
+    fallbackFn: () => Promise<T>,
   ): Promise<T> {
     const used = await this.usedToday();
     if (used + estimatedCost > CONFIG.NEURON_DAILY_LIMIT) {
       return fallbackFn();
     }
     try {
-      const {result, actualCost} = await fn();
+      const { result, actualCost } = await fn();
       const cost = actualCost ?? estimatedCost;
       await this.cache.put(CACHE_KEYS.neuronDaily(dayKey()), String(used + cost), {
         expirationTtl: CACHE_TTL.NEURON_DAILY,

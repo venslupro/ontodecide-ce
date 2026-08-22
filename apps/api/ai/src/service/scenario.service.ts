@@ -25,10 +25,10 @@ import {
   uuid,
   ERROR_CODES,
 } from '@ontodecide/shared';
-import {SYSTEM_PROMPT, scenarioPrompt} from '../core/scenarios/prompts.js';
-import type {ILLMProvider} from '../core/llm/provider.interface.js';
-import type {NeuronBudgetManager} from '../core/budget.service.js';
-import type {IDecisionRepository} from '../repository/decision.repository.js';
+import { SYSTEM_PROMPT, scenarioPrompt } from '../core/scenarios/prompts.js';
+import type { ILLMProvider } from '../core/llm/provider.interface.js';
+import type { NeuronBudgetManager } from '../core/budget.service.js';
+import type { IDecisionRepository } from '../repository/decision.repository.js';
 
 export interface ScenarioRequest {
   tenantId: string;
@@ -46,8 +46,8 @@ export class ScenarioService {
   ) {}
 
   public async simulate(
-      request: ScenarioRequest,
-      resolveProvider: (id?: LlmProvider) => ILLMProvider,
+    request: ScenarioRequest,
+    resolveProvider: (id?: LlmProvider) => ILLMProvider,
   ): Promise<ScenarioResult> {
     const tones = request.tones ?? ['optimistic', 'pessimistic', 'neutral'];
     const prompt = scenarioPrompt(request.topic, request.context, tones);
@@ -78,33 +78,33 @@ export class ScenarioService {
     };
 
     const result = await this.budgets.executeWithBudget<ScenarioResult>(
-        estimatedNeurons,
-        async () => {
-          const response = await provider.generate(prompt, options);
-          const scenarios = parseScenarios(response.content, tones);
-          const scenario: ScenarioResult = {
-            tenant_id: request.tenantId,
-            topic: request.topic,
-            scenarios,
-            generatedAt: nowIso(),
-            provider: response.provider,
-          };
-          // Persist for history + future cache hits.
-          await this.decisions.save({
-            id: uuid(),
-            tenantId: request.tenantId,
-            kind: 'scenario',
-            topic: request.topic,
-            provider: response.provider,
-            model: response.model,
-            promptHash: hash,
-            payload: JSON.stringify(scenario),
-            neuronCost: response.usage.totalTokens,
-            metadata: null,
-          });
-          return {result: scenario, actualCost: response.usage.totalTokens};
-        },
-        async () => this.ruleBasedFallback(request, tones),
+      estimatedNeurons,
+      async () => {
+        const response = await provider.generate(prompt, options);
+        const scenarios = parseScenarios(response.content, tones);
+        const scenario: ScenarioResult = {
+          tenant_id: request.tenantId,
+          topic: request.topic,
+          scenarios,
+          generatedAt: nowIso(),
+          provider: response.provider,
+        };
+        // Persist for history + future cache hits.
+        await this.decisions.save({
+          id: uuid(),
+          tenantId: request.tenantId,
+          kind: 'scenario',
+          topic: request.topic,
+          provider: response.provider,
+          model: response.model,
+          promptHash: hash,
+          payload: JSON.stringify(scenario),
+          neuronCost: response.usage.totalTokens,
+          metadata: null,
+        });
+        return { result: scenario, actualCost: response.usage.totalTokens };
+      },
+      async () => this.ruleBasedFallback(request, tones),
     );
 
     await this.cache.put(cacheKey, JSON.stringify(result), {
@@ -120,8 +120,8 @@ export class ScenarioService {
    * working even without LLM access.
    */
   private async ruleBasedFallback(
-      request: ScenarioRequest,
-      tones: ScenarioTone[],
+    request: ScenarioRequest,
+    tones: ScenarioTone[],
   ): Promise<ScenarioResult> {
     return {
       tenant_id: request.tenantId,
@@ -141,7 +141,10 @@ export class ScenarioService {
 }
 
 /** Parse the LLM response into the typed scenarios array. */
-function parseScenarios(content: string, expectedTones: ScenarioTone[]): Array<{
+function parseScenarios(
+  content: string,
+  expectedTones: ScenarioTone[],
+): Array<{
   tone: ScenarioTone;
   narrative: string;
   keyFactors: string[];
@@ -154,11 +157,11 @@ function parseScenarios(content: string, expectedTones: ScenarioTone[]): Array<{
     parsed = JSON.parse(cleaned);
   } catch (err) {
     throwError(
-        ERROR_CODES.AI_PROVIDER_UNAVAILABLE,
-        `LLM response was not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      ERROR_CODES.AI_PROVIDER_UNAVAILABLE,
+      `LLM response was not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  const arr = (parsed as {scenarios?: unknown[]})?.scenarios ?? parsed;
+  const arr = (parsed as { scenarios?: unknown[] })?.scenarios ?? parsed;
   if (!Array.isArray(arr)) {
     throwError(ERROR_CODES.AI_PROVIDER_UNAVAILABLE, 'LLM response had no scenarios array.');
   }

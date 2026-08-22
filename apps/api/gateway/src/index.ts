@@ -10,24 +10,28 @@
  * The Gateway keeps no business state — it is intentionally stateless and
  * relies on KV only for the JWT blacklist and rate-limit counters.
  */
-import {ERROR_CODES, validateAndLogConfig, configKey, validators} from '@ontodecide/shared';
+import { ERROR_CODES, validateAndLogConfig, configKey, validators } from '@ontodecide/shared';
 import {
   OpenAPIHono,
   jsonOkResponse,
   jsonFailResponse,
   honoErrorHandler,
 } from '@ontodecide/shared/hono';
-import type {GatewayEnv} from './types/env.js';
-import {ROUTES, registerOpenApiSpec} from './routes.js';
-import {authMiddleware, type GatewayVariables} from './middlewares/auth.js';
-import {rateLimitMiddleware} from './middlewares/ratelimit.js';
-import {forwardRequest} from './forward.js';
+import type { GatewayEnv } from './types/env.js';
+import { ROUTES, registerOpenApiSpec } from './routes.js';
+import { authMiddleware, type GatewayVariables } from './middlewares/auth.js';
+import { rateLimitMiddleware } from './middlewares/ratelimit.js';
+import { forwardRequest } from './forward.js';
 
 /** Cache config validation result — runs once per Worker instance. */
 let configValidated = false;
 
 const REQUIRED_KEYS = [
-  configKey('JWT_SECRET', 'HMAC-SHA256 signing key (≥32 chars, high entropy)', validators.jwtSecret()),
+  configKey(
+    'JWT_SECRET',
+    'HMAC-SHA256 signing key (≥32 chars, high entropy)',
+    validators.jwtSecret(),
+  ),
   configKey('JWT_BLACKLIST', 'KV namespace for revoked JWTs'),
   configKey('RATE_LIMIT', 'KV namespace for rate-limit counters'),
   configKey('USER_SERVICE', 'Service Binding to User Worker'),
@@ -36,9 +40,7 @@ const REQUIRED_KEYS = [
   configKey('AI_SERVICE', 'Service Binding to AI Worker'),
   configKey('CLEANUP_SERVICE', 'Service Binding to Cleanup Worker'),
 ];
-const OPTIONAL_KEYS = [
-  configKey('AI_DEFAULT_PROVIDER', 'Default LLM provider name'),
-];
+const OPTIONAL_KEYS = [configKey('AI_DEFAULT_PROVIDER', 'Default LLM provider name')];
 
 type AppEnv = {
   Bindings: GatewayEnv;
@@ -52,19 +54,13 @@ const app = new OpenAPIHono<AppEnv>();
 app.onError(honoErrorHandler);
 
 // 404 handler for unmatched routes.
-app.notFound((c) =>
-  jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404),
-);
+app.notFound((c) => jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404));
 
 // Health check.
-app.get('/healthz', (c) =>
-  jsonOkResponse(c, {service: 'ontodecide-gateway', version: '0.1.0'}),
-);
+app.get('/healthz', (c) => jsonOkResponse(c, { service: 'ontodecide-gateway', version: '0.1.0' }));
 
 // Root info (non-/api/ root).
-app.get('/', (c) =>
-  jsonOkResponse(c, {service: 'ontodecide-gateway', version: '0.1.0'}),
-);
+app.get('/', (c) => jsonOkResponse(c, { service: 'ontodecide-gateway', version: '0.1.0' }));
 
 // Config validation middleware — runs once per Worker instance.
 app.use('*', async (c, next) => {
@@ -89,12 +85,7 @@ app.all('/api/*', async (c) => {
   const path = new URL(c.req.url).pathname;
   const route = matchRoute(path);
   if (!route) {
-    return jsonFailResponse(
-        c,
-        ERROR_CODES.NOT_FOUND,
-        `No route for ${path}`,
-        404,
-    );
+    return jsonFailResponse(c, ERROR_CODES.NOT_FOUND, `No route for ${path}`, 404);
   }
   const auth = c.get('auth');
   const binding = route.binding(c.env);
@@ -120,7 +111,7 @@ app.doc('/openapi.json', (c) => ({
       'API Gateway that authenticates, rate-limits, and forwards' +
       ' requests to downstream services.',
   },
-  servers: [{url: new URL(c.req.url).origin}],
+  servers: [{ url: new URL(c.req.url).origin }],
 }));
 
 /** Minimal Swagger UI page pointing at `/openapi.json`. */

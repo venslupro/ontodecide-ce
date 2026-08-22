@@ -1,7 +1,7 @@
 /**
  * Environment bindings for the AI Service.
  */
-import type {BaseEnv} from '@ontodecide/shared';
+import type { BaseEnv } from '@ontodecide/shared';
 
 export interface AiEnv extends BaseEnv {
   /** Cloudflare Workers AI binding. */
@@ -47,9 +47,12 @@ export interface DecisionRow {
 
 /** Cloudflare Workers AI runtime (declared by @cloudflare/workers-types). */
 interface Ai {
-  run(model: string, inputs: {
-    messages?: unknown[];
-    prompt?: string;
-    stream?: boolean;
-  }): Promise<unknown>;
+  run(
+    model: string,
+    inputs: {
+      messages?: unknown[];
+      prompt?: string;
+      stream?: boolean;
+    },
+  ): Promise<unknown>;
 }

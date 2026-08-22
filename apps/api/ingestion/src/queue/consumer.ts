@@ -11,11 +11,16 @@
  * Failures are retried up to `max_retries` (set in wrangler.toml); after
  * that the message is routed to the dead-letter queue.
  */
-import {ERROR_CODES, nowIso, type IngestPayload, createIngestionB2Client} from '@ontodecide/shared';
-import {extract} from '../etl/extractor.js';
-import {transform} from '../etl/transformer.js';
-import {load} from '../etl/loader.js';
-import type {IngestionEnv, IngestJobMessage, IngestJobRecord} from '../types/env.js';
+import {
+  ERROR_CODES,
+  nowIso,
+  type IngestPayload,
+  createIngestionB2Client,
+} from '@ontodecide/shared';
+import { extract } from '../etl/extractor.js';
+import { transform } from '../etl/transformer.js';
+import { load } from '../etl/loader.js';
+import type { IngestionEnv, IngestJobMessage, IngestJobRecord } from '../types/env.js';
 
 const JOB_KEY_PREFIX = 'ingest:job:';
 const JOB_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -25,28 +30,28 @@ const JOB_TTL_SECONDS = 7 * 24 * 60 * 60;
  * message batch is delivered to the consumer.
  */
 export async function handleQueueBatch(
-    batch: MessageBatch<IngestJobMessage>,
-    env: IngestionEnv,
+  batch: MessageBatch<IngestJobMessage>,
+  env: IngestionEnv,
 ): Promise<void> {
   await Promise.all(
-      batch.messages.map(async (message) => {
-        const body = message.body;
-        try {
-          await processJob(body, env);
-          message.ack();
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          await updateJob(env, body.jobId, {status: 'failed', error: reason, finishedAt: nowIso()});
-          // Retry: the platform will redeliver up to max_retries, after which
-          // the message is moved to the dead-letter queue automatically.
-          message.retry();
-        }
-      }),
+    batch.messages.map(async (message) => {
+      const body = message.body;
+      try {
+        await processJob(body, env);
+        message.ack();
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        await updateJob(env, body.jobId, { status: 'failed', error: reason, finishedAt: nowIso() });
+        // Retry: the platform will redeliver up to max_retries, after which
+        // the message is moved to the dead-letter queue automatically.
+        message.retry();
+      }
+    }),
   );
 }
 
 async function processJob(message: IngestJobMessage, env: IngestionEnv): Promise<void> {
-  await updateJob(env, message.jobId, {status: 'running', startedAt: nowIso()});
+  await updateJob(env, message.jobId, { status: 'running', startedAt: nowIso() });
   const b2 = createIngestionB2Client(env);
   const object = await b2.get(message.objectKey);
   if (!object) {
@@ -55,11 +60,11 @@ async function processJob(message: IngestJobMessage, env: IngestionEnv): Promise
   const bytes = new Uint8Array(await object.arrayBuffer());
   const records = await extract(bytes, message.format);
   const transformed = transform(
-      records,
-      message.tenantId,
-      message.ontologyType,
-      message.objectKey,
-      message.fieldMapping,
+    records,
+    message.tenantId,
+    message.ontologyType,
+    message.objectKey,
+    message.fieldMapping,
   );
   const payload: IngestPayload = {
     tenant_id: message.tenantId,
@@ -85,9 +90,9 @@ async function processJob(message: IngestJobMessage, env: IngestionEnv): Promise
 
 /** Update the job-status record in KV (used by GET /jobs/:id). */
 async function updateJob(
-    env: IngestionEnv,
-    jobId: string,
-    patch: Partial<IngestJobRecord>,
+  env: IngestionEnv,
+  jobId: string,
+  patch: Partial<IngestJobRecord>,
 ): Promise<void> {
   const key = JOB_KEY_PREFIX + jobId;
   const existing = await env.JOBS.get<IngestJobRecord>(key, 'json');
@@ -110,18 +115,12 @@ async function updateJob(
 }
 
 /** Read the full job record (used by the GET /jobs/:id HTTP handler). */
-export async function readJob(
-    env: IngestionEnv,
-    jobId: string,
-): Promise<IngestJobRecord | null> {
+export async function readJob(env: IngestionEnv, jobId: string): Promise<IngestJobRecord | null> {
   return env.JOBS.get<IngestJobRecord>(JOB_KEY_PREFIX + jobId, 'json');
 }
 
 /** Mark a freshly-enqueued job as queued in KV. */
-export async function markQueued(
-    env: IngestionEnv,
-    record: IngestJobRecord,
-): Promise<void> {
+export async function markQueued(env: IngestionEnv, record: IngestJobRecord): Promise<void> {
   await env.JOBS.put(JOB_KEY_PREFIX + record.jobId, JSON.stringify(record), {
     expirationTtl: JOB_TTL_SECONDS,
   });

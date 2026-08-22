@@ -1,7 +1,7 @@
 /**
  * Environment bindings for the Graph Service.
  */
-import type {BaseEnv} from '@ontodecide/shared';
+import type { BaseEnv } from '@ontodecide/shared';
 
 export interface GraphEnv extends BaseEnv {
   /** KV cache namespace (ontology + entity hot caches). */
@@ -26,5 +26,5 @@ export interface Neo4jResponse {
     }>;
     stats?: Record<string, number>;
   }>;
-  errors: Array<{code: string; message: string}> | null;
+  errors: Array<{ code: string; message: string }> | null;
 }

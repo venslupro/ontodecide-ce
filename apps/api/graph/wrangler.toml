@@ -1,5 +1,18 @@
 # Graph Service Worker — Neo4j AuraDB-backed knowledge graph.
 #
+# ============================================================
+# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform CREATES & GOVERNS:
+#       - Worker skeleton + 4D tags
+#       - KV namespace "CACHE"
+#       - Gateway → Graph Service Binding (binding=GRAPH_SERVICE)
+#       - Ingestion → Graph Service Binding (binding=GRAPH_SERVICE)
+#   • Wrangler deploys: script code · [vars] · NEO4J_PASSWORD secret
+#   • EXTERNAL IaC: Neo4j AuraDB instance (not managed by Cloudflare TF)
+#     — connection details via Dashboard [vars] override; Terraform
+#       outputs the expected schema in external_neo4j_auradb for review.
+# ============================================================
+#
 # Identity model:
 #   • This Worker does NOT hold JWT_SECRET. It trusts the Gateway-injected
 #     x-tenant-id / x-user-role / x-internal-call headers (enforced by
@@ -17,9 +30,11 @@ compatibility_flags = ["nodejs_compat"]
 command = "pnpm --filter=@ontodecide/graph exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
 cwd = "apps/api/graph"
 
-# KV — wrangler auto-creates on first deploy.
+# ----- KV: node/query result cache (Terraform-managed) --------------------
+# binding MUST match local.kv_binding_map entry for svc="graph".
 [[kv_namespaces]]
 binding = "CACHE"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_CACHE_GRAPH_ID"
 
 [vars]
 NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"

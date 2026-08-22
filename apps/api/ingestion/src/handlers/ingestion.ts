@@ -9,7 +9,7 @@
  *                                 a configurable source label.
  *   GET    /ingest/jobs/:id     — poll the status of an async job.
  */
-import type {Context} from 'hono';
+import type { Context } from 'hono';
 import {
   CONFIG,
   ERROR_CODES,
@@ -22,9 +22,9 @@ import {
   jobId as newJobId,
   ok,
 } from '@ontodecide/shared';
-import type {IngestionEnv, IngestJobRecord} from '../types/env.js';
-import {load} from '../etl/loader.js';
-import {markQueued, readJob} from '../queue/consumer.js';
+import type { IngestionEnv, IngestJobRecord } from '../types/env.js';
+import { load } from '../etl/loader.js';
+import { markQueued, readJob } from '../queue/consumer.js';
 
 /** POST /ingest/sync — body: IngestPayload (validated by ingestSyncSchema). */
 export async function syncIngestHandler(c: Context) {
@@ -55,16 +55,10 @@ export async function fileIngestHandler(c: Context) {
   const format = String(form['format'] ?? 'json') as 'csv' | 'json' | 'parquet';
   const ontologyType = String(form['ontologyType'] ?? '');
   if (!ontologyType) {
-    return c.json(
-        fail(ERROR_CODES.VALIDATION_FAILED, 'ontologyType is required.'),
-        400,
-    );
+    return c.json(fail(ERROR_CODES.VALIDATION_FAILED, 'ontologyType is required.'), 400);
   }
   if (!file) {
-    return c.json(
-        fail(ERROR_CODES.VALIDATION_FAILED, 'file is required.'),
-        400,
-    );
+    return c.json(fail(ERROR_CODES.VALIDATION_FAILED, 'file is required.'), 400);
   }
   // Workers types declare parseBody values as `string | File`, but
   // multipart uploads actually produce a File at runtime.
@@ -99,7 +93,7 @@ export async function fileIngestHandler(c: Context) {
     objectKey,
   };
   await markQueued(env, record);
-  const result: IngestJobEnqueued = {jobId: id, status: 'queued'};
+  const result: IngestJobEnqueued = { jobId: id, status: 'queued' };
   return c.json(ok(result), 202);
 }
 
@@ -108,24 +102,15 @@ export async function jobStatusHandler(c: Context) {
   const env = c.env as IngestionEnv;
   const jobId = c.req.param('id');
   if (!jobId) {
-    return c.json(
-        fail(ERROR_CODES.VALIDATION_FAILED, 'Job id is required.'),
-        400,
-    );
+    return c.json(fail(ERROR_CODES.VALIDATION_FAILED, 'Job id is required.'), 400);
   }
   const tenantId = c.req.header(HEADERS.TENANT_ID);
   const record = await readJob(env, jobId);
   if (!record) {
-    return c.json(
-        fail(ERROR_CODES.NOT_FOUND, `Job ${jobId} not found.`),
-        404,
-    );
+    return c.json(fail(ERROR_CODES.NOT_FOUND, `Job ${jobId} not found.`), 404);
   }
   if (record.tenantId !== tenantId) {
-    return c.json(
-        fail(ERROR_CODES.AUTH_FORBIDDEN, 'Job belongs to a different tenant.'),
-        403,
-    );
+    return c.json(fail(ERROR_CODES.AUTH_FORBIDDEN, 'Job belongs to a different tenant.'), 403);
   }
   return c.json(ok(record), 200);
 }
@@ -134,23 +119,19 @@ export async function jobStatusHandler(c: Context) {
  * Shared sync ingestion logic used by both `/ingest/sync` and
  * `/ingest/webhook`.
  */
-async function runSyncIngest(
-    c: Context,
-    env: IngestionEnv,
-    body: IngestPayload,
-) {
+async function runSyncIngest(c: Context, env: IngestionEnv, body: IngestPayload) {
   const tenantId = c.req.header(HEADERS.TENANT_ID);
   if (!tenantId) {
     return c.json(fail(ERROR_CODES.AUTH_FORBIDDEN, 'Missing tenant id.'), 403);
   }
   if (body.entities.length > CONFIG.INGEST_SYNC_THRESHOLD) {
     return c.json(
-        fail(
-            ERROR_CODES.INGEST_PAYLOAD_TOO_LARGE,
-            `Sync path accepts up to ${CONFIG.INGEST_SYNC_THRESHOLD}` +
-            ` entities; use /ingest/file instead.`,
-        ),
-        413,
+      fail(
+        ERROR_CODES.INGEST_PAYLOAD_TOO_LARGE,
+        `Sync path accepts up to ${CONFIG.INGEST_SYNC_THRESHOLD}` +
+          ` entities; use /ingest/file instead.`,
+      ),
+      413,
     );
   }
   if (body.tenant_id !== tenantId) {
@@ -160,7 +141,7 @@ async function runSyncIngest(
   // tenant_id is only used for the equality check above).
   const payload: IngestPayload = {
     tenant_id: tenantId,
-    entities: body.entities.map((e) => ({...e, tenant_id: tenantId})),
+    entities: body.entities.map((e) => ({ ...e, tenant_id: tenantId })),
     relations: body.relations,
     source: body.source,
   };

@@ -6,7 +6,7 @@
  * to the signing secret — downstream services consume identity via
  * Gateway-injected headers.
  */
-import type {BaseEnv, JwtEnv} from '@ontodecide/shared';
+import type { BaseEnv, JwtEnv } from '@ontodecide/shared';
 
 export interface UserEnv extends BaseEnv, JwtEnv {
   /** D1 database holding users, audit_logs, system_config, refresh_tokens. */

@@ -4,11 +4,8 @@
  * These cover the core security primitives used by the Gateway (signing
  * access tokens) and the User service (password hashing).
  */
-import {describe, it, expect, beforeAll} from 'vitest';
-import {
-  signJwt,
-  verifyJwt,
-} from '../src/utils/jwt.js';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { signJwt, verifyJwt } from '../src/utils/jwt.js';
 import {
   hashPassword,
   verifyPassword,
@@ -20,7 +17,7 @@ import {
   constantTimeEqual,
   sha256Hex,
 } from '../src/utils/crypto.js';
-import type {JwtPayload} from '../src/types/user.js';
+import type { JwtPayload } from '../src/types/user.js';
 
 const TEST_SECRET = 'test-secret-please-do-not-use-in-prod';
 
@@ -120,8 +117,7 @@ describe('sha256Hex', () => {
     expect(digest).toHaveLength(64);
     expect(digest).toMatch(/^[0-9a-f]+$/);
     // Known SHA-256 of "test"
-    expect(digest).toBe(
-        '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08');
+    expect(digest).toBe('9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08');
   });
 });
 
@@ -173,19 +169,13 @@ describe('signJwt / verifyJwt', () => {
 
   it('honours the blacklist function for revoked jtis', async () => {
     const token = await signJwt(payload, TEST_SECRET);
-    const verified = await verifyJwt(
-        token, TEST_SECRET,
-        async (jti) => jti === 'jti-abc',
-    );
+    const verified = await verifyJwt(token, TEST_SECRET, async (jti) => jti === 'jti-abc');
     expect(verified).toBeNull();
   });
 
   it('allows a non-revoked jti', async () => {
     const token = await signJwt(payload, TEST_SECRET);
-    const verified = await verifyJwt(
-        token, TEST_SECRET,
-        async () => false,
-    );
+    const verified = await verifyJwt(token, TEST_SECRET, async () => false);
     expect(verified).not.toBeNull();
   });
 });

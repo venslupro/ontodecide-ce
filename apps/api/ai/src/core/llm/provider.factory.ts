@@ -7,24 +7,20 @@
  * a provider by id and get back a working instance (or a fallback when the
  * requested provider has no credentials).
  */
-import {
-  ERROR_CODES,
-  type LlmProvider,
-  throwError,
-} from '@ontodecide/shared';
-import type {AiEnv} from '../../types/env.js';
-import {AIGatewayProvider} from './gateway.provider.js';
-import {AnthropicProvider} from './anthropic.provider.js';
-import {OpenAIProvider} from './openai.provider.js';
-import {WorkersAIProvider} from './workers-ai.provider.js';
-import type {ILLMProvider} from './provider.interface.js';
+import { ERROR_CODES, type LlmProvider, throwError } from '@ontodecide/shared';
+import type { AiEnv } from '../../types/env.js';
+import { AIGatewayProvider } from './gateway.provider.js';
+import { AnthropicProvider } from './anthropic.provider.js';
+import { OpenAIProvider } from './openai.provider.js';
+import { WorkersAIProvider } from './workers-ai.provider.js';
+import type { ILLMProvider } from './provider.interface.js';
 
 const PROVIDER_CONSTRUCTORS: Record<LlmProvider, (env: AiEnv) => ILLMProvider> = {
   'workers-ai': (env) => new WorkersAIProvider(env),
-  'openai': (env) => new OpenAIProvider(env),
-  'anthropic': (env) => new AnthropicProvider(env),
-  'google': (env) => new AIGatewayProvider(env, 'google'),
-  'openrouter': (env) => new AIGatewayProvider(env, 'openrouter'),
+  openai: (env) => new OpenAIProvider(env),
+  anthropic: (env) => new AnthropicProvider(env),
+  google: (env) => new AIGatewayProvider(env, 'google'),
+  openrouter: (env) => new AIGatewayProvider(env, 'openrouter'),
 };
 
 export class ProviderFactory {
@@ -56,7 +52,7 @@ export class ProviderFactory {
   private isUsable(provider: ILLMProvider): boolean {
     // WorkersAI is always usable (free binding); others require keys.
     if (provider.id === 'workers-ai') {
-      return Boolean((this.env as {AI?: unknown}).AI);
+      return Boolean((this.env as { AI?: unknown }).AI);
     }
     if (provider.id === 'openai') {
       return Boolean(this.env.OPENAI_API_KEY);
@@ -65,8 +61,10 @@ export class ProviderFactory {
       return Boolean(this.env.ANTHROPIC_API_KEY);
     }
     if (provider.id === 'google' || provider.id === 'openrouter') {
-      return Boolean(this.env.AI_GATEWAY_ID) &&
-        Boolean(this.env.AI_GATEWAY_TOKEN || this.env.OPENROUTER_API_KEY);
+      return (
+        Boolean(this.env.AI_GATEWAY_ID) &&
+        Boolean(this.env.AI_GATEWAY_TOKEN || this.env.OPENROUTER_API_KEY)
+      );
     }
     return false;
   }

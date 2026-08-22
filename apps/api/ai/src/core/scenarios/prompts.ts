@@ -4,7 +4,7 @@
  * Centralising prompts here makes it easy to A/B test or localise them
  * later, and keeps the service handlers focused on plumbing.
  */
-import type {ScenarioTone} from '@ontodecide/shared';
+import type { ScenarioTone } from '@ontodecide/shared';
 
 const SYSTEM_PROMPT = `You are OntoDecide, an analyst-grade decision-intelligence assistant.
 Always respond in valid JSON when a structured output is requested. Never
@@ -12,9 +12,9 @@ invent facts — when you lack information, say so explicitly.`;
 
 /** Build the user prompt for the scenario-simulation feature. */
 export function scenarioPrompt(
-    topic: string,
-    context: string | undefined,
-    tones: ScenarioTone[],
+  topic: string,
+  context: string | undefined,
+  tones: ScenarioTone[],
 ): string {
   const contextBlock = context ? `\n\nContext:\n${context}\n` : '';
   return `Topic: ${topic}${contextBlock}
@@ -30,10 +30,7 @@ Respond as a JSON object with a "scenarios" array. Only JSON, no commentary.`;
 }
 
 /** Build the user prompt for the recommendation feature. */
-export function recommendationPrompt(
-    topic: string,
-    history: string | undefined,
-): string {
+export function recommendationPrompt(topic: string, history: string | undefined): string {
   const historyBlock = history ? `\n\nHistorical context:\n${history}\n` : '';
   return `Topic: ${topic}${historyBlock}
 
@@ -62,4 +59,4 @@ worked, what failed, and one concrete improvement for the next run. Reply
 in 3-5 sentences.`;
 }
 
-export {SYSTEM_PROMPT};
+export { SYSTEM_PROMPT };
