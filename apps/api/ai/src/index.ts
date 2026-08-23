@@ -1,9 +1,10 @@
 /**
  * AI Service Worker entry point.
  *
- * Wires up the LLM provider factory, neuron budget, repositories, services
- * and the HTTP handlers. The PlanningAgent Durable Object class is
- * re-exported so the Workers runtime can find it during deployment.
+ * Wires up the LLM provider factory, repositories, services and the HTTP
+ * handlers. Caching and budget management are delegated to the Cloudflare
+ * AI Gateway. The PlanningAgent Durable Object class is re-exported so
+ * the Workers runtime can find it during deployment.
  */
 import {
   ERROR_CODES,
@@ -34,7 +35,6 @@ import { z } from 'zod';
 import type { AiEnv } from './types/env.js';
 import { PlanningAgent } from './core/agents/planning.agent.js';
 import { ProviderFactory } from './core/llm/provider.factory.js';
-import { NeuronBudgetManager } from './core/budget.service.js';
 import { D1DecisionRepository } from './repository/decision.repository.js';
 import { ScenarioService } from './service/scenario.service.js';
 import { RecommendationService } from './service/recommendation.service.js';
@@ -54,7 +54,6 @@ export { PlanningAgent };
 export interface AiBindings {
   env: AiEnv;
   factory: ProviderFactory;
-  budgets: NeuronBudgetManager;
   decisions: D1DecisionRepository;
   scenarios: ScenarioService;
   recommendations: RecommendationService;
@@ -64,19 +63,17 @@ export interface AiBindings {
 let configValidated = false;
 
 const REQUIRED_KEYS: ConfigKey[] = [
-  configKey('AI', 'Workers AI binding'),
+  configKey('AI', 'Workers AI binding (fallback provider)'),
   configKey('DB', 'D1 database for decisions, agent_runs'),
-  configKey('CACHE', 'KV cache namespace + neuron budget counter'),
   configKey('AGENT', 'Durable Object namespace for planning agent'),
+  configKey('AI_GATEWAY_ID', 'Cloudflare AI Gateway id (all LLM access)'),
   configKey('WORKERS_AI_MODEL', 'Workers AI model id', validators.nonEmpty),
+  configKey('GOOGLE_MODEL', 'Google AI Studio default model', validators.nonEmpty),
+  configKey('GROQ_MODEL', 'Groq default model', validators.nonEmpty),
 ];
 const OPTIONAL_KEYS: ConfigKey[] = [
-  configKey('AI_GATEWAY_ID', 'AI Gateway id (optional)'),
-  configKey('AI_GATEWAY_TOKEN', 'AI Gateway auth token (optional)'),
-  configKey('OPENAI_API_KEY', 'OpenAI API key (optional)'),
-  configKey('ANTHROPIC_API_KEY', 'Anthropic API key (optional)'),
-  configKey('GOOGLE_API_KEY', 'Google API key (optional)'),
-  configKey('OPENROUTER_API_KEY', 'OpenRouter API key (optional)'),
+  configKey('GOOGLE_API_KEY', 'Google AI Studio API key (optional)'),
+  configKey('GROQ_API_KEY', 'Groq API key (optional)'),
 ];
 
 export default {
@@ -98,15 +95,13 @@ export default {
 
 function createBindings(env: AiEnv): AiBindings {
   const factory = new ProviderFactory(env);
-  const budgets = new NeuronBudgetManager(env.CACHE);
   const decisions = new D1DecisionRepository(env.DB);
   return {
     env,
     factory,
-    budgets,
     decisions,
-    scenarios: new ScenarioService(budgets, decisions, env.CACHE),
-    recommendations: new RecommendationService(budgets, decisions, env.CACHE),
+    scenarios: new ScenarioService(decisions),
+    recommendations: new RecommendationService(decisions),
   };
 }
 

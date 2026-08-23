@@ -214,7 +214,7 @@ describe('scenarioRequestSchema', () => {
         topic: 'Risk',
         context: 'Some context',
         tones: ['optimistic', 'pessimistic'],
-        provider: 'openai',
+        provider: 'google',
       }).success,
     ).toBe(true);
   });

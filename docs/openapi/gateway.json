@@ -6046,11 +6046,9 @@
                   "provider": {
                     "type": "string",
                     "enum": [
-                      "workers-ai",
-                      "openai",
-                      "anthropic",
                       "google",
-                      "openrouter"
+                      "groq",
+                      "workers-ai"
                     ],
                     "description": "Optional provider override."
                   }
@@ -6131,11 +6129,9 @@
                         "provider": {
                           "type": "string",
                           "enum": [
-                            "workers-ai",
-                            "openai",
-                            "anthropic",
                             "google",
-                            "openrouter"
+                            "groq",
+                            "workers-ai"
                           ],
                           "description": "Provider that served the call."
                         }
@@ -6363,11 +6359,9 @@
                   "provider": {
                     "type": "string",
                     "enum": [
-                      "workers-ai",
-                      "openai",
-                      "anthropic",
                       "google",
-                      "openrouter"
+                      "groq",
+                      "workers-ai"
                     ],
                     "description": "Optional provider override."
                   }
@@ -6459,11 +6453,9 @@
                         "provider": {
                           "type": "string",
                           "enum": [
-                            "workers-ai",
-                            "openai",
-                            "anthropic",
                             "google",
-                            "openrouter"
+                            "groq",
+                            "workers-ai"
                           ],
                           "description": "Provider that served the call."
                         }
@@ -6691,11 +6683,9 @@
                   "provider": {
                     "type": "string",
                     "enum": [
-                      "workers-ai",
-                      "openai",
-                      "anthropic",
                       "google",
-                      "openrouter"
+                      "groq",
+                      "workers-ai"
                     ],
                     "description": "Optional provider override."
                   }

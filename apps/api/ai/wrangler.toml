@@ -5,7 +5,6 @@
 #   • Terraform CREATES & GOVERNS:
 #       - Worker skeleton + 4D tags
 #       - D1 binding "DB" → shared-db (cloudflare_d1_database.shared_db)
-#       - KV namespace "CACHE"
 #       - Gateway → AI Service Binding (binding=AI_SERVICE)
 #   • Wrangler deploys (NOT Terraform — Provider v4 lacks support):
 #       - [ai] AI binding     → Workers AI (Neurons / models catalog)
@@ -13,6 +12,12 @@
 #       - [[migrations]] tag=v1  → DO class code upload
 #       - [vars] plain-text · optional LLM provider secrets
 # ============================================================
+#
+# Architecture:
+#   • All LLM access routes through Cloudflare AI Gateway (cache + budget).
+#   • Providers: Google AI Studio, Groq (priority) + Workers AI (fallback).
+#   • Caching and budget management are handled at the gateway level;
+#     no client-side KV cache or neuron-budget logic.
 #
 # Identity model:
 #   • This Worker does NOT hold JWT_SECRET. It trusts Gateway-injected
@@ -44,11 +49,6 @@ binding        = "DB"
 database_name  = "ontodecide-prd-shared-db"
 migrations_dir = "src/migrations"
 
-# ----- KV: inference cache + neuron-budget (Terraform-managed) ------------
-[[kv_namespaces]]
-binding = "CACHE"
-id = "REPLACE_WITH_TERRAFORM_CREATED_KV_CACHE_AI_ID"
-
 # Durable Object: planning agent.
 # Terraform knows the CLASS NAME (outputs as durable_object_classes) but
 # the actual class CODE + binding is uploaded via Wrangler [[migrations]].
@@ -64,15 +64,11 @@ new_classes = ["PlanningAgent"]
 AI_DEFAULT_PROVIDER = "workers-ai"
 WORKERS_AI_MODEL    = "@cf/meta/llama-3-8b-instruct"
 AI_GATEWAY_ID       = "ontodecide-prd-gateway"
-OPENAI_MODEL        = "gpt-4o-mini"
-ANTHROPIC_MODEL     = "claude-3-sonnet-20241022"
 GOOGLE_MODEL        = "gemini-1.5-flash"
-OPENROUTER_MODEL    = "openai/gpt-4o-mini"
+GROQ_MODEL           = "llama-3.1-8b-instant"
 
 # Secrets (Dashboard → Secrets, CI, or `wrangler secret put`):
 #   (JWT_SECRET is NOT required here. Identity is read from headers.)
-#   OPENAI_API_KEY         — when AI_DEFAULT_PROVIDER == "openai".
-#   ANTHROPIC_API_KEY      — when AI_DEFAULT_PROVIDER == "anthropic".
-#   GOOGLE_API_KEY         — when AI_DEFAULT_PROVIDER == "google".
-#   OPENROUTER_API_KEY     — when AI_DEFAULT_PROVIDER == "openrouter".
-#   AI_GATEWAY_TOKEN       — (optional) to route through an AI Gateway.
+#   GOOGLE_API_KEY         — Google AI Studio (optional, enables google provider).
+#   GROQ_API_KEY           — Groq (optional, enables groq provider).
+#   Workers AI needs no key — uses Cloudflare account entitlement.

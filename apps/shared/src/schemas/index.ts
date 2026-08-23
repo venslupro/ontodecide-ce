@@ -247,13 +247,7 @@ export const ingestPayloadSchema = z.object({
 export const scenarioToneSchema = z.enum(['optimistic', 'pessimistic', 'neutral']);
 
 /** Identifier for a supported LLM provider. */
-export const llmProviderSchema = z.enum([
-  'workers-ai',
-  'openai',
-  'anthropic',
-  'google',
-  'openrouter',
-]);
+export const llmProviderSchema = z.enum(['google', 'groq', 'workers-ai']);
 
 /** Output of the scenario-simulation feature. */
 export const scenarioResultSchema = z.object({
