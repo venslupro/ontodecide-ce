@@ -9,14 +9,21 @@
 #   • push to `main` with changes under infrastructure/terraform/**
 #     → fmt · validate · plan ONLY (READ-ONLY).  Apply NEVER runs on
 #     push; it must be triggered manually from the UI (see below).
-#   • pull_request (main / staging) with TF file changes
+#   • pull_request to `main` with TF file changes
 #     → fmt · validate · plan (READ-ONLY, no apply).
 #       Reviewers can see the real Cloudflare diff in PR checks.
-#   • workflow_dispatch — ONLY on `main` branch
+#   • workflow_dispatch
 #     → fmt · validate · plan + (if approved) APPLY.
+#     All jobs enforce github.ref == refs/heads/main at job level (the
+#     workflow_dispatch trigger itself intentionally has no `branches:`
+#     key because actionlint rejects it as unknown syntax).
 #     This is the ONLY way to execute `terraform apply`.  You MUST
 #     trigger it manually from Repo → Actions → Terraform workflow
-#     → Run workflow → branch selector is LOCKED to main only.
+#     → Run workflow → choose branch: main.
+#
+# ENVIRONMENT:
+#   This pipeline targets a SINGLE, FIXED environment: production.
+#   There is no staging/non-production environment to select.
 #
 # PHASES:
 #   1. Static checks   — terraform fmt -check (canonical formatting)
@@ -42,8 +49,8 @@
 #     TF_ZONE_ID     — (optional) DNS Zone ID for custom domains
 #
 #   The project name is derived from the GitHub repo name
-#   (github.event.repository.name) and the environment defaults
-#   to "production" (overridable via workflow_dispatch input).
+#   (github.event.repository.name) and the environment is
+#   fixed to "production".
 # ============================================================
 
 name: Terraform · Infrastructure
@@ -70,17 +77,6 @@ on:
       - '.github/workflows/terraform.yml'
       - 'infrastructure/terraform/.terraform.lock.hcl'
   workflow_dispatch:
-    branches:
-      - main
-    inputs:
-      environment:
-        description: 'Target environment (production / staging)'
-        required: true
-        default: 'production'
-        type: choice
-        options:
-          - production
-          - staging
 
 concurrency:
   group: terraform-${{ github.ref }}
@@ -101,7 +97,7 @@ env:
   TF_VAR_account_id:  ${{ secrets.CF_ACCOUNT_ID }}
   TF_VAR_zone_id:     ${{ vars.TF_ZONE_ID }}
   TF_VAR_project_name: ${{ github.event.repository.name }}
-  TF_VAR_environment: ${{ github.event.inputs.environment || 'production' }}
+  TF_VAR_environment: 'production'
   # ---- Remote state backend (B2 S3-compatible) ----
   # Backend config (bucket/endpoint/region/skip flags) is STATIC in
   # versions.tf. Only credentials are injected via env vars.
@@ -117,6 +113,9 @@ jobs:
   validate:
     name: Fmt · Validate
     runs-on: ubuntu-latest
+    # workflow_dispatch has no native `branches:` filter (actionlint rejects it),
+    # so enforce main-branch-only at job level. Push/PR already main-only via triggers.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -148,6 +147,8 @@ jobs:
     name: Plan
     needs: validate
     runs-on: ubuntu-latest
+    # Mirror validate's main-only guard for manual-dispatch runs
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     outputs:
       plan_exit: ${{ steps.plan.outputs.exitcode }}
     steps:
@@ -169,33 +170,6 @@ jobs:
       - name: Init (B2 remote state backend config is static in versions.tf)
         run: terraform init -input=false
 
-      # ----------------------------------------------------------------
-      # One-off drift recovery: drop stale D1 UUID from remote state.
-      #
-      # Background:
-      #   A prior run failed to create cloudflare_d1_database.decision_db
-      #   (Authentication error 10000), yet the remote state file in B2
-      #   ended up holding a ghost D1 UUID that does not map to any live
-      #   Cloudflare database (error 7404 on read-back). After the resource
-      #   rename decision_db -> shared_db the stale id was carried forward
-      #   by the moved {} block, so every subsequent plan aborted at 7404.
-      #
-      # Strategy:
-      #   * FIRST list the state contents, SECOND rm only keys that are
-      #     actually present. This avoids the red "Error: Terraform exited
-      #     with code 1" banner that 'terraform state rm <missing>' emits,
-      #     which previously polluted the CI log even though the || echo
-      #     guards kept the step alive.
-      #   * Both the old (pre-move) and new state keys are checked.
-      #   * 'terraform state rm' is a pure state-file edit and never talks
-      #     to the Cloudflare API, so this step is safe to leave in place
-      #     after drift is resolved (it becomes a no-op).
-      #
-      # Retirement:
-      #   Once the plan step finishes with exit code 0 across two
-      #   consecutive CI runs (proving the drift is gone), delete this
-      #   entire step in a follow-up PR to keep CI clean.
-      # ----------------------------------------------------------------
       - name: (One-off) Remove stale D1 UUID from remote state
         if: always()
         run: |
@@ -252,18 +226,8 @@ jobs:
   apply:
     name: Apply (Manual · main-only · workflow_dispatch-only)
     needs: plan
-    # Apply is NEVER automatic:
-    #   workflow_dispatch trigger is already restricted to `main`
-    #   branch via `on.workflow_dispatch.branches`, so here we only
-    #   need to confirm the event type is workflow_dispatch.
-    #   Push to main and PR events always skip this job.
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # ↓↓↓ Additional safety gate beyond the `if:` guard above.
-    # Create the `production` environment in Repo → Settings →
-    # Environments and enable "Required reviewers" so even a
-    # correctly-triggered manual workflow_dispatch PAUSES until a
-    # designated human clicks "Approve & deploy".
     environment:
       name: production
     steps:
@@ -292,10 +256,6 @@ jobs:
       - name: Init (B2 remote state backend config is static in versions.tf)
         run: terraform init -input=false
 
-      # Prefer reusing the plan from Phase 2 so the reviewer sees
-      # EXACTLY what will be applied.  If the binary is missing
-      # (artifact expired / workflow restarted) fall back to a
-      # fresh plan + apply.
       - name: Apply saved plan or fresh plan
         run: |
           if [ -f tfplan.binary ]; then
