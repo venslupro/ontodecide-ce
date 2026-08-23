@@ -62,7 +62,6 @@ on:
   pull_request:
     branches:
       - main
-      - staging
     paths:
       - 'infrastructure/terraform/*.tf'
       - 'infrastructure/terraform/**/*.tf'
