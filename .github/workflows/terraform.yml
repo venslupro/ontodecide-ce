@@ -12,11 +12,11 @@
 #   • pull_request (main / staging) with TF file changes
 #     → fmt · validate · plan (READ-ONLY, no apply).
 #       Reviewers can see the real Cloudflare diff in PR checks.
-#   • workflow_dispatch on `main` branch
+#   • workflow_dispatch — ONLY on `main` branch
 #     → fmt · validate · plan + (if approved) APPLY.
 #     This is the ONLY way to execute `terraform apply`.  You MUST
 #     trigger it manually from Repo → Actions → Terraform workflow
-#     → Run workflow → choose branch: main.
+#     → Run workflow → branch selector is LOCKED to main only.
 #
 # PHASES:
 #   1. Static checks   — terraform fmt -check (canonical formatting)
@@ -70,6 +70,8 @@ on:
       - '.github/workflows/terraform.yml'
       - 'infrastructure/terraform/.terraform.lock.hcl'
   workflow_dispatch:
+    branches:
+      - main
     inputs:
       environment:
         description: 'Target environment (production / staging)'
@@ -251,14 +253,11 @@ jobs:
     name: Apply (Manual · main-only · workflow_dispatch-only)
     needs: plan
     # Apply is NEVER automatic:
-    #   1) only on `main` branch (not on staging, PRs, or feature
-    #      branches);
-    #   2) only when the workflow was triggered MANUALLY via the
-    #      GitHub UI ("Run workflow" button, i.e. event name ==
-    #      workflow_dispatch).
-    # A push to main (even with TF file changes) will run validate +
-    # plan but this `apply` job simply won't be created in the run.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    #   workflow_dispatch trigger is already restricted to `main`
+    #   branch via `on.workflow_dispatch.branches`, so here we only
+    #   need to confirm the event type is workflow_dispatch.
+    #   Push to main and PR events always skip this job.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # ↓↓↓ Additional safety gate beyond the `if:` guard above.
     # Create the `production` environment in Repo → Settings →
