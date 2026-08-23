@@ -1,5 +1,5 @@
 # ============================================================================
-# Input variables — naming aligned with deploy-workers.yml / migrate.sh
+# Input variables — naming aligned with deploy-service.yml / migrate.sh
 #   PROJECT_NAME  <-> var.project_name   (default "ontodecide")
 #   ENVIRONMENT   <-> var.environment    (default "production")
 # ============================================================================

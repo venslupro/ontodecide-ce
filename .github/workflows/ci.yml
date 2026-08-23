@@ -171,7 +171,7 @@ jobs:
           export PATH="$PATH:$GOPATH_BIN"
           actionlint -color \
             .github/workflows/ci.yml \
-            .github/workflows/deploy-workers.yml \
+            .github/workflows/deploy-service.yml \
             .github/workflows/terraform.yml
 
       - name: Validate all wrangler.toml files exist (smoke check)

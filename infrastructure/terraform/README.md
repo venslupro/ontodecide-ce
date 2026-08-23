@@ -26,7 +26,7 @@
 ### What Terraform DOES NOT TOUCH (code layer)
 
 - Worker script code / bundles → `wrangler-action` in
-  `.github/workflows/deploy-workers.yml`
+  `.github/workflows/deploy-service.yml`
 - `[vars]` plain-text env → `wrangler.toml` + Dashboard Variables overrides
 - `[ai]` Workers AI binding → `apps/api/ai/wrangler.toml` (Provider v4 lacks
   `ai_binding` block on `cloudflare_workers_script`)
@@ -166,7 +166,7 @@ Then paste each ID into the matching `[[kv_namespaces]]` block.
 ### 3.1 `terraform.yml` — Infrastructure pipeline
 
 The Terraform pipeline **reuses** the same secrets already configured for
-`deploy-workers.yml` — no extra secrets to create for the Cloudflare side.
+`deploy-service.yml` — no extra secrets to create for the Cloudflare side.
 B2 secrets (`B2_KEY_ID` / `B2_KEY`) are reused for the remote state backend.
 
 | Kind      | Name                         | Description                                |
@@ -190,7 +190,7 @@ The `terraform.yml` → `apply` job references `environment: production`.
 Without approval, the apply step **never runs** — Terraform changes stay
 locked at the reviewed-plan stage.
 
-### 3.2 `deploy-workers.yml` — Code pipeline (unchanged from legacy model, listed for completeness)
+### 3.2 `deploy-service.yml` — Code pipeline (unchanged from legacy model, listed for completeness)
 
 | Kind      | Name                         | Scope of push                              |
 | --------- | ---------------------------- | ------------------------------------------ |
@@ -224,14 +224,14 @@ locked at the reviewed-plan stage.
          ▼                  ▼                      ▼
   (dashboard overrides)  sentinel code      (cron fires daily 03:00Z)
   fill REPLACE_WITH_*    replaced by:
-  IDs → wrangler.toml      wrangler deploy ⟵ deploy-workers.yml (auto)
+  IDs → wrangler.toml      wrangler deploy ⟵ deploy-service.yml (auto)
 ```
 
 **Deploy order required by the hybrid model:**
 1. `terraform apply` (human-reviewed, ONCE per infra change)
 2. Fill in wrangler.toml `[[kv_namespaces]].id` placeholders + any
    `[vars]` Dashboard overrides (Neo4j URL, B2 bucket names)
-3. Push code → `deploy-workers.yml` runs (change-aware · parallel
+3. Push code → `deploy-service.yml` runs (change-aware · parallel
    matrix · 5 quality gates incl. `wrangler types`)
 4. Post-deploy `migrate-d1` job runs `scripts/migrate.sh --remote`
    against the shared D1
@@ -261,7 +261,7 @@ Three edits (no structural Terraform refactor needed):
 ```
 
 ```diff
-  # .github/workflows/deploy-workers.yml
+  # .github/workflows/deploy-service.yml
   env:
     DEFAULTS_MATRIX_JSON: >-
       [
