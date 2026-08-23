@@ -29,7 +29,8 @@ compatibility_flags = ["nodejs_compat"]
 # LOCAL-ONLY [build] block.
 [build]
 command = "pnpm --filter=@ontodecide/ai exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
-cwd = "apps/api/ai"
+# No `cwd` — see graph/wrangler.toml. A repo-root-relative path doubles and
+# causes spawn /bin/sh ENOENT; the default (process cwd = service dir) is correct.
 
 # Workers AI binding (Wrangler-only — Terraform Provider v4 has no
 # ai_binding block on cloudflare_workers_script).
