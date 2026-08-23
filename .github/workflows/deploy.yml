@@ -26,7 +26,7 @@
 #
 # GATES:
 #   • Deploy jobs run ONLY on the `main` branch.  Feature
-#     branches and staging are explicitly excluded — they
+#     non-main branches are explicitly excluded — they
 #     get CI-only validation via ci.yml.
 #   • migrate-d1 runs ONLY when manually triggered via the
 #     GitHub UI (workflow_dispatch) AND on main — automatic
@@ -60,14 +60,6 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      environment:
-        description: 'Target environment (for migrate-d1 DB name suffix)'
-        required: true
-        default: 'production'
-        type: choice
-        options:
-          - production
-          - staging
       run_migration:
         description: 'Run D1 migration after deploy (wrangler d1 migrate --remote)'
         required: true
@@ -544,7 +536,7 @@ jobs:
       CF_API_TOKEN:           ${{ secrets.CF_API_TOKEN }}
       CF_ACCOUNT_ID:          ${{ secrets.CF_ACCOUNT_ID }}
       PROJECT_NAME:           ${{ github.event.repository.name }}
-      ENVIRONMENT:            ${{ inputs.environment }}
+      ENVIRONMENT:            'production'
     steps:
       - name: Checkout
         uses: actions/checkout@v5
