@@ -7,23 +7,32 @@
 #
 # TRIGGERS:
 #   • push to `main` with changes under infrastructure/terraform/**
-#     → fmt · validate · plan ONLY (READ-ONLY).  Apply NEVER runs on
-#     push; it must be triggered manually from the UI (see below).
+#     → fmt · validate · plan (READ-ONLY) + apply job enters a
+#       ⏳ WAITING state gated by the `production` GitHub Environment
+#       "Required reviewers" protection.  A designated human clicks
+#       Review pending deployments → Approve & deploy on the SAME
+#       workflow run page to actually execute terraform apply.
+#       Apply NEVER auto-runs; the plan artifact from Phase 2 is
+#       re-used verbatim so the approved diff is the applied diff.
 #   • pull_request to `main` with TF file changes
-#     → fmt · validate · plan (READ-ONLY, no apply).
-#       Reviewers can see the real Cloudflare diff in PR checks.
-#   • workflow_dispatch
-#     → fmt · validate · plan + (if approved) APPLY.
-#     All jobs enforce github.ref == refs/heads/main at job level (the
-#     workflow_dispatch trigger itself intentionally has no `branches:`
-#     key because actionlint rejects it as unknown syntax).
-#     This is the ONLY way to execute `terraform apply`.  You MUST
-#     trigger it manually from Repo → Actions → Terraform workflow
-#     → Run workflow → choose branch: main.
+#     → fmt · validate · plan (READ-ONLY).  The apply job is
+#       explicitly skipped on PRs (github.ref != refs/heads/main).
+#       Reviewers see the real Cloudflare diff before merge.
+#   • workflow_dispatch (any branch)
+#     → fmt · validate · plan ALWAYS run so the operator can check
+#       the plan diff from any branch.  The apply job then behaves
+#       as follows:
+#         - on main → apply enters ⏳ WAITING (prod env approval).
+#         - on other branches → apply is cleanly skipped
+#           (github.ref != refs/heads/main) without affecting the
+#           plan results already displayed above.
+#     The trigger intentionally declares no `branches:` key —
+#     actionlint v1 rejects `branches:` under workflow_dispatch
+#     as unknown syntax, so branch gating is done per job instead.
 #
 # ENVIRONMENT:
 #   This pipeline targets a SINGLE, FIXED environment: production.
-#   There is no staging/non-production environment to select.
+#   There is no staging/non-production environment selector.
 #
 # PHASES:
 #   1. Static checks   — terraform fmt -check (canonical formatting)
@@ -31,11 +40,16 @@
 #   2. Plan            — `terraform plan` renders the diff against
 #                        the real Cloudflare state.  The plan JSON
 #                        is uploaded as a build artifact for review.
-#   3. Apply (MANUAL)  — ONLY when workflow_dispatch is run against
-#                        the `main` branch AND the `production`
-#                        Environment protection rule (Settings →
-#                        Environments · Required reviewers) is
-#                        approved.  Apply NEVER runs on push or PR.
+#   3. Apply ( gated by production Environment · human approval )
+#                      — On `main` (push or workflow_dispatch) apply
+#                        is ALWAYS created as a ⏳ WAITING card, NEVER
+#                        auto-executed.  Click "Review pending
+#                        deployments" at the top of the run page
+#                        then Approve & deploy.
+#                      — On NON-main branches (workflow_dispatch or
+#                        PR) the apply job is cleanly skipped; the
+#                        plan output above is still fully visible
+#                        for pre-merge diff review.
 #
 # REQUIRED GITHUB SECRETS / VARS:
 #   (Set via Repo → Settings → Secrets and variables → Actions)
@@ -113,9 +127,9 @@ jobs:
   validate:
     name: Fmt · Validate
     runs-on: ubuntu-latest
-    # workflow_dispatch has no native `branches:` filter (actionlint rejects it),
-    # so enforce main-branch-only at job level. Push/PR already main-only via triggers.
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    # validate + plan run on ALL trigger-event × branch combinations so
+    # the operator can always inspect formatting / schema / plan diff.
+    # Only the APPLY step below is gated by branch (main) + human approval.
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -147,8 +161,6 @@ jobs:
     name: Plan
     needs: validate
     runs-on: ubuntu-latest
-    # Mirror validate's main-only guard for manual-dispatch runs
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     outputs:
       plan_exit: ${{ steps.plan.outputs.exitcode }}
     steps:
@@ -224,10 +236,20 @@ jobs:
   # Phase 3 — Apply (NEVER automatic — requires manual approval)
   # -------------------------------------------------------------
   apply:
-    name: Apply (Manual · main-only · workflow_dispatch-only)
+    name: Apply (main-only · prod-env approval required)
     needs: plan
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    # On `main` (push OR workflow_dispatch) the apply job is CREATED
+    # but enters a ⏳ WAITING state via the `production` Environment
+    # protection rule (Required reviewers).  A human must click
+    # "Review pending deployments → Approve & deploy" on the SAME
+    # run summary page (no need to re-trigger via Run workflow).
+    # On PR branches the job is skipped outright (PR ref != main).
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Human approval gate.  Create the `production` environment in
+    # Repo → Settings → Environments and enable Required reviewers.
+    # Until then the job would immediately proceed without a gate,
+    # which is unsafe — NEVER delete this environment block.
     environment:
       name: production
     steps:
