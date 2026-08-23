@@ -110,7 +110,7 @@ while IFS= read -r line; do
       echo "  Ensure Terraform has been applied (infrastructure/terraform/) to create KV namespaces." >&2
       exit 1
     fi
-    echo "  ✓ ${SVC}/${CURRENT_BINDING} → ${TITLE} = ${REAL_ID}"
+    echo "  ✓ ${SVC}/${CURRENT_BINDING} → ${TITLE} = ${REAL_ID}" >&2
     printf 'id = "%s"\n' "${REAL_ID}"
     RESOLVED_COUNT=$((RESOLVED_COUNT + 1))
     continue
