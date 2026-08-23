@@ -51,7 +51,7 @@ name: Terraform · Infrastructure
 on:
   push:
     branches:
-      - main
+      - '**'
     paths:
       - 'infrastructure/terraform/*.tf'
       - 'infrastructure/terraform/**/*.tf'
@@ -62,7 +62,6 @@ on:
   pull_request:
     branches:
       - main
-      - staging
     paths:
       - 'infrastructure/terraform/*.tf'
       - 'infrastructure/terraform/**/*.tf'
