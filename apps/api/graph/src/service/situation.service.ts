@@ -6,36 +6,17 @@
  * root entity, return that entity plus its first-hop relations (depth 1 by
  * default; the client can request up to 3 hops via `ExploreRequest.depth`).
  *
- * Hot roots are cached for 5 minutes to absorb dashboard polling.
+ * Reads go directly to Neo4j.
  */
-import {
-  CACHE_KEYS,
-  CACHE_TTL,
-  type EntityNode,
-  type ExploreRequest,
-  type SituationNode,
-  sha256Hex,
-} from '@ontodecide/shared';
+import { type EntityNode, type ExploreRequest, type SituationNode } from '@ontodecide/shared';
 import type { IGraphRepository } from '../repository/graph.repository.js';
 
 export class SituationService {
-  constructor(
-    private readonly repo: IGraphRepository,
-    private readonly cache: KVNamespace,
-  ) {}
+  constructor(private readonly repo: IGraphRepository) {}
 
   /** Render the situation view for the root entity. */
   public async view(tenantId: string, rootId: string, depth = 1): Promise<SituationNode> {
-    const cacheKey = CACHE_KEYS.situation(tenantId, await sha256Hex(`${rootId}:${depth}`));
-    const cached = await this.cache.get(cacheKey, 'json');
-    if (cached) {
-      return cached as SituationNode;
-    }
-    const view = await this.repo.situationView(tenantId, rootId, depth);
-    await this.cache.put(cacheKey, JSON.stringify(view), {
-      expirationTtl: CACHE_TTL.SITUATION_HOT,
-    });
-    return view;
+    return this.repo.situationView(tenantId, rootId, depth);
   }
 
   /** Run a 1-3 hop exploration from a root entity. */

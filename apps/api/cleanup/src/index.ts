@@ -68,7 +68,6 @@ const REQUIRED_KEYS: ConfigKey[] = [
   configKey('B2_INGESTION_BUCKET', 'B2 ingestion staging bucket', validators.nonEmpty),
   configKey('B2_ARCHIVE_BUCKET', 'B2 archive backup bucket', validators.nonEmpty),
   configKey('USER_CACHE', 'KV namespace for user cache'),
-  configKey('GRAPH_CACHE', 'KV namespace for graph cache'),
   configKey('INGESTION_JOBS', 'KV namespace for ingestion jobs'),
   configKey('AI_CACHE', 'KV namespace for AI cache'),
   configKey('CLEANUP_JOBS', 'KV namespace for cleanup jobs'),

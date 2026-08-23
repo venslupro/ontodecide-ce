@@ -70,14 +70,11 @@ export async function cleanupTenant(
   // Step 4 — KV: delete `tenant:{tid}:*` keys in every namespace.
   const kvDeleted =
     (await purgeKvPrefix(env.USER_CACHE, `tenant:${tenantId}:`)) +
-    (await purgeKvPrefix(env.GRAPH_CACHE, `tenant:${tenantId}:`)) +
     (await purgeKvPrefix(env.INGESTION_JOBS, `tenant:${tenantId}:`)) +
     (await purgeKvPrefix(env.AI_CACHE, `tenant:${tenantId}:`)) +
-    // Also drop the situation/scenario caches (different prefix).
-    (await purgeKvPrefix(env.GRAPH_CACHE, `situation:${tenantId}:`)) +
+    // Also drop the scenario/entity caches (different prefix).
     (await purgeKvPrefix(env.AI_CACHE, `scenario:${tenantId}:`)) +
-    (await purgeKvPrefix(env.AI_CACHE, `entity:${tenantId}:`)) +
-    (await purgeKvPrefix(env.GRAPH_CACHE, `ontology:${tenantId}`));
+    (await purgeKvPrefix(env.AI_CACHE, `entity:${tenantId}:`));
 
   // Step 5 — B2: delete the tenant's objects from the ingestion bucket.
   const b2Deleted = await purgeB2Prefix(ingestionClient, `${tenantId}/`);

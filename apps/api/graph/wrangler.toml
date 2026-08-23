@@ -4,7 +4,6 @@
 # HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
 #   • Terraform CREATES & GOVERNS:
 #       - Worker skeleton + 4D tags
-#       - KV namespace "CACHE"
 #       - Gateway → Graph Service Binding (binding=GRAPH_SERVICE)
 #       - Ingestion → Graph Service Binding (binding=GRAPH_SERVICE)
 #   • Wrangler deploys: script code · [vars] · NEO4J_PASSWORD secret
@@ -33,12 +32,6 @@ command = "pnpm --filter=@ontodecide/graph exec tsc -p tsconfig.json --noEmit &&
 # (process cwd) is correct. A repo-root-relative path like "apps/api/graph"
 # would be resolved relative to this wrangler.toml's dir and double the path
 # → spawn /bin/sh ENOENT.
-
-# ----- KV: node/query result cache (Terraform-managed) --------------------
-# binding MUST match local.kv_binding_map entry for svc="graph".
-[[kv_namespaces]]
-binding = "CACHE"
-id = "REPLACE_WITH_TERRAFORM_CREATED_KV_CACHE_GRAPH_ID"
 
 [vars]
 NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
