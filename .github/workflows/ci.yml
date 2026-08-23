@@ -28,6 +28,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Node 20 deprecated by GitHub runners; force remaining Node 20 actions onto Node 24 runtime.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   # -----------------------------------------------------------
   # Job 1 — App code quality (typecheck · lint · build · test)

@@ -44,6 +44,8 @@ defaults:
     working-directory: infrastructure/terraform
 
 env:
+  # GitHub Actions Node 20 deprecation: force legacy actions to Node 24 runtime.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   # Provider / backend auth
   CLOUDFLARE_API_TOKEN:    ${{ secrets.CF_API_TOKEN }}
   AWS_ACCESS_KEY_ID:       ${{ secrets.B2_KEY_ID }}
