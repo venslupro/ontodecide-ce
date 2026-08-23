@@ -4,8 +4,6 @@
 import type { BaseEnv } from '@ontodecide/shared';
 
 export interface GraphEnv extends BaseEnv {
-  /** KV cache namespace (ontology + entity hot caches). */
-  CACHE: KVNamespace;
   /** Neo4j AuraDB base URL, e.g. `https://xxx.databases.neo4j.io`. */
   NEO4J_URL: string;
   /** Neo4j username. */
