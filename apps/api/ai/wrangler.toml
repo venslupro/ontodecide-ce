@@ -52,13 +52,15 @@ migrations_dir = "src/migrations"
 # Durable Object: planning agent.
 # Terraform knows the CLASS NAME (outputs as durable_object_classes) but
 # the actual class CODE + binding is uploaded via Wrangler [[migrations]].
+# NOTE: new_sqlite_classes is required on Cloudflare Free Plan
+# (error code 10097 — legacy new_classes is paid-only).
 [[durable_objects.bindings]]
 name       = "AGENT"
 class_name = "PlanningAgent"
 
 [[migrations]]
-tag         = "v1"
-new_classes = ["PlanningAgent"]
+tag                = "v1"
+new_sqlite_classes = ["PlanningAgent"]
 
 [vars]
 AI_DEFAULT_PROVIDER = "workers-ai"
