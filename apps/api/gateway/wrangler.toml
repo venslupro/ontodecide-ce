@@ -9,7 +9,7 @@
 #       - Worker Domain (api.ontodecide.com, zone_id required)
 #       - lifecycle.ignore_changes on content / bindings so
 #         Terraform never rolls back Wrangler-deployed code
-#   • Wrangler (deploy-workers.yml) deploys:
+#   • Wrangler (deploy-service.yml) deploys:
 #       - Worker script code (src/index.ts bundle)
 #       - [vars] plain-text environment variables
 #       - JWT_SECRET runtime secret (via wrangler-action secrets:)
@@ -26,7 +26,7 @@
 #
 # Build & deploy:
 #   • [build] block is LOCAL ONLY. Canonical deploys use wrangler-action in
-#     .github/workflows/deploy-workers.yml (push to main).
+#     .github/workflows/deploy-service.yml (push to main).
 #   • `main = "src/index.ts"` lets wrangler bundle via its esbuild pipeline
 #     and resolve @ontodecide/shared via package.json exports → dist.
 

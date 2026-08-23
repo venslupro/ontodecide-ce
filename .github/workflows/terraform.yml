@@ -33,7 +33,7 @@
 # REQUIRED GITHUB SECRETS / VARS:
 #   (Set via Repo → Settings → Secrets and variables → Actions)
 #
-#   Secrets (shared with deploy-workers.yml):
+#   Secrets (shared with deploy-service.yml):
 #     CF_API_TOKEN   — Cloudflare API token with wide admin scopes
 #                      (D1 · KV · Queue · Worker Script ·
 #                       Worker Domain · Account Settings read).
@@ -89,7 +89,7 @@ defaults:
 
 env:
   # Terraform Provider authentication — reuse the same CF_API_TOKEN
-  # already configured for deploy-workers.yml (no extra secret needed).
+  # already configured for deploy-service.yml (no extra secret needed).
   CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
   # Input variables (injected via TF_VAR_ convention into variables.tf)
   # CF_ACCOUNT_ID is a secret; repo name and environment are hardcoded.
@@ -101,7 +101,7 @@ env:
   # Backend config (bucket/endpoint/region/skip flags) is STATIC in
   # versions.tf. Only credentials are injected via env vars.
   # Reuses B2_KEY_ID / B2_KEY secrets already configured for
-  # deploy-workers.yml (ingestion + cleanup workers).
+  # deploy-service.yml (ingestion + cleanup workers).
   AWS_ACCESS_KEY_ID:     ${{ secrets.B2_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_KEY }}
 

@@ -10,7 +10,7 @@
 #   • Cleanup cron trigger
 #   • Optional: custom domain (Workers Domain, created when zone_id is non-empty)
 #
-# Out of scope (code layer · handled by deploy-workers.yml / wrangler.toml):
+# Out of scope (code layer · handled by deploy-service.yml / wrangler.toml):
 #   • Worker script code versions (Wrangler Action)
 #   • [vars] plain-text env vars (native to wrangler.toml)
 #   • Workers AI [ai] binding (handled by wrangler.toml [ai])
@@ -525,5 +525,5 @@ resource "cloudflare_workers_domain" "svc" {
 #     { binding="WEB_SERVICE", target="web" }
 # (3) Append KV cache to local.kv_binding_map:
 #     { svc="web", binding="CACHE" }
-# (4) Append a web entry to DEFAULTS_MATRIX in deploy-workers.yml
+# (4) Append a web entry to DEFAULTS_MATRIX in deploy-service.yml
 # ============================================================================
