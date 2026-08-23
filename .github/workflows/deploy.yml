@@ -1,0 +1,517 @@
+# ============================================================
+# Continuous Deployment (CD) — Worker Services
+#
+# Deploys Cloudflare Worker code + runtime secrets when the
+# underlying source changes.  Resource creation (D1 / KV /
+# Queues / Service Bindings / Cron / Domains) is explicitly
+# NOT handled here — that lives in terraform.yml and must be
+# provisioned BEFORE any service deploy.
+#
+# TRIGGERS:
+#   • push to `main` — automatically deploys ONLY the services
+#     whose source (or transitive dependencies via apps/shared)
+#     actually changed.  Unchanged services are SKIPPED.
+#   • workflow_dispatch on `main` — same change-aware deploy as
+#     a push, plus the OPTIONAL `Run D1 migration` checkbox to
+#     execute wrangler d1 migrations apply --remote against the
+#     shared database after deploy.
+#
+# DEPENDENCY ORDER (3-layer topological sort):
+#   Layer 1 (parallel, no outgoing Service Bindings)
+#     user · graph · ai · cleanup
+#   Layer 2 (after graph — ingestion→GRAPH_SERVICE binding)
+#     ingestion
+#   Layer 3 (after all L1+L2 — gateway→5 bindings)
+#     gateway
+#
+# GATES:
+#   • Deploy jobs run ONLY on the `main` branch.  Feature
+#     branches and staging are explicitly excluded — they
+#     get CI-only validation via ci.yml.
+#   • migrate-d1 runs ONLY when manually triggered via the
+#     GitHub UI (workflow_dispatch) AND on main — automatic
+#     migration is deliberately unsafe (schema changes can
+#     break already-running workers).
+#
+# REQUIRED GITHUB SECRETS (set in Repo → Settings → Secrets):
+#   CF_API_TOKEN        — Cloudflare API token (Worker Script ·
+#                         D1 · Secrets scopes)
+#   CF_ACCOUNT_ID       — Cloudflare Account ID (32 hex)
+#   JWT_SECRET          — HMAC signing key (gateway + user)
+#   EMAIL_API_KEY       — Resend / SMTP token (user)
+#   NEO4J_PASSWORD      — Shared AuraDB password (graph + cleanup)
+#   B2_KEY_ID           — Backblaze B2 S3 keyID (ingestion + cleanup)
+#   B2_KEY              — Backblaze B2 S3 secret
+#   OPENAI_API_KEY      — (optional) AI default=workers-ai
+#   ANTHROPIC_API_KEY   — (optional) AI default=workers-ai
+#   GOOGLE_API_KEY      — (optional) AI default=workers-ai
+#   OPENROUTER_API_KEY  — (optional) AI default=workers-ai
+#   AI_GATEWAY_TOKEN    — (optional) AI Gateway routing
+# ============================================================
+
+name: Deploy · Services
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (for migrate-d1 DB name suffix)'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+      run_migration:
+        description: 'Run D1 migration after deploy (wrangler d1 migrate --remote)'
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================
+  # JOB 0 — Detect which services have source changes.
+  #
+  # Uses dorny/paths-filter YAML anchors so that a change to
+  # apps/shared/** (or root build config) automatically flags
+  # every downstream service for redeploy, without repeating
+  # the path list 6 times.
+  # ============================================================
+  detect-changes:
+    name: Detect changed services
+    runs-on: ubuntu-latest
+    outputs:
+      user:      ${{ steps.filter.outputs.user }}
+      graph:     ${{ steps.filter.outputs.graph }}
+      ai:        ${{ steps.filter.outputs.ai }}
+      cleanup:   ${{ steps.filter.outputs.cleanup }}
+      ingestion: ${{ steps.filter.outputs.ingestion }}
+      gateway:   ${{ steps.filter.outputs.gateway }}
+      any:       ${{ steps.filter.outputs.any }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Path-based change detection (shared → all 6 services)
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          list-files: 'none'
+          # NOTE: Paths are deliberately inlined per filter rather than using
+          # YAML anchors/aliases.  Because `filters:` is a `|` block-scalar
+          # (a STRING that dorny/paths-filter re-parses internally as YAML),
+          # using `*shared_trigger` aliases inside that string would inject
+          # nested LISTS instead of flat strings, and dorny/paths-filter
+          # does NOT auto-flatten nested sequences — shared/ root/ workflow
+          # changes would silently fail to match any downstream filter.
+          filters: |
+            user:
+              - 'apps/shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+              - 'tsconfig.base.json'
+              - 'vitest.config.ts'
+              - '.github/workflows/deploy.yml'
+              - 'apps/api/user/**'
+            graph:
+              - 'apps/shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+              - 'tsconfig.base.json'
+              - 'vitest.config.ts'
+              - '.github/workflows/deploy.yml'
+              - 'apps/api/graph/**'
+            ai:
+              - 'apps/shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+              - 'tsconfig.base.json'
+              - 'vitest.config.ts'
+              - '.github/workflows/deploy.yml'
+              - 'apps/api/ai/**'
+            cleanup:
+              - 'apps/shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+              - 'tsconfig.base.json'
+              - 'vitest.config.ts'
+              - '.github/workflows/deploy.yml'
+              - 'apps/api/cleanup/**'
+            ingestion:
+              - 'apps/shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+              - 'tsconfig.base.json'
+              - 'vitest.config.ts'
+              - '.github/workflows/deploy.yml'
+              - 'apps/api/ingestion/**'
+            gateway:
+              - 'apps/shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+              - 'tsconfig.base.json'
+              - 'vitest.config.ts'
+              - '.github/workflows/deploy.yml'
+              - 'apps/api/gateway/**'
+            any:
+              - 'apps/shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+              - 'tsconfig.base.json'
+              - 'vitest.config.ts'
+              - '.github/workflows/deploy.yml'
+              - 'apps/api/user/**'
+              - 'apps/api/graph/**'
+              - 'apps/api/ai/**'
+              - 'apps/api/cleanup/**'
+              - 'apps/api/ingestion/**'
+              - 'apps/api/gateway/**'
+
+      - name: Summary
+        run: |
+          echo "Changed:"
+          echo "  user      = ${{ steps.filter.outputs.user }}"
+          echo "  graph     = ${{ steps.filter.outputs.graph }}"
+          echo "  ai        = ${{ steps.filter.outputs.ai }}"
+          echo "  cleanup   = ${{ steps.filter.outputs.cleanup }}"
+          echo "  ingestion = ${{ steps.filter.outputs.ingestion }}"
+          echo "  gateway   = ${{ steps.filter.outputs.gateway }}"
+
+  # ============================================================
+  # LAYER 1 — Independent services (no outgoing Service Bindings)
+  # All four deploy in parallel; each is individually gated on
+  # its change-detection flag AND main-branch-only.
+  # ============================================================
+
+  deploy-user:
+    name: Deploy · user
+    needs: detect-changes
+    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.user == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm (corepack, workers-builds byte-equivalent)
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (shared + all services — turbo resolves ^build order)
+        run: pnpm -r build
+
+      - name: Deploy user worker (wrangler deploy)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: apps/api/user
+          secrets: |
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            EMAIL_API_KEY=${{ secrets.EMAIL_API_KEY }}
+
+  deploy-graph:
+    name: Deploy · graph
+    needs: detect-changes
+    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.graph == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm (corepack, workers-builds byte-equivalent)
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (shared + all services — turbo resolves ^build order)
+        run: pnpm -r build
+
+      - name: Deploy graph worker (wrangler deploy)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: apps/api/graph
+          secrets: |
+            NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
+
+  deploy-ai:
+    name: Deploy · ai
+    needs: detect-changes
+    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.ai == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm (corepack, workers-builds byte-equivalent)
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (shared + all services — turbo resolves ^build order)
+        run: pnpm -r build
+
+      - name: Deploy ai worker (wrangler deploy — includes AI binding + DO)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: apps/api/ai
+          secrets: |
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+            GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+            OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+            AI_GATEWAY_TOKEN=${{ secrets.AI_GATEWAY_TOKEN }}
+
+  deploy-cleanup:
+    name: Deploy · cleanup
+    needs: detect-changes
+    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.cleanup == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm (corepack, workers-builds byte-equivalent)
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (shared + all services — turbo resolves ^build order)
+        run: pnpm -r build
+
+      - name: Deploy cleanup worker (wrangler deploy — includes cron + queues)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: apps/api/cleanup
+          secrets: |
+            NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
+            B2_KEY_ID=${{ secrets.B2_KEY_ID }}
+            B2_KEY=${{ secrets.B2_KEY }}
+
+  # ============================================================
+  # LAYER 2 — ingestion (depends on graph via GRAPH_SERVICE)
+  #
+  # Wait for deploy-graph to finish (success OR skip — if graph
+  # had no changes the job is skipped, which is still valid as a
+  # dependency precondition because the already-deployed graph
+  # version satisfies the Service Binding).
+  # ============================================================
+  deploy-ingestion:
+    name: Deploy · ingestion
+    needs: [detect-changes, deploy-graph]
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      needs.detect-changes.outputs.ingestion == 'true' &&
+      (needs.deploy-graph.result == 'success' || needs.deploy-graph.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm (corepack, workers-builds byte-equivalent)
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (shared + all services — turbo resolves ^build order)
+        run: pnpm -r build
+
+      - name: Deploy ingestion worker (wrangler deploy — includes queue consumer)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: apps/api/ingestion
+          secrets: |
+            B2_KEY_ID=${{ secrets.B2_KEY_ID }}
+            B2_KEY=${{ secrets.B2_KEY }}
+
+  # ============================================================
+  # LAYER 3 — gateway (depends on ALL 5 downstream workers via
+  # USER_SERVICE · GRAPH_SERVICE · INGESTION_SERVICE ·
+  # AI_SERVICE · CLEANUP_SERVICE).
+  #
+  # Same "success || skipped" semantics as ingestion — unchanged
+  # L1/L2 jobs will be skipped, which satisfies the dependency.
+  # If ANY upstream job failed, gateway deploy is aborted
+  # (neither success nor skipped → expression short-circuits).
+  # ============================================================
+  deploy-gateway:
+    name: Deploy · gateway
+    needs: [detect-changes, deploy-user, deploy-graph, deploy-ai, deploy-cleanup, deploy-ingestion]
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      needs.detect-changes.outputs.gateway == 'true' &&
+      (needs.deploy-user.result      == 'success' || needs.deploy-user.result      == 'skipped') &&
+      (needs.deploy-graph.result     == 'success' || needs.deploy-graph.result     == 'skipped') &&
+      (needs.deploy-ai.result        == 'success' || needs.deploy-ai.result        == 'skipped') &&
+      (needs.deploy-cleanup.result   == 'success' || needs.deploy-cleanup.result   == 'skipped') &&
+      (needs.deploy-ingestion.result == 'success' || needs.deploy-ingestion.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm (corepack, workers-builds byte-equivalent)
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (shared + all services — turbo resolves ^build order)
+        run: pnpm -r build
+
+      - name: Deploy gateway worker (wrangler deploy — public entry point)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: apps/api/gateway
+          secrets: |
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+
+  # ============================================================
+  # MIGRATE-D1 — Manual-only, main-only.
+  #
+  # Applies SQL migrations from user/src/migrations and
+  # ai/src/migrations against the shared D1 database.
+  #
+  # TRIGGER: ONLY when workflow_dispatch was used AND the
+  #   run_migration checkbox was ticked AND we are on `main`.
+  #   A plain push to main will NEVER run this job (safety —
+  #   schema changes can break already-running workers, so a
+  #   human must explicitly approve them via the UI).
+  #
+  # WAIT-ON: all six deploy jobs must have succeeded OR been
+  #   skipped.  If ANY deploy failed, migration is aborted to
+  #   avoid schema/code skew.
+  # ============================================================
+  migrate-d1:
+    name: Migrate · D1 (Manual · main-only)
+    needs: [deploy-user, deploy-graph, deploy-ai, deploy-cleanup, deploy-ingestion, deploy-gateway]
+    if: |
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.run_migration == true &&
+      (needs.deploy-user.result      == 'success' || needs.deploy-user.result      == 'skipped') &&
+      (needs.deploy-graph.result     == 'success' || needs.deploy-graph.result     == 'skipped') &&
+      (needs.deploy-ai.result        == 'success' || needs.deploy-ai.result        == 'skipped') &&
+      (needs.deploy-cleanup.result   == 'success' || needs.deploy-cleanup.result   == 'skipped') &&
+      (needs.deploy-ingestion.result == 'success' || needs.deploy-ingestion.result == 'skipped') &&
+      (needs.deploy-gateway.result   == 'success' || needs.deploy-gateway.result   == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      # Canonical wrangler v3 env var names.  `wrangler d1 migrations apply`
+      # explicitly reads CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID — the
+      # legacy CF_* aliases are NOT supported by the raw CLI (they work only
+      # inside cloudflare/wrangler-action which maps them for you).  We also
+      # need the ACCOUNT_ID because user/ai wrangler.toml only declares
+      # `database_name = "...-shared-db"` (no account_id field), so wrangler
+      # must look up the name → UUID via the Accounts API at apply time.
+      CLOUDFLARE_API_TOKEN:   ${{ secrets.CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CF_ACCOUNT_ID }}
+      CF_API_TOKEN:           ${{ secrets.CF_API_TOKEN }}
+      CF_ACCOUNT_ID:          ${{ secrets.CF_ACCOUNT_ID }}
+      PROJECT_NAME:           ${{ github.event.repository.name }}
+      ENVIRONMENT:            ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm (corepack, workers-builds byte-equivalent)
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply D1 migrations --remote (user + ai → shared-db)
+        run: |
+          export PROJECT_NAME ENVIRONMENT
+          ./scripts/migrate.sh --remote --ai

@@ -19,11 +19,10 @@ name: CI
 on:
   push:
     branches:
-      - '**'
+      - main
   pull_request:
     branches:
       - main
-      - staging
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -173,7 +172,7 @@ jobs:
           export PATH="$PATH:$GOPATH_BIN"
           actionlint -color \
             .github/workflows/ci.yml \
-            .github/workflows/deploy-service.yml \
+            .github/workflows/deploy.yml \
             .github/workflows/terraform.yml
 
       - name: Validate all wrangler.toml files exist (smoke check)
