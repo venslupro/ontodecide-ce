@@ -38,13 +38,21 @@
 #   Service Binding order (graph before ingestion before gateway)
 #   is never violated.
 #
-# MANUAL-ONLY TRIGGER (no push / no PR auto-run):
-#   Worker deployments touch production Cloudflare accounts (script
-#   uploads + secret writes + D1 migrations). To guarantee zero
-#   accidental deployments, this workflow has ZERO automatic
-#   triggers. Every run is a human action:
-#     Repo → Actions → Deploy Cloudflare Workers → Run workflow →
-#     choose branch + (optionally) override services and/or env.
+# TRIGGERS:
+#   Automatic (push to main):
+#     PR merge to `main` auto-runs this workflow.  `detect-changes`
+#     uses dorny/paths-filter to ship ONLY services whose source
+#     (or shared/) actually changed — no diff → short-circuits, no
+#     uploads.  environment defaults to production.
+#   Manual (workflow_dispatch, any branch):
+#     UI path: Repo → Actions → Deploy Cloudflare Workers →
+#              Run workflow → choose branch + (optionally) override
+#              services and/or environment.  Works for force-deploys
+#              and staging deploys.
+#   Note: Worker deployments touch production Cloudflare accounts
+#   (script uploads + secret writes + D1 migrations). The change-
+#   aware path filter + deploy-service.yml's ordered layers keep
+#   automatic runs safe.
 #
 # QUALITY GATES (per-service, inside each layer — see
 #   .github/actions/deploy-service/action.yml):
@@ -74,11 +82,19 @@
 
 name: Deploy Cloudflare Workers
 
-# MANUAL-ONLY TRIGGER (no push / no PR auto-run).
-# The only way to execute this workflow is:
-#   Repo → Actions → Deploy Cloudflare Workers → Run workflow →
-#   choose branch + (optionally) override services and/or env.
+# TRIGGERS:
+#   1) push to `main` — AUTO deploy, change-aware (paths-filter detects
+#      which services changed, unchanged services are skipped).
+#      Uses environment=production by default.
+#   2) workflow_dispatch — MANUAL deploy (any branch).  Lets you pick:
+#        • explicit service list (force-deploy mode, ignores diff)
+#        • target environment (production / staging)
+#      UI path: Repo → Actions → Deploy Cloudflare Workers →
+#               Run workflow → choose branch + inputs.
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       services:
