@@ -233,8 +233,11 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           workingDirectory: apps/api/user
           secrets: |
-            JWT_SECRET=${{ secrets.JWT_SECRET }}
-            EMAIL_API_KEY=${{ secrets.EMAIL_API_KEY }}
+            JWT_SECRET
+            EMAIL_API_KEY
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          EMAIL_API_KEY: ${{ secrets.EMAIL_API_KEY }}
 
   deploy-graph:
     name: Deploy · graph
@@ -269,7 +272,9 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           workingDirectory: apps/api/graph
           secrets: |
-            NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
+            NEO4J_PASSWORD
+        env:
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
 
   deploy-ai:
     name: Deploy · ai
@@ -304,11 +309,17 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           workingDirectory: apps/api/ai
           secrets: |
-            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
-            GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
-            OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
-            AI_GATEWAY_TOKEN=${{ secrets.AI_GATEWAY_TOKEN }}
+            OPENAI_API_KEY
+            ANTHROPIC_API_KEY
+            GOOGLE_API_KEY
+            OPENROUTER_API_KEY
+            AI_GATEWAY_TOKEN
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          AI_GATEWAY_TOKEN: ${{ secrets.AI_GATEWAY_TOKEN }}
 
   deploy-cleanup:
     name: Deploy · cleanup
@@ -343,9 +354,13 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           workingDirectory: apps/api/cleanup
           secrets: |
-            NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
-            B2_KEY_ID=${{ secrets.B2_KEY_ID }}
-            B2_KEY=${{ secrets.B2_KEY }}
+            NEO4J_PASSWORD
+            B2_KEY_ID
+            B2_KEY
+        env:
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          B2_KEY: ${{ secrets.B2_KEY }}
 
   # ============================================================
   # LAYER 2 — ingestion (depends on graph via GRAPH_SERVICE)
@@ -392,8 +407,11 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           workingDirectory: apps/api/ingestion
           secrets: |
-            B2_KEY_ID=${{ secrets.B2_KEY_ID }}
-            B2_KEY=${{ secrets.B2_KEY }}
+            B2_KEY_ID
+            B2_KEY
+        env:
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          B2_KEY: ${{ secrets.B2_KEY }}
 
   # ============================================================
   # LAYER 3 — gateway (depends on ALL 5 downstream workers via
@@ -446,7 +464,9 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           workingDirectory: apps/api/gateway
           secrets: |
-            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            JWT_SECRET
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
   # ============================================================
   # MIGRATE-D1 — Manual-only, main-only.
