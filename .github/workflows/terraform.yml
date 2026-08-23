@@ -7,17 +7,21 @@
 #
 # TRIGGERS:
 #   • push to `main` with changes under infrastructure/terraform/**
-#     → fmt · validate · plan (READ-ONLY) + apply job enters a
-#       ⏳ WAITING state gated by the `production` GitHub Environment
-#       "Required reviewers" protection.  A designated human clicks
-#       Review pending deployments → Approve & deploy on the SAME
-#       workflow run page to actually execute terraform apply.
-#       Apply NEVER auto-runs; the plan artifact from Phase 2 is
-#       re-used verbatim so the approved diff is the applied diff.
+#     → fmt · validate · plan (READ-ONLY) + apply job is CREATED
+#       but pauses at ⏳ WAITING, gated by the `production` GitHub
+#       Environment Required-reviewers protection rule.
+#       Operator clicks "Review pending deployments → Approve &
+#       deploy" at the TOP OF THIS SAME run page → ONE single
+#       click fires `terraform apply` against the EXACT plan
+#       binary already uploaded by Phase 2 (reviewed diff = applied
+#       diff).  Apply NEVER auto-runs; the Environment gate is the
+#       sole pause-point.  See the ⚠️ MANDATORY REPO CONFIG block
+#       below — without this 1-click-flow breaks badly (the apply
+#       job would run immediately on every push, as in run #52).
 #   • pull_request to `main` with TF file changes
 #     → fmt · validate · plan (READ-ONLY).  The apply job is
-#       explicitly skipped on PRs (github.ref != refs/heads/main).
-#       Reviewers see the real Cloudflare diff before merge.
+#       explicitly skipped (PR github.ref != refs/heads/main).
+#       PRs can never trigger apply.
 #   • workflow_dispatch (any branch)
 #     → fmt · validate · plan ALWAYS run so the operator can check
 #       the plan diff from any branch.  The apply job then behaves
@@ -28,7 +32,28 @@
 #           plan results already displayed above.
 #     The trigger intentionally declares no `branches:` key —
 #     actionlint v1 rejects `branches:` under workflow_dispatch
-#     as unknown syntax, so branch gating is done per job instead.
+#     as unknown syntax; branch gating is done on the apply job.
+#
+# ⚠️⚠️⚠️  MANDATORY REPO CONFIG BEFORE MERGING / USING  ⚠️⚠️⚠️
+#   This workflow operates a SINGLE manual-click model: the
+#   `environment: production` deployment protection rule is the
+#   ONLY mechanism that prevents `terraform apply` from running
+#   automatically on push to main.  If the `production`
+#   Environment is misconfigured or missing, apply WILL RUN
+#   UNAUTHORIZED on every push (see run #52 incident).
+#
+#   Configure NOW in GitHub web UI:
+#     1. Repo → Settings → Environments
+#     2. [New environment]  Name = production   (exact match)
+#     3. Required reviewers  →  ✅ Tick this box
+#        Add at least ONE reviewer account (preferably 2+).
+#     4. (Optional but recommended) Admins can bypass — OFF.
+#     5. [Save protection rules].
+#
+#   After saving, push-triggered runs on main will pause Apply
+#   at WAITING and surface the "Review pending deployments"
+#   banner at the top of the run page — that is the 1-click UX.
+# ⚠️⚠️⚠️  END MANDATORY REPO CONFIG  ⚠️⚠️⚠️
 #
 # ENVIRONMENT:
 #   This pipeline targets a SINGLE, FIXED environment: production.
@@ -40,16 +65,23 @@
 #   2. Plan            — `terraform plan` renders the diff against
 #                        the real Cloudflare state.  The plan JSON
 #                        is uploaded as a build artifact for review.
-#   3. Apply ( gated by production Environment · human approval )
-#                      — On `main` (push or workflow_dispatch) apply
-#                        is ALWAYS created as a ⏳ WAITING card, NEVER
-#                        auto-executed.  Click "Review pending
-#                        deployments" at the top of the run page
-#                        then Approve & deploy.
-#                      — On NON-main branches (workflow_dispatch or
-#                        PR) the apply job is cleanly skipped; the
-#                        plan output above is still fully visible
-#                        for pre-merge diff review.
+#   3. Apply ( single manual click on push/main )
+#                      — Created whenever github.ref is refs/heads/main
+#                        (both push to main AND workflow_dispatch on
+#                        main).  Instantly enters ⏳ WAITING via the
+#                        `production` Environment Required-reviewers
+#                        protection rule until a human clicks the
+#                        banner → Approve & deploy (ONE click to
+#                        apply; that click is the full manual gate).
+#                      — On NON-main workflow_dispatch runs, and on
+#                        ALL pull requests (ref != main), apply is
+#                        cleanly SKIPPED.  The plan from Phase 2 is
+#                        still rendered in full for review.
+#                      — ⚠️ Push-to-main auto-pause is 100% reliant
+#                        on the Environment config block above.
+#                        Apply the MANDATORY REPO CONFIG steps in the
+#                        TRIGGERS section BEFORE merging this change
+#                        (omitting it caused the run-#52 auto-apply).
 #
 # REQUIRED GITHUB SECRETS / VARS:
 #   (Set via Repo → Settings → Secrets and variables → Actions)
@@ -236,20 +268,32 @@ jobs:
   # Phase 3 — Apply (NEVER automatic — requires manual approval)
   # -------------------------------------------------------------
   apply:
-    name: Apply (main-only · prod-env approval required)
+    name: Apply (main · 1-click prod-env approval)
     needs: plan
-    # On `main` (push OR workflow_dispatch) the apply job is CREATED
-    # but enters a ⏳ WAITING state via the `production` Environment
-    # protection rule (Required reviewers).  A human must click
-    # "Review pending deployments → Approve & deploy" on the SAME
-    # run summary page (no need to re-trigger via Run workflow).
-    # On PR branches the job is skipped outright (PR ref != main).
+    # ==============================================================
+    # SINGLE CLICK FLOW for terraform apply.
+    #
+    # The ONLY code-level gate is branch-based: main-only apply.
+    # The *human* gate is the `production` GitHub Environment
+    # Required-reviewers deployment protection rule (see block
+    # below): on push to main the apply job is created but pauses
+    # immediately at ⏳ WAITING until a reviewer on the production
+    # environment clicks Approve & deploy from the banner at the
+    # top of the SAME run page — that is the ONE manual click.
+    #
+    # ⚠️ DEPENDENCY ON REPO SETTINGS:
+    #    If the `production` Environment has NO Required reviewers
+    #    configured (or doesn't exist), the job proceeds without
+    #    pausing → terraform apply runs on EVERY push to main,
+    #    causing the same auto-run incident seen on run #52.
+    #    Follow the MANDATORY REPO CONFIG steps in the header
+    #    comment (Settings → Environments) BEFORE merging.
+    # ==============================================================
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # Human approval gate.  Create the `production` environment in
-    # Repo → Settings → Environments and enable Required reviewers.
-    # Until then the job would immediately proceed without a gate,
-    # which is unsafe — NEVER delete this environment block.
+    # One-click human approval gate.  MUST be paired with the
+    # MANDATORY repo-level Environment protection config in
+    # Settings → Environments → production → Required reviewers.
     environment:
       name: production
     steps:
@@ -281,7 +325,7 @@ jobs:
       - name: Apply saved plan or fresh plan
         run: |
           if [ -f tfplan.binary ]; then
-            echo ">>> Applying PREVIOUSLY REVIEWED plan (from Phase 2) <<<"
+            echo ">>> Applying PREVIOUSLY REVIEWED plan (from Phase 2 of the SAME run) — plan reviewed in UI = plan applied <<<"
             terraform apply -input=false tfplan.binary
           else
             echo ">>> Saved plan not found — generating fresh plan and applying <<<"
