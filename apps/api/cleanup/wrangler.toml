@@ -5,7 +5,7 @@
 #   • Terraform CREATES & GOVERNS:
 #       - Worker skeleton + 4D tags
 #       - D1 binding "DB" → shared-db (cloudflare_d1_database.shared_db)
-#       - 5 KV namespaces (USER_CACHE / GRAPH_CACHE / INGESTION_JOBS /
+#       - 4 KV namespaces (USER_CACHE / INGESTION_JOBS /
 #         AI_CACHE / CLEANUP_JOBS) — for cross-service cache invalidation
 #       - Queue producer "CLEANUP_QUEUE" + cleanup / cleanup-dlq Queues
 #       - cloudflare_workers_cron_trigger.cleanup_daily  (0 3 * * * UTC)
@@ -65,14 +65,10 @@ binding        = "DB"
 database_name  = "ontodecide-prd-shared-db"
 
 # ----- KV: cross-service cache invalidation (Terraform-managed) -----------
-# 5 bindings MUST match local.kv_binding_map entries with svc="cleanup".
+# 4 bindings MUST match local.kv_binding_map entries with svc="cleanup".
 [[kv_namespaces]]
 binding = "USER_CACHE"
 id = "REPLACE_WITH_TERRAFORM_CREATED_KV_USER_CACHE_CLEANUP_ID"
-
-[[kv_namespaces]]
-binding = "GRAPH_CACHE"
-id = "REPLACE_WITH_TERRAFORM_CREATED_KV_GRAPH_CACHE_CLEANUP_ID"
 
 [[kv_namespaces]]
 binding = "INGESTION_JOBS"

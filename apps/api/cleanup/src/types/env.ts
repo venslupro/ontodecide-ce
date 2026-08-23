@@ -18,8 +18,6 @@ export interface CleanupEnv extends BaseEnv {
   B2_ARCHIVE_BUCKET: string;
   /** KV namespace for User Service caches (to purge). */
   USER_CACHE: KVNamespace;
-  /** KV namespace for Graph Service caches (to purge). */
-  GRAPH_CACHE: KVNamespace;
   /** KV namespace for Ingestion Service job records (to purge). */
   INGESTION_JOBS: KVNamespace;
   /** KV namespace for AI Service caches + neuron counter (to purge). */

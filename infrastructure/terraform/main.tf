@@ -92,11 +92,9 @@ locals {
     { svc = "gateway", binding = "JWT_BLACKLIST" },
     { svc = "gateway", binding = "RATE_LIMIT" },
     { svc = "user", binding = "CACHE" },
-    { svc = "graph", binding = "CACHE" },
     { svc = "ingestion", binding = "JOBS" },
     { svc = "ai", binding = "CACHE" },
     { svc = "cleanup", binding = "USER_CACHE" },
-    { svc = "cleanup", binding = "GRAPH_CACHE" },
     { svc = "cleanup", binding = "INGESTION_JOBS" },
     { svc = "cleanup", binding = "AI_CACHE" },
     { svc = "cleanup", binding = "CLEANUP_JOBS" },
@@ -154,7 +152,7 @@ moved {
 }
 
 # ============================================================================
-# 2) KV Namespaces (11)
+# 2) KV Namespaces (9)
 #    Naming convention (Cloudflare resource name / Google Cloud naming convention):
 #      • title         lowercase + hyphens  e.g. ontodecide-prd-cleanup-cleanup-jobs
 #      • for_each key  lowercase + double-underscore separator (TF state internal id, not a cloud resource name)
@@ -199,10 +197,6 @@ moved {
   to   = cloudflare_workers_kv_namespace.kv["user__cache"]
 }
 moved {
-  from = cloudflare_workers_kv_namespace.kv["graph__CACHE"]
-  to   = cloudflare_workers_kv_namespace.kv["graph__cache"]
-}
-moved {
   from = cloudflare_workers_kv_namespace.kv["ingestion__JOBS"]
   to   = cloudflare_workers_kv_namespace.kv["ingestion__jobs"]
 }
@@ -213,10 +207,6 @@ moved {
 moved {
   from = cloudflare_workers_kv_namespace.kv["cleanup__USER_CACHE"]
   to   = cloudflare_workers_kv_namespace.kv["cleanup__user_cache"]
-}
-moved {
-  from = cloudflare_workers_kv_namespace.kv["cleanup__GRAPH_CACHE"]
-  to   = cloudflare_workers_kv_namespace.kv["cleanup__graph_cache"]
 }
 moved {
   from = cloudflare_workers_kv_namespace.kv["cleanup__INGESTION_JOBS"]

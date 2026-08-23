@@ -62,7 +62,6 @@ const app = new OpenAPIHono<{ Bindings: GraphEnv; Variables: GraphVars }>({
 let configValidated = false;
 
 const REQUIRED_KEYS = [
-  configKey('CACHE', 'KV cache namespace for ontology + entity caches'),
   configKey('NEO4J_URL', 'Neo4j AuraDB connection URL', validators.neo4jUrl),
   configKey('NEO4J_USER', 'Neo4j username (usually "neo4j")', validators.nonEmpty),
   configKey('NEO4J_PASSWORD', 'Neo4j password', validators.minLength(1)),
@@ -99,8 +98,8 @@ app.use('*', async (c, next) => {
   }
   const repo = new Neo4jRepository(c.env);
   c.set('repo', repo);
-  c.set('ontology', new OntologyService(repo, c.env.CACHE));
-  c.set('situation', new SituationService(repo, c.env.CACHE));
+  c.set('ontology', new OntologyService(repo));
+  c.set('situation', new SituationService(repo));
   c.set('entities', new EntityService(repo));
   await next();
 });
