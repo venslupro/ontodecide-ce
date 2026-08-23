@@ -99,11 +99,13 @@ jobs:
           list-files: 'none'
           filters: |
             terraform:
+              - 'infrastructure/terraform/*.tf'
               - 'infrastructure/terraform/**/*.tf'
+              - 'infrastructure/terraform/*.tfvars'
               - 'infrastructure/terraform/**/*.tfvars'
               - '.github/workflows/terraform.yml'
               - '.github/workflows/ci.yml'
-              - '.terraform.lock.hcl'
+              - 'infrastructure/terraform/.terraform.lock.hcl'
 
       - name: Setup Terraform
         if: steps.filter.outputs.terraform == 'true'
