@@ -28,7 +28,11 @@ compatibility_flags = ["nodejs_compat"]
 # LOCAL-ONLY [build] block.
 [build]
 command = "pnpm --filter=@ontodecide/graph exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
-cwd = "apps/api/graph"
+# No `cwd` — wrangler-action sets workingDirectory to this service dir, and
+# `wrangler dev` is launched from here via pnpm --filter, so the default
+# (process cwd) is correct. A repo-root-relative path like "apps/api/graph"
+# would be resolved relative to this wrangler.toml's dir and double the path
+# → spawn /bin/sh ENOENT.
 
 # ----- KV: node/query result cache (Terraform-managed) --------------------
 # binding MUST match local.kv_binding_map entry for svc="graph".
