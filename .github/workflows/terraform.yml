@@ -53,19 +53,23 @@ on:
     branches:
       - main
     paths:
+      - 'infrastructure/terraform/*.tf'
       - 'infrastructure/terraform/**/*.tf'
+      - 'infrastructure/terraform/*.tfvars'
       - 'infrastructure/terraform/**/*.tfvars'
       - '.github/workflows/terraform.yml'
-      - '.terraform.lock.hcl'
+      - 'infrastructure/terraform/.terraform.lock.hcl'
   pull_request:
     branches:
       - main
       - staging
     paths:
+      - 'infrastructure/terraform/*.tf'
       - 'infrastructure/terraform/**/*.tf'
+      - 'infrastructure/terraform/*.tfvars'
       - 'infrastructure/terraform/**/*.tfvars'
       - '.github/workflows/terraform.yml'
-      - '.terraform.lock.hcl'
+      - 'infrastructure/terraform/.terraform.lock.hcl'
   workflow_dispatch:
     inputs:
       environment:
