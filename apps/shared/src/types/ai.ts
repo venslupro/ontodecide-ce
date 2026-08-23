@@ -2,8 +2,15 @@
  * AI-domain types shared between AI Service, Gateway and frontend clients.
  */
 
-/** Identifier for a supported LLM provider. */
-export type LlmProvider = 'workers-ai' | 'openai' | 'anthropic' | 'google' | 'openrouter';
+/**
+ * Identifier for a supported LLM provider.
+ *
+ * All providers route through the Cloudflare AI Gateway. Google and Groq
+ * are the priority providers (require their respective API keys);
+ * Workers AI is the always-available fallback (no key needed, uses the
+ * Cloudflare account entitlement via the gateway).
+ */
+export type LlmProvider = 'google' | 'groq' | 'workers-ai';
 
 /** Options passed to an `ILLMProvider.generate` call. */
 export interface LlmOptions {
@@ -19,6 +26,8 @@ export interface LlmOptions {
   systemPrompt?: string;
   /** Whether to stream the response (provider-dependent). */
   stream?: boolean;
+  /** Cache TTL in seconds for the AI Gateway response cache (0 disables). */
+  cacheTtl?: number;
 }
 
 /** Token usage reported by the provider. */

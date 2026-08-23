@@ -93,7 +93,6 @@ locals {
     { svc = "gateway", binding = "RATE_LIMIT" },
     { svc = "user", binding = "CACHE" },
     { svc = "ingestion", binding = "JOBS" },
-    { svc = "ai", binding = "CACHE" },
     { svc = "cleanup", binding = "USER_CACHE" },
     { svc = "cleanup", binding = "INGESTION_JOBS" },
     { svc = "cleanup", binding = "AI_CACHE" },
@@ -199,10 +198,6 @@ moved {
 moved {
   from = cloudflare_workers_kv_namespace.kv["ingestion__JOBS"]
   to   = cloudflare_workers_kv_namespace.kv["ingestion__jobs"]
-}
-moved {
-  from = cloudflare_workers_kv_namespace.kv["ai__CACHE"]
-  to   = cloudflare_workers_kv_namespace.kv["ai__cache"]
 }
 moved {
   from = cloudflare_workers_kv_namespace.kv["cleanup__USER_CACHE"]
