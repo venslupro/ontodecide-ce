@@ -1,0 +1,48 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // ----------------------------------------------------------------
+    // Source-resolution monorepo mode — deliberately NOT using
+    // composite / references / rootDir / tsBuildInfoFile:
+    //   • @ontodecide/shared resolves via a filtered barrel at
+    //     ./src/types/ontodecide-shared.ts that re-exports ONLY the
+    //     pure data-symbols web actually consumes, pulled straight
+    //     from apps/shared/src concrete files. This skips the main
+    //     shared barrel's Cloudflare-only modules (types/env.ts
+    //     KVNamespace/Fetcher ambient globals, utils/crypto.ts and
+    //     storage/b2-client.ts DOM-lib Uint8Array generic mismatch)
+    //     so tsc never needs @cloudflare/workers-types and never
+    //     sees the BufferSource conflict — and we don't depend on
+    //     apps/shared/dist existing at typecheck time either.
+    //   • @ontodecide/shared/* is still mapped to apps/shared/src/*
+    //     for future subpath imports of known-clean files (dto/*.ts).
+    //   • composite is disabled because it requires a strict 1:1
+    //     project-to-project reference chain with built state files
+    //     for every dependency, which we deliberately avoid.
+    // ----------------------------------------------------------------
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "incremental": false,
+    "baseUrl": ".",
+    "outDir": "dist/tsc",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client", "vitest/globals", "node"],
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false,
+    "noEmit": false,
+    "paths": {
+      "@/*":                  ["./src/*"],
+      "@ontodecide/shared":   ["./src/types/ontodecide-shared.ts"],
+      "@ontodecide/shared/*": ["../../apps/shared/src/*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts",
+    "tests/**/*.tsx"
+  ],
+  "exclude": ["node_modules", "dist", ".turbo"]
+}

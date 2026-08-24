@@ -40,6 +40,7 @@ export interface PaginatedResponse<T> {
 export interface PageQuery {
   page?: number;
   size?: number;
+  [key: string]: unknown;
 }
 
 /** Standard service result wrapping either a value or an error. */
