@@ -1,6 +1,6 @@
 # ============================================================================
 # OntoDecide — Cloudflare long-lived resources IaC manifest
-# Cloudflare Provider v4.52 exact schema-aligned version
+# Cloudflare Provider v5 schema-aligned (unified bindings, object attrs)
 #
 # Scope (Shift Left · static resource layer):
 #   • D1 shared database "shared-db" (shared by user/ai/cleanup)
@@ -259,8 +259,8 @@ resource "cloudflare_queue" "cleanup" {
 #    Tier 2:           ingestion — service_binding → graph (Tier1)
 #    Tier 3:           gateway   — service_binding → 5 downstreams (Tier1 + Tier2)
 #
-#    Provider v4 workers_script does not support ai_binding / durable_object blocks;
-#    so AI / DO / plain [vars] are still declared in wrangler.toml.
+#    workers_script bindings are unified in v5; AI / DO / plain [vars]
+#    are still declared in wrangler.toml.
 #    content is a sentinel; Wrangler overwrites the script and vars on each deploy;
 #    lifecycle.ignore_changes ensures Terraform apply never rolls back wrangler's real code.
 # ============================================================================
@@ -273,13 +273,13 @@ resource "cloudflare_workers_script" "tier1" {
   }
 
   account_id          = var.account_id
-  name                = each.value.worker_name
+  script_name         = each.value.worker_name
   content             = local.sentinel_script
-  module              = true
+  main_module         = "index.js"
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  # 4D governance tags (the only resource supporting native tags on Provider v4)
+  # 4D governance tags
   tags = [
     local.tag_environment,
     local.tag_project,
@@ -287,49 +287,42 @@ resource "cloudflare_workers_script" "tier1" {
     local.tag_lifecycle,
   ]
 
-  # ---- D1 ----
-  dynamic "d1_database_binding" {
-    for_each = each.value.has_db ? [1] : []
-    content {
+  # ---- Unified bindings (v5: all binding types in a single list) ----
+  # D1 + KV + Queue producer (cleanup only). Service bindings are absent
+  # in Tier 1 (leaf services). Wrangler overwrites bindings on each deploy;
+  # bindings is in ignore_changes so Terraform won't fight wrangler.
+  bindings = concat(
+    # D1 (user, ai, cleanup)
+    each.value.has_db ? [{
       name        = "DB"
+      type        = "d1"
       database_id = cloudflare_d1_database.shared_db.id
-    }
-  }
-
-  # ---- KV ----
-  # Note: the for_each key uses lower(binding) (see kv_namespace for_each above),
-  # but the wrangler binding NAME stays UPPER_SNAKE_CASE.
-  dynamic "kv_namespace_binding" {
-    for_each = [
-      for item in local.kv_binding_map : item if item.svc == each.key
-    ]
-    content {
-      name         = kv_namespace_binding.value.binding
-      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${lower(kv_namespace_binding.value.binding)}"].id
-    }
-  }
-
-  # ---- Queue producer bindings (Cleanup only) ----
-  dynamic "queue_binding" {
-    for_each = each.key == "cleanup" ? [
-      { binding = "CLEANUP_QUEUE", queue = cloudflare_queue.cleanup.name }
-    ] : []
-    content {
-      binding = queue_binding.value.binding
-      queue   = queue_binding.value.queue
-    }
-  }
+    }] : [],
+    # KV — binding NAME stays UPPER_SNAKE_CASE for wrangler.toml
+    [
+      for item in local.kv_binding_map : {
+        name         = item.binding
+        type         = "kv_namespace"
+        namespace_id = cloudflare_workers_kv_namespace.kv["${item.svc}__${lower(item.binding)}"].id
+      }
+      if item.svc == each.key
+    ],
+    # Queue producer (cleanup only)
+    each.key == "cleanup" ? [{
+      name       = "CLEANUP_QUEUE"
+      type       = "queue"
+      queue_name = cloudflare_queue.cleanup.name
+    }] : []
+  )
 
   lifecycle {
     create_before_destroy = true
     ignore_changes = [
       content,
-      module,
+      main_module,
       compatibility_date,
       compatibility_flags,
-      plain_text_binding,
-      secret_text_binding,
-      webassembly_binding,
+      bindings,
     ]
   }
 }
@@ -337,9 +330,9 @@ resource "cloudflare_workers_script" "tier1" {
 # ---- Tier 2: ingestion — Service Binding → graph (Tier1) ----
 resource "cloudflare_workers_script" "ingestion" {
   account_id          = var.account_id
-  name                = local.workers["ingestion"].worker_name
+  script_name         = local.workers["ingestion"].worker_name
   content             = local.sentinel_script
-  module              = true
+  main_module         = "index.js"
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
@@ -350,33 +343,34 @@ resource "cloudflare_workers_script" "ingestion" {
     local.tag_lifecycle,
   ]
 
-  # ---- KV ----
-  # for_each key uses lower(binding); binding NAME retains UPPER_SNAKE_CASE.
-  dynamic "kv_namespace_binding" {
-    for_each = [
-      for item in local.kv_binding_map : item if item.svc == "ingestion"
+  # ---- Unified bindings (v5) ----
+  # KV + Queue producer + Service Binding → Graph (Tier1)
+  bindings = concat(
+    # KV
+    [
+      for item in local.kv_binding_map : {
+        name         = item.binding
+        type         = "kv_namespace"
+        namespace_id = cloudflare_workers_kv_namespace.kv["${item.svc}__${lower(item.binding)}"].id
+      }
+      if item.svc == "ingestion"
+    ],
+    # Queue producer
+    [{
+      name       = "INGEST_QUEUE"
+      type       = "queue"
+      queue_name = cloudflare_queue.ingestion.name
+    }],
+    # Service Binding → Graph (Tier1, must be created first)
+    [
+      for sb in local.ingestion_service_bindings : {
+        name        = sb.binding
+        type        = "service"
+        service     = cloudflare_workers_script.tier1["graph"].script_name
+        environment = var.environment
+      }
     ]
-    content {
-      name         = kv_namespace_binding.value.binding
-      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${lower(kv_namespace_binding.value.binding)}"].id
-    }
-  }
-
-  # ---- Queue producer binding ----
-  queue_binding {
-    binding = "INGEST_QUEUE"
-    queue   = cloudflare_queue.ingestion.name
-  }
-
-  # ---- Service Binding → Graph (Tier1, must be created first) ----
-  dynamic "service_binding" {
-    for_each = local.ingestion_service_bindings
-    content {
-      name        = service_binding.value.binding
-      service     = cloudflare_workers_script.tier1["graph"].name
-      environment = var.environment
-    }
-  }
+  )
 
   # Explicit dependency: graph Worker must be created first
   depends_on = [cloudflare_workers_script.tier1["graph"]]
@@ -385,12 +379,10 @@ resource "cloudflare_workers_script" "ingestion" {
     create_before_destroy = true
     ignore_changes = [
       content,
-      module,
+      main_module,
       compatibility_date,
       compatibility_flags,
-      plain_text_binding,
-      secret_text_binding,
-      webassembly_binding,
+      bindings,
     ]
   }
 }
@@ -398,9 +390,9 @@ resource "cloudflare_workers_script" "ingestion" {
 # ---- Tier 3: gateway — Service Bindings → all 5 downstreams ----
 resource "cloudflare_workers_script" "gateway" {
   account_id          = var.account_id
-  name                = local.workers["gateway"].worker_name
+  script_name         = local.workers["gateway"].worker_name
   content             = local.sentinel_script
-  module              = true
+  main_module         = "index.js"
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
@@ -411,28 +403,29 @@ resource "cloudflare_workers_script" "gateway" {
     local.tag_lifecycle,
   ]
 
-  # ---- KV ----
-  # for_each key uses lower(binding); binding NAME retains UPPER_SNAKE_CASE.
-  dynamic "kv_namespace_binding" {
-    for_each = [
-      for item in local.kv_binding_map : item if item.svc == "gateway"
+  # ---- Unified bindings (v5) ----
+  # KV + Service Bindings → 5 downstreams (Tier1 + Tier2 must be created first)
+  bindings = concat(
+    # KV
+    [
+      for item in local.kv_binding_map : {
+        name         = item.binding
+        type         = "kv_namespace"
+        namespace_id = cloudflare_workers_kv_namespace.kv["${item.svc}__${lower(item.binding)}"].id
+      }
+      if item.svc == "gateway"
+    ],
+    # Service Bindings → 5 downstreams
+    [
+      for sb in local.gateway_service_bindings : {
+        name = sb.binding
+        type = "service"
+        # ingestion is in Tier2, the rest in Tier1
+        service     = sb.target == "ingestion" ? cloudflare_workers_script.ingestion.script_name : cloudflare_workers_script.tier1[sb.target].script_name
+        environment = var.environment
+      }
     ]
-    content {
-      name         = kv_namespace_binding.value.binding
-      namespace_id = cloudflare_workers_kv_namespace.kv["${kv_namespace_binding.value.svc}__${lower(kv_namespace_binding.value.binding)}"].id
-    }
-  }
-
-  # ---- Service Bindings → 5 downstreams (Tier1 + Tier2 must be created first) ----
-  dynamic "service_binding" {
-    for_each = local.gateway_service_bindings
-    content {
-      name = service_binding.value.binding
-      # ingestion is in Tier2, the rest in Tier1
-      service     = service_binding.value.target == "ingestion" ? cloudflare_workers_script.ingestion.name : cloudflare_workers_script.tier1[service_binding.value.target].name
-      environment = var.environment
-    }
-  }
+  )
 
   # Explicit dependency: all Tier1 + ingestion must be created first
   depends_on = [
@@ -444,19 +437,17 @@ resource "cloudflare_workers_script" "gateway" {
     create_before_destroy = true
     ignore_changes = [
       content,
-      module,
+      main_module,
       compatibility_date,
       compatibility_flags,
-      plain_text_binding,
-      secret_text_binding,
-      webassembly_binding,
+      bindings,
     ]
   }
 }
 
 # ============================================================================
 # 5) Cron trigger: Cleanup daily at 03:00 UTC
-#    v4 schedules = list(string) of cron expressions
+#    schedules = list(string) of cron expressions
 # ============================================================================
 resource "cloudflare_workers_cron_trigger" "cleanup_daily" {
   for_each    = length(local.workers["cleanup"].cron) > 0 ? { cleanup = "cleanup" } : {}
@@ -470,6 +461,7 @@ resource "cloudflare_workers_cron_trigger" "cleanup_daily" {
 
 # ============================================================================
 # 6) Optional: Workers custom domain
+#    v5 renamed cloudflare_workers_domain → cloudflare_workers_custom_domain
 # ============================================================================
 locals {
   custom_domains = {
@@ -482,7 +474,13 @@ locals {
   }
 }
 
-resource "cloudflare_workers_domain" "svc" {
+# State migration: v4 cloudflare_workers_domain → v5 cloudflare_workers_custom_domain
+moved {
+  from = cloudflare_workers_domain.svc
+  to   = cloudflare_workers_custom_domain.svc
+}
+
+resource "cloudflare_workers_custom_domain" "svc" {
   for_each = {
     for k, d in local.custom_domains : k => d
     if d != null && var.zone_id != ""
@@ -514,8 +512,8 @@ resource "cloudflare_workers_domain" "svc" {
 #         wrangler pages deploy apps/web/dist --project-name ontodecide-prd-web
 #
 # Governance: Environment/Project/Service/Lifecycle are carried on the
-# resource name and output block (cloudflare_pages_project on Provider v4
-# does not support a native `tags` field yet).
+# resource name and output block (cloudflare_pages_project does not
+# support a native `tags` field).
 # ============================================================================
 
 resource "cloudflare_pages_project" "web" {
@@ -528,8 +526,9 @@ resource "cloudflare_pages_project" "web" {
   # CI performs the real build: pnpm install && pnpm build for apps/web
   # and deploys via `wrangler pages deploy apps/web/dist`.
   # These values keep the Cloudflare UI "Retry deploy" aligned.
+  # v5: build_config is a single nested attribute (=), not a block.
   # ------------------------------------------------------------------
-  build_config {
+  build_config = {
     build_command   = "pnpm install --frozen-lockfile && pnpm --filter @ontodecide/web build"
     destination_dir = "apps/web/dist"
     root_dir        = ""
@@ -541,13 +540,14 @@ resource "cloudflare_pages_project" "web" {
   # (HTTPS is always enabled on pages.dev — no separate config flag
   # on the Pages resource). compatibility_* below apply to Pages
   # Functions / Middleware should we later add SSR/edge-auth handlers.
+  # v5: deployment_configs is a single nested attribute (=), not a block.
   # ------------------------------------------------------------------
-  deployment_configs {
-    production {
+  deployment_configs = {
+    production = {
       fail_open          = false
       compatibility_date = "2024-10-01"
     }
-    preview {
+    preview = {
       fail_open          = false
       compatibility_date = "2024-10-01"
     }
