@@ -31,12 +31,8 @@
 #   Tier 3 (depends on all downstreams): gateway
 # ============================================================================
 
-# -------- Governance metadata + unified naming locals --------
+# -------- Unified naming locals --------
 locals {
-  tag_environment = "Environment=${var.environment}"
-  tag_project     = "Project=${var.project_name}"
-  tag_lifecycle   = "Lifecycle=long-lived"
-
   # Env short form: production→prd, staging→stg (used in resource naming)
   env_short = var.environment == "production" ? "prd" : (var.environment == "staging" ? "stg" : var.environment)
 
@@ -222,28 +218,28 @@ moved {
 # ============================================================================
 resource "cloudflare_queue" "ingestion_dlq" {
   account_id = var.account_id
-  name       = "${local.res_prefix}-ingestion-dlq"
+  queue_name = "${local.res_prefix}-ingestion-dlq"
   # Governance: Environment=${var.environment} Project=${var.project_name}
   #             Service=ingestion Lifecycle=long-lived
 }
 
 resource "cloudflare_queue" "ingestion" {
   account_id = var.account_id
-  name       = "${local.res_prefix}-ingestion"
+  queue_name = "${local.res_prefix}-ingestion"
   # Governance: Environment=${var.environment} Project=${var.project_name}
   #             Service=ingestion Lifecycle=long-lived
 }
 
 resource "cloudflare_queue" "cleanup_dlq" {
   account_id = var.account_id
-  name       = "${local.res_prefix}-cleanup-dlq"
+  queue_name = "${local.res_prefix}-cleanup-dlq"
   # Governance: Environment=${var.environment} Project=${var.project_name}
   #             Service=cleanup Lifecycle=long-lived
 }
 
 resource "cloudflare_queue" "cleanup" {
   account_id = var.account_id
-  name       = "${local.res_prefix}-cleanup"
+  queue_name = "${local.res_prefix}-cleanup"
   # Governance: Environment=${var.environment} Project=${var.project_name}
   #             Service=cleanup Lifecycle=long-lived
 }
@@ -279,14 +275,6 @@ resource "cloudflare_workers_script" "tier1" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  # 4D governance tags
-  tags = [
-    local.tag_environment,
-    local.tag_project,
-    "Service=${each.value.service}",
-    local.tag_lifecycle,
-  ]
-
   # ---- Unified bindings (v5: all binding types in a single list) ----
   # D1 + KV + Queue producer (cleanup only). Service bindings are absent
   # in Tier 1 (leaf services). Wrangler overwrites bindings on each deploy;
@@ -311,7 +299,7 @@ resource "cloudflare_workers_script" "tier1" {
     each.key == "cleanup" ? [{
       name       = "CLEANUP_QUEUE"
       type       = "queue"
-      queue_name = cloudflare_queue.cleanup.name
+      queue_name = cloudflare_queue.cleanup.queue_name
     }] : []
   )
 
@@ -336,13 +324,6 @@ resource "cloudflare_workers_script" "ingestion" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  tags = [
-    local.tag_environment,
-    local.tag_project,
-    "Service=ingestion",
-    local.tag_lifecycle,
-  ]
-
   # ---- Unified bindings (v5) ----
   # KV + Queue producer + Service Binding → Graph (Tier1)
   bindings = concat(
@@ -359,7 +340,7 @@ resource "cloudflare_workers_script" "ingestion" {
     [{
       name       = "INGEST_QUEUE"
       type       = "queue"
-      queue_name = cloudflare_queue.ingestion.name
+      queue_name = cloudflare_queue.ingestion.queue_name
     }],
     # Service Binding → Graph (Tier1, must be created first)
     [
@@ -395,13 +376,6 @@ resource "cloudflare_workers_script" "gateway" {
   main_module         = "index.js"
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
-
-  tags = [
-    local.tag_environment,
-    local.tag_project,
-    "Service=gateway",
-    local.tag_lifecycle,
-  ]
 
   # ---- Unified bindings (v5) ----
   # KV + Service Bindings → 5 downstreams (Tier1 + Tier2 must be created first)
@@ -453,7 +427,7 @@ resource "cloudflare_workers_cron_trigger" "cleanup_daily" {
   for_each    = length(local.workers["cleanup"].cron) > 0 ? { cleanup = "cleanup" } : {}
   account_id  = var.account_id
   script_name = local.workers["cleanup"].worker_name
-  schedules   = local.workers["cleanup"].cron
+  schedules   = [for c in local.workers["cleanup"].cron : { cron = c }]
 
   # cleanup Worker (Tier1) must exist first; cron trigger references its worker_name
   depends_on = [cloudflare_workers_script.tier1["cleanup"]]

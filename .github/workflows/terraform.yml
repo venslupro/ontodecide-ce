@@ -107,18 +107,31 @@ jobs:
         # lock entry from -upgrade is persisted for subsequent steps.
         run: terraform init -input=false -upgrade
 
-      # One-off: remove stale D1 UUIDs from remote state before plan.
+      # One-off: remove stale entries from remote state before plan.
       # Safe no-op when keys are absent.
-      - name: Clean stale D1 state entries
+      # - D1 databases: stale UUIDs from v4 state
+      # - Cron trigger: v4→v5 schedules schema mismatch (string[] → object[])
+      - name: Clean stale state entries
         if: always()
         run: |
           set -u -o pipefail
-          STATE_KEYS="$(terraform state list | grep -E '^cloudflare_d1_database\.' || true)"
+          STATE_KEYS="$(terraform state list 2>/dev/null || true)"
+
           for KEY in cloudflare_d1_database.decision_db cloudflare_d1_database.shared_db; do
             if echo "${STATE_KEYS}" | grep -Fxq "${KEY}"; then
               terraform state rm "${KEY}"
             fi
           done
+
+          if echo "${STATE_KEYS}" | grep -Fq 'cloudflare_workers_cron_trigger.cleanup_daily'; then
+            if ! terraform state rm 'cloudflare_workers_cron_trigger.cleanup_daily["cleanup"]' 2>/dev/null; then
+              terraform state pull > /tmp/tfstate.json
+              jq '.resources |= map(select(.type != "cloudflare_workers_cron_trigger" or .name != "cleanup_daily"))' \
+                /tmp/tfstate.json > /tmp/tfstate-clean.json
+              terraform state push /tmp/tfstate-clean.json
+              rm -f /tmp/tfstate.json /tmp/tfstate-clean.json
+            fi
+          fi
 
       - name: Plan
         id: plan
