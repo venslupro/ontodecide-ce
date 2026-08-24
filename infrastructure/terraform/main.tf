@@ -501,8 +501,64 @@ resource "cloudflare_workers_domain" "svc" {
 }
 
 # ============================================================================
-# --------- apps/web (service #7) extension anchor ---------
-# Adding a 7th Worker only requires these four edits — no structural refactor:
+# 7) apps/web frontend SPA hosting — Cloudflare Pages Project
+#
+# Hosting choice: Pages Project over a 7th Worker for Vite React SPA because:
+#   • Native static asset serving + gzip/brotli/edge CDN out of the box
+#   • SPA hash routes need no fetch-routing glue (HashRouter lives client-side)
+#   • Per-PR preview deploys via `wrangler pages deploy --branch=<sha>`
+#   • Default *.pages.dev subdomain assigned automatically — no custom domain
+#     per project spec (zone_id-based workers_domain not required).
+#   • build_config below is dashboard metadata only. Actual builds + deploys
+#     are driven by GitHub Actions using:
+#         wrangler pages deploy apps/web/dist --project-name ontodecide-prd-web
+#
+# Governance: Environment/Project/Service/Lifecycle are carried on the
+# resource name and output block (cloudflare_pages_project on Provider v4
+# does not support a native `tags` field yet).
+# ============================================================================
+
+resource "cloudflare_pages_project" "web" {
+  account_id        = var.account_id
+  name              = "${local.res_prefix}-web"
+  production_branch = "main"
+
+  # ------------------------------------------------------------------
+  # Build config (Dashboard-metadata — informational only).
+  # CI performs the real build: pnpm install && pnpm build for apps/web
+  # and deploys via `wrangler pages deploy apps/web/dist`.
+  # These values keep the Cloudflare UI "Retry deploy" aligned.
+  # ------------------------------------------------------------------
+  build_config {
+    build_command   = "pnpm install --frozen-lockfile && pnpm --filter @ontodecide/web build"
+    destination_dir = "apps/web/dist"
+    root_dir        = ""
+  }
+
+  # ------------------------------------------------------------------
+  # Deployment configuration — no custom domains per project spec;
+  # frontend is reachable via default Cloudflare pages.dev subdomain
+  # (HTTPS is always enabled on pages.dev — no separate config flag
+  # on the Pages resource). compatibility_* below apply to Pages
+  # Functions / Middleware should we later add SSR/edge-auth handlers.
+  # ------------------------------------------------------------------
+  deployment_configs {
+    production {
+      fail_open          = false
+      compatibility_date = "2024-10-01"
+    }
+    preview {
+      fail_open          = false
+      compatibility_date = "2024-10-01"
+    }
+  }
+}
+
+# ============================================================================
+# --------- apps/web (service #7) — Worker fallback (NOT USED) ---------
+# If a future iteration prefers a Worker-based edge-served SPA over Pages,
+# enabling it requires these four edits — no structural refactor of the
+# existing Worker tiers/for_each:
 #
 # (1) Add to local.workers:
 #     web = { worker_name="${local.res_prefix}-web", service="web", has_db=false, cron=[], tier=1 }
