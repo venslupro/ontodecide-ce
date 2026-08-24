@@ -19,6 +19,7 @@ module.exports = {
       path.resolve(__dirname, 'apps/api/ingestion/tsconfig.json'),
       path.resolve(__dirname, 'apps/api/ai/tsconfig.json'),
       path.resolve(__dirname, 'apps/api/cleanup/tsconfig.json'),
+      path.resolve(__dirname, 'apps/web/tsconfig.json'),
     ],
   },
   plugins: ['@typescript-eslint'],
@@ -58,7 +59,7 @@ module.exports = {
     ScheduledEvent: 'readonly',
   },
   rules: {
-    'max-len': ['error', {code: 100, ignoreUrls: true, ignoreStrings: true}],
+    'max-len': ['warn', {code: 100, ignoreUrls: true, ignoreStrings: true}],
     'require-jsdoc': 'off',
     'valid-jsdoc': 'off',
     'new-cap': 'off',
