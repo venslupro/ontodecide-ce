@@ -119,3 +119,35 @@ output "external_neo4j_auradb" {
     database        = var.neo4j_database
   }
 }
+
+# ============================================================================
+# 7) apps/web Pages Project — Cloudflare default pages.dev domain,
+#    no custom domain (per project spec).
+# ============================================================================
+output "pages_web_project" {
+  description = "Frontend (apps/web) Cloudflare Pages Project metadata. Hosted via default pages.dev subdomain — no custom domain."
+  value = {
+    name      = cloudflare_pages_project.web.name
+    id        = cloudflare_pages_project.web.id
+    subdomain = cloudflare_pages_project.web.subdomain
+    # Default reachable URL — ${subdomain}.pages.dev assigned by Cloudflare.
+    # Domains list also includes this; we expose subdomain+domains for convenience.
+    domains           = cloudflare_pages_project.web.domains
+    production_branch = cloudflare_pages_project.web.production_branch
+    created_on        = cloudflare_pages_project.web.created_on
+
+    # Governance tags (Pages resource on Provider v4 does not support native
+    # `tags` field — documented here for audit parity with Worker resources).
+    governance_tags = [
+      "Environment=${var.environment}",
+      "Project=${var.project_name}",
+      "Service=web",
+      "Lifecycle=long-lived",
+    ]
+  }
+}
+
+output "pages_web_default_domain" {
+  description = "Default Cloudflare-assigned pages.dev URL for the frontend SPA (no custom domain used). Use this URL once the first deployment has been made by CI (wrangler pages deploy apps/web/dist)."
+  value       = try(cloudflare_pages_project.web.domains[0], "${cloudflare_pages_project.web.subdomain}.pages.dev")
+}
