@@ -221,29 +221,29 @@ moved {
 #    consumer's dead_letter_queue binding is handled by wrangler.toml [[queues.consumers]]
 # ============================================================================
 resource "cloudflare_queue" "ingestion_dlq" {
-  account_id = var.account_id
-  name       = "${local.res_prefix}-ingestion-dlq"
+  account_id  = var.account_id
+  queue_name  = "${local.res_prefix}-ingestion-dlq"
   # Governance: Environment=${var.environment} Project=${var.project_name}
   #             Service=ingestion Lifecycle=long-lived
 }
 
 resource "cloudflare_queue" "ingestion" {
-  account_id = var.account_id
-  name       = "${local.res_prefix}-ingestion"
+  account_id  = var.account_id
+  queue_name  = "${local.res_prefix}-ingestion"
   # Governance: Environment=${var.environment} Project=${var.project_name}
   #             Service=ingestion Lifecycle=long-lived
 }
 
 resource "cloudflare_queue" "cleanup_dlq" {
-  account_id = var.account_id
-  name       = "${local.res_prefix}-cleanup-dlq"
+  account_id  = var.account_id
+  queue_name  = "${local.res_prefix}-cleanup-dlq"
   # Governance: Environment=${var.environment} Project=${var.project_name}
   #             Service=cleanup Lifecycle=long-lived
 }
 
 resource "cloudflare_queue" "cleanup" {
-  account_id = var.account_id
-  name       = "${local.res_prefix}-cleanup"
+  account_id  = var.account_id
+  queue_name  = "${local.res_prefix}-cleanup"
   # Governance: Environment=${var.environment} Project=${var.project_name}
   #             Service=cleanup Lifecycle=long-lived
 }
