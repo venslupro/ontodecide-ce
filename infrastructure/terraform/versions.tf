@@ -4,11 +4,13 @@ terraform {
   required_providers {
     cloudflare = {
       source = "cloudflare/cloudflare"
-      # >= 4.60 required to pick up cloudflare-go >= 0.120, which fixes an
-      # unchecked type-assertion panic in ListWorkerBindings when the Cloudflare
-      # API returns null optional string fields on Worker service/queue bindings
-      # (issue previously seen on v4.52.8 / cloudflare-go v0.117.0).
-      version = "~> 4.60"
+      # Scope: any 4.x release EXCEPT v4.52.8.
+      # v4.52.8 bundles cloudflare-go v0.117.0 which has an unchecked
+      # type-assertion panic in API.ListWorkerBindings (nil → string)
+      # triggered by recent Cloudflare API responses returning null
+      # optional string fields on service/queue bindings.
+      # -upgrade will resolve to the latest stable 4.x on CI.
+      version = ">= 4.40, != 4.52.8, < 5.0.0"
     }
   }
 

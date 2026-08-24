@@ -68,7 +68,9 @@ jobs:
           terraform_version: '~> 1.9'
           terraform_wrapper: true
       - name: Init without backend
-        run: terraform init -backend=false -input=false
+        # Re-resolve providers at CI runtime via exclusionary constraint
+        # (see versions.tf + .terraform.lock.hcl header note).
+        run: terraform init -backend=false -input=false -upgrade
       - name: Format check
         id: fmt
         run: terraform fmt -check -recursive -list=false
@@ -95,7 +97,9 @@ jobs:
           path: infrastructure/terraform/.terraform/providers
           key: tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
       - name: Init
-        run: terraform init -input=false
+        # Re-resolve providers — cache key is lock-file based, so a fresh
+        # lock entry from -upgrade is persisted for subsequent steps.
+        run: terraform init -input=false -upgrade
 
       # One-off: remove stale D1 UUIDs from remote state before plan.
       # Safe no-op when keys are absent.
@@ -157,7 +161,9 @@ jobs:
           name: tfplan-${{ github.sha }}
           path: infrastructure/terraform/
       - name: Init
-        run: terraform init -input=false
+        # Apply runner may be different from plan runner; re-resolve so the
+        # correct provider binary is available before applying the plan.
+        run: terraform init -input=false -upgrade
       - name: Apply
         run: |
           if [ -f tfplan.binary ]; then
