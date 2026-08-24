@@ -3,15 +3,7 @@ terraform {
 
   required_providers {
     cloudflare = {
-      source = "cloudflare/cloudflare"
-      # v5 is a ground-up rewrite (OpenAPI code generation). The 4.x line
-      # stopped at 4.52.7 — there was no 4.56 release, so the old
-      # ">= 4.56" constraint matched zero registry versions and broke
-      # terraform init. v5.19+ ships automatic state upgraders that
-      # transparently migrate v4 state on first plan/apply.
-      # Also: Cloudflare deprecated the legacy Workers KV REST API path
-      # (/workers/namespaces) on 2026-07-15; it breaks 2026-10-15.
-      # v5 uses the new /storage/kv/namespaces path.
+      source  = "cloudflare/cloudflare"
       version = "~> 5.19"
     }
   }
