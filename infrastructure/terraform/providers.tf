@@ -1,7 +1,7 @@
 # ============================================================================
 # Cloudflare Provider configuration (aligned with project memory hard constraints)
 #   * account_id / api_token are injected via environment variables
-#     CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN (same in v4 and v5).
+#     CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN.
 # ============================================================================
 
 provider "cloudflare" {
