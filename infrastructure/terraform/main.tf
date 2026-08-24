@@ -31,12 +31,8 @@
 #   Tier 3 (depends on all downstreams): gateway
 # ============================================================================
 
-# -------- Governance metadata + unified naming locals --------
+# -------- Unified naming locals --------
 locals {
-  tag_environment = "Environment=${var.environment}"
-  tag_project     = "Project=${var.project_name}"
-  tag_lifecycle   = "Lifecycle=long-lived"
-
   # Env short form: production→prd, staging→stg (used in resource naming)
   env_short = var.environment == "production" ? "prd" : (var.environment == "staging" ? "stg" : var.environment)
 
@@ -279,14 +275,6 @@ resource "cloudflare_workers_script" "tier1" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  # 4D governance tags
-  tags = [
-    local.tag_environment,
-    local.tag_project,
-    "Service=${each.value.service}",
-    local.tag_lifecycle,
-  ]
-
   # ---- Unified bindings (v5: all binding types in a single list) ----
   # D1 + KV + Queue producer (cleanup only). Service bindings are absent
   # in Tier 1 (leaf services). Wrangler overwrites bindings on each deploy;
@@ -335,13 +323,6 @@ resource "cloudflare_workers_script" "ingestion" {
   main_module         = "index.js"
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
-
-  tags = [
-    local.tag_environment,
-    local.tag_project,
-    "Service=ingestion",
-    local.tag_lifecycle,
-  ]
 
   # ---- Unified bindings (v5) ----
   # KV + Queue producer + Service Binding → Graph (Tier1)
@@ -395,13 +376,6 @@ resource "cloudflare_workers_script" "gateway" {
   main_module         = "index.js"
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
-
-  tags = [
-    local.tag_environment,
-    local.tag_project,
-    "Service=gateway",
-    local.tag_lifecycle,
-  ]
 
   # ---- Unified bindings (v5) ----
   # KV + Service Bindings → 5 downstreams (Tier1 + Tier2 must be created first)
