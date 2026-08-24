@@ -33,10 +33,10 @@ output "kv_namespaces" {
 # ---- Queues ----
 output "queues" {
   value = {
-    ingestion_main = cloudflare_queue.ingestion.name
-    ingestion_dlq  = cloudflare_queue.ingestion_dlq.name
-    cleanup_main   = cloudflare_queue.cleanup.name
-    cleanup_dlq    = cloudflare_queue.cleanup_dlq.name
+    ingestion_main = cloudflare_queue.ingestion.queue_name
+    ingestion_dlq  = cloudflare_queue.ingestion_dlq.queue_name
+    cleanup_main   = cloudflare_queue.cleanup.queue_name
+    cleanup_dlq    = cloudflare_queue.cleanup_dlq.queue_name
   }
 }
 

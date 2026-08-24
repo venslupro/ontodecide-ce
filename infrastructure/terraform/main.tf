@@ -311,7 +311,7 @@ resource "cloudflare_workers_script" "tier1" {
     each.key == "cleanup" ? [{
       name       = "CLEANUP_QUEUE"
       type       = "queue"
-      queue_name = cloudflare_queue.cleanup.name
+      queue_name = cloudflare_queue.cleanup.queue_name
     }] : []
   )
 
@@ -359,7 +359,7 @@ resource "cloudflare_workers_script" "ingestion" {
     [{
       name       = "INGEST_QUEUE"
       type       = "queue"
-      queue_name = cloudflare_queue.ingestion.name
+      queue_name = cloudflare_queue.ingestion.queue_name
     }],
     # Service Binding → Graph (Tier1, must be created first)
     [
