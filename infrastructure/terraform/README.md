@@ -28,8 +28,8 @@
 - Worker script code / bundles → `wrangler-action` in
   `.github/workflows/deploy-service.yml`
 - `[vars]` plain-text env → `wrangler.toml` + Dashboard Variables overrides
-- `[ai]` Workers AI binding → `apps/api/ai/wrangler.toml` (Provider v4 lacks
-  `ai_binding` block on `cloudflare_workers_script`)
+- `[ai]` Workers AI binding → `apps/api/ai/wrangler.toml` (bindings are
+  unified in v5; AI binding type managed via wrangler.toml)
 - Durable Object class uploads → `apps/api/ai/wrangler.toml`
   `[[migrations]] tag=v1`
 - `[[queues.consumers]]` wiring including `dead_letter_queue` →
@@ -281,10 +281,10 @@ single KV CACHE binding).
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
 | `wrangler deploy` → *"binding XXX references nonexistent KV"* | Terraform hasn't provisioned the namespace yet, or IDs still have `REPLACE_WITH_*` placeholder | Run `terraform apply` once, then paste real KV IDs into wrangler.toml |
-| `terraform plan` → *"cloudflare_workers_script has changed (external diff)"* | `wrangler deploy` overwrote the sentinel script, which is expected | Intentionally ignored via `lifecycle.ignore_changes = [content, module, compatibility_*, *_binding]` — a fresh plan will show `0 to add, 0 to change, 0 to destroy` on scripts |
+| `terraform plan` → *"cloudflare_workers_script has changed (external diff)"* | `wrangler deploy` overwrote the sentinel script, which is expected | Intentionally ignored via `lifecycle.ignore_changes = [content, main_module, compatibility_*, bindings]` — a fresh plan will show `0 to add, 0 to change, 0 to destroy` on scripts |
 | Deploy fails → *"Queue 'ontodecide-prd-ingestion' not found"* | Legacy inline `wrangler queues create` shell was removed; Queue must exist from Terraform | Run `terraform apply` once to create the Queue resources (including DLQs) before deploy |
 | `terraform apply` on first run → *"Service Binding target worker does not exist"* | Service Bindings require both Workers to exist first | Workers are split into **Tier 1** (user/ai/graph/cleanup) → **Tier 2** (ingestion) → **Tier 3** (gateway) with explicit `depends_on`. Terraform creates them in the correct order. If you still hit this, check that B2 remote state is configured (see §2). |
-| `terraform validate` → *"An argument named 'tags' is not expected here"* | You added `tags =` to a resource that doesn't support tags on Provider v4 | Only `cloudflare_workers_script` supports native `tags` on v4.52. For D1/KV/Queue/Cron use the **name convention + comment + outputs summary** pattern used in main.tf instead. |
+| `terraform validate` → *"An argument named 'tags' is not expected here"* | You added `tags =` to a resource that doesn't support tags | Only `cloudflare_workers_script` supports native `tags`. For D1/KV/Queue/Cron use the **name convention + comment + outputs summary** pattern used in main.tf instead. |
 
 ---
 

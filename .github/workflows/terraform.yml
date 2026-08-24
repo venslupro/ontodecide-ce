@@ -68,12 +68,10 @@ jobs:
           terraform_version: '~> 1.9'
           terraform_wrapper: true
       - name: Purge stale cached providers (safety wipe before upgrade)
-        # Ensures no cached v4.40 – v4.55 binaries can override the new
-        # >= 4.56 constraint even when actions/cache accidentally restores them.
+        # Ensures no cached v4.x binaries survive the v5 major-version bump.
         run: rm -rf infrastructure/terraform/.terraform/providers
       - name: Init without backend
-        # Re-resolve providers at CI runtime via exclusionary constraint
-        # (see versions.tf + .terraform.lock.hcl header note).
+        # v5 constraint (~> 5.19) resolved fresh from the registry.
         run: terraform init -backend=false -input=false -upgrade
       - name: Format check
         id: fmt
@@ -99,10 +97,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: infrastructure/terraform/.terraform/providers
-          # Bumped salt (v2-) after tightening CF provider constraint to
-          # >= 4.56 so we intentionally miss any cached v4.52.x binaries
-          # which carry the cloudflare-go ListWorkerBindings panic.
-          key: v2-tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
+          # Bumped salt (v3-) for the v4→v5 major-version upgrade so we
+          # intentionally miss any cached v4.x binaries.
+          key: v3-tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
       - name: Purge stale cached providers (safety wipe before upgrade)
         run: rm -rf infrastructure/terraform/.terraform/providers
       - name: Init
@@ -162,10 +159,8 @@ jobs:
         uses: actions/cache@v6
         with:
           path: infrastructure/terraform/.terraform/providers
-          # Bumped salt (v2-) after tightening CF provider constraint to
-          # >= 4.56 so we intentionally miss any cached v4.52.x binaries
-          # which carry the cloudflare-go ListWorkerBindings panic.
-          key: v2-tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
+          # Bumped salt (v3-) for the v4→v5 major-version upgrade.
+          key: v3-tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
       - name: Download saved plan (if present)
         uses: actions/download-artifact@v7
         continue-on-error: true

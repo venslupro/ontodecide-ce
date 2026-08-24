@@ -4,13 +4,15 @@ terraform {
   required_providers {
     cloudflare = {
       source = "cloudflare/cloudflare"
-      # >= 4.56 ships with cloudflare-go >= 0.120 which fixes the
-      # unchecked type assertion in API.ListWorkerBindings
-      # (workers_bindings.go nil → string crash) that was present in
-      # provider releases 4.40.0 – 4.55.x (cloudflare-go v0.113–v0.117).
-      # CI terraform init -upgrade resolves this range against the
-      # registry and picks the latest stable 4.x.
-      version = ">= 4.56, < 5.0.0"
+      # v5 is a ground-up rewrite (OpenAPI code generation). The 4.x line
+      # stopped at 4.52.7 — there was no 4.56 release, so the old
+      # ">= 4.56" constraint matched zero registry versions and broke
+      # terraform init. v5.19+ ships automatic state upgraders that
+      # transparently migrate v4 state on first plan/apply.
+      # Also: Cloudflare deprecated the legacy Workers KV REST API path
+      # (/workers/namespaces) on 2026-07-15; it breaks 2026-10-15.
+      # v5 uses the new /storage/kv/namespaces path.
+      version = "~> 5.19"
     }
   }
 
