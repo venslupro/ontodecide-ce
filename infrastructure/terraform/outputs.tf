@@ -45,17 +45,17 @@ output "workers" {
   value = merge(
     {
       for k, w in cloudflare_workers_script.tier1 : k => {
-        name               = w.name
+        name               = w.script_name
         compatibility_date = w.compatibility_date
       }
     },
     {
       ingestion = {
-        name               = cloudflare_workers_script.ingestion.name
+        name               = cloudflare_workers_script.ingestion.script_name
         compatibility_date = cloudflare_workers_script.ingestion.compatibility_date
       },
       gateway = {
-        name               = cloudflare_workers_script.gateway.name
+        name               = cloudflare_workers_script.gateway.script_name
         compatibility_date = cloudflare_workers_script.gateway.compatibility_date
       },
     },
@@ -84,7 +84,7 @@ output "cleanup_cron_schedules" {
 # ---- Domains ----
 output "worker_domains" {
   value = {
-    for k, r in cloudflare_workers_domain.svc : k => r.hostname
+    for k, r in cloudflare_workers_custom_domain.svc : k => r.hostname
   }
 }
 
@@ -136,8 +136,8 @@ output "pages_web_project" {
     production_branch = cloudflare_pages_project.web.production_branch
     created_on        = cloudflare_pages_project.web.created_on
 
-    # Governance tags (Pages resource on Provider v4 does not support native
-    # `tags` field — documented here for audit parity with Worker resources).
+    # Governance tags (Pages resource does not support a native `tags`
+    # field — documented here for audit parity with Worker resources).
     governance_tags = [
       "Environment=${var.environment}",
       "Project=${var.project_name}",
