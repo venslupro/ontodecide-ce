@@ -427,7 +427,7 @@ resource "cloudflare_workers_cron_trigger" "cleanup_daily" {
   for_each    = length(local.workers["cleanup"].cron) > 0 ? { cleanup = "cleanup" } : {}
   account_id  = var.account_id
   script_name = local.workers["cleanup"].worker_name
-  schedules   = local.workers["cleanup"].cron
+  schedules   = [for c in local.workers["cleanup"].cron : { cron = c }]
 
   # cleanup Worker (Tier1) must exist first; cron trigger references its worker_name
   depends_on = [cloudflare_workers_script.tier1["cleanup"]]
