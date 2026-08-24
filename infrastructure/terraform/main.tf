@@ -1,6 +1,6 @@
 # ============================================================================
 # OntoDecide — Cloudflare long-lived resources IaC manifest
-# Cloudflare Provider v5 schema-aligned (unified bindings, object attrs)
+# Cloudflare Provider schema (unified bindings, object attrs)
 #
 # Scope (Shift Left · static resource layer):
 #   • D1 shared database "shared-db" (shared by user/ai/cleanup)
@@ -138,14 +138,6 @@ resource "cloudflare_d1_database" "shared_db" {
   #             Service=shared Lifecycle=long-lived
 }
 
-# D1 resource renamed from decision_db to shared_db. Last apply failed due to
-# insufficient token scope, so D1 is not in state — this moved block is a no-op;
-# if state has a leftover entry, it migrates smoothly.
-moved {
-  from = cloudflare_d1_database.decision_db
-  to   = cloudflare_d1_database.shared_db
-}
-
 # ============================================================================
 # 2) KV Namespaces (9)
 #    Naming convention (Cloudflare resource name / Google Cloud naming convention):
@@ -169,47 +161,6 @@ resource "cloudflare_workers_kv_namespace" "kv" {
   title = "${local.res_prefix}-${each.value.svc}-${lower(replace(each.value.binding, "_", "-"))}"
   # Governance: Environment=${var.environment} Project=${var.project_name}
   #             Service=${each.value.svc} Lifecycle=long-lived
-}
-
-# ============================================================================
-# 2b) State migration — KV for_each key migrated from UPPER_SNAKE_CASE to lowercase
-#     Background: the old for_each key used the binding field verbatim (uppercase),
-#     producing mixed-case state keys like cleanup__CLEANUP_JOBS.
-#     The for_each key now uses lower(binding); these moved blocks explicitly
-#     declare the key change so Terraform migrates state without rebuilding resources.
-#     moved blocks are declarative and no-op when the old key is absent in state.
-# ============================================================================
-moved {
-  from = cloudflare_workers_kv_namespace.kv["gateway__JWT_BLACKLIST"]
-  to   = cloudflare_workers_kv_namespace.kv["gateway__jwt_blacklist"]
-}
-moved {
-  from = cloudflare_workers_kv_namespace.kv["gateway__RATE_LIMIT"]
-  to   = cloudflare_workers_kv_namespace.kv["gateway__rate_limit"]
-}
-moved {
-  from = cloudflare_workers_kv_namespace.kv["user__CACHE"]
-  to   = cloudflare_workers_kv_namespace.kv["user__cache"]
-}
-moved {
-  from = cloudflare_workers_kv_namespace.kv["ingestion__JOBS"]
-  to   = cloudflare_workers_kv_namespace.kv["ingestion__jobs"]
-}
-moved {
-  from = cloudflare_workers_kv_namespace.kv["cleanup__USER_CACHE"]
-  to   = cloudflare_workers_kv_namespace.kv["cleanup__user_cache"]
-}
-moved {
-  from = cloudflare_workers_kv_namespace.kv["cleanup__INGESTION_JOBS"]
-  to   = cloudflare_workers_kv_namespace.kv["cleanup__ingestion_jobs"]
-}
-moved {
-  from = cloudflare_workers_kv_namespace.kv["cleanup__AI_CACHE"]
-  to   = cloudflare_workers_kv_namespace.kv["cleanup__ai_cache"]
-}
-moved {
-  from = cloudflare_workers_kv_namespace.kv["cleanup__CLEANUP_JOBS"]
-  to   = cloudflare_workers_kv_namespace.kv["cleanup__cleanup_jobs"]
 }
 
 # ============================================================================
@@ -255,7 +206,7 @@ resource "cloudflare_queue" "cleanup" {
 #    Tier 2:           ingestion — service_binding → graph (Tier1)
 #    Tier 3:           gateway   — service_binding → 5 downstreams (Tier1 + Tier2)
 #
-#    workers_script bindings are unified in v5; AI / DO / plain [vars]
+#    workers_script uses a unified bindings list; AI / DO / plain [vars]
 #    are still declared in wrangler.toml.
 #    content is a sentinel; Wrangler overwrites the script and vars on each deploy;
 #    lifecycle.ignore_changes ensures Terraform apply never rolls back wrangler's real code.
@@ -275,7 +226,7 @@ resource "cloudflare_workers_script" "tier1" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  # ---- Unified bindings (v5: all binding types in a single list) ----
+  # ---- Unified bindings (all binding types in a single list) ----
   # D1 + KV + Queue producer (cleanup only). Service bindings are absent
   # in Tier 1 (leaf services). Wrangler overwrites bindings on each deploy;
   # bindings is in ignore_changes so Terraform won't fight wrangler.
@@ -324,7 +275,7 @@ resource "cloudflare_workers_script" "ingestion" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  # ---- Unified bindings (v5) ----
+  # ---- Unified bindings ----
   # KV + Queue producer + Service Binding → Graph (Tier1)
   bindings = concat(
     # KV
@@ -377,7 +328,7 @@ resource "cloudflare_workers_script" "gateway" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  # ---- Unified bindings (v5) ----
+  # ---- Unified bindings ----
   # KV + Service Bindings → 5 downstreams (Tier1 + Tier2 must be created first)
   bindings = concat(
     # KV
@@ -435,7 +386,6 @@ resource "cloudflare_workers_cron_trigger" "cleanup_daily" {
 
 # ============================================================================
 # 6) Optional: Workers custom domain
-#    v5 renamed cloudflare_workers_domain → cloudflare_workers_custom_domain
 # ============================================================================
 locals {
   custom_domains = {
@@ -446,12 +396,6 @@ locals {
     ai        = null
     cleanup   = null
   }
-}
-
-# State migration: v4 cloudflare_workers_domain → v5 cloudflare_workers_custom_domain
-moved {
-  from = cloudflare_workers_domain.svc
-  to   = cloudflare_workers_custom_domain.svc
 }
 
 resource "cloudflare_workers_custom_domain" "svc" {
@@ -500,7 +444,6 @@ resource "cloudflare_pages_project" "web" {
   # CI performs the real build: pnpm install && pnpm build for apps/web
   # and deploys via `wrangler pages deploy apps/web/dist`.
   # These values keep the Cloudflare UI "Retry deploy" aligned.
-  # v5: build_config is a single nested attribute (=), not a block.
   # ------------------------------------------------------------------
   build_config = {
     build_command   = "pnpm install --frozen-lockfile && pnpm --filter @ontodecide/web build"
@@ -514,7 +457,6 @@ resource "cloudflare_pages_project" "web" {
   # (HTTPS is always enabled on pages.dev — no separate config flag
   # on the Pages resource). compatibility_* below apply to Pages
   # Functions / Middleware should we later add SSR/edge-auth handlers.
-  # v5: deployment_configs is a single nested attribute (=), not a block.
   # ------------------------------------------------------------------
   deployment_configs = {
     production = {

@@ -3,9 +3,18 @@
 #          (NEVER commit real IDs back to git)
 # ============================================================================
 
-output "project_name" { value = var.project_name }
-output "environment" { value = var.environment }
-output "zone_id" { value = var.zone_id }
+output "project_name" {
+  description = "Project prefix used in all resource naming."
+  value       = var.project_name
+}
+output "environment" {
+  description = "Environment suffix (production / staging)."
+  value       = var.environment
+}
+output "zone_id" {
+  description = "Cloudflare Zone ID for the custom domain (empty if not configured)."
+  value       = var.zone_id
+}
 
 # ---- D1 ----
 output "shared_database_id" {
@@ -14,7 +23,8 @@ output "shared_database_id" {
   sensitive   = true
 }
 output "shared_database_name" {
-  value = cloudflare_d1_database.shared_db.name
+  description = "Shared D1 database resource name."
+  value       = cloudflare_d1_database.shared_db.name
 }
 
 # ---- KV ----
@@ -32,6 +42,7 @@ output "kv_namespaces" {
 
 # ---- Queues ----
 output "queues" {
+  description = "Cloudflare Queue resource names for ingestion and cleanup (main + DLQ)."
   value = {
     ingestion_main = cloudflare_queue.ingestion.queue_name
     ingestion_dlq  = cloudflare_queue.ingestion_dlq.queue_name
@@ -42,6 +53,7 @@ output "queues" {
 
 # ---- Workers (merge Tier1 + Tier2 + Tier3 outputs) ----
 output "workers" {
+  description = "All Worker script metadata (name + compatibility_date), merged across Tier1/Tier2/Tier3."
   value = merge(
     {
       for k, w in cloudflare_workers_script.tier1 : k => {
@@ -64,12 +76,14 @@ output "workers" {
 
 # ---- Service Bindings ----
 output "gateway_service_bindings" {
+  description = "Gateway Worker service bindings mapping (binding name → target worker name)."
   value = {
     for b in local.gateway_service_bindings :
     b.binding => local.workers[b.target].worker_name
   }
 }
 output "ingestion_service_bindings" {
+  description = "Ingestion Worker service bindings mapping (binding name → target worker name)."
   value = {
     for b in local.ingestion_service_bindings :
     b.binding => local.workers[b.target].worker_name
@@ -78,11 +92,13 @@ output "ingestion_service_bindings" {
 
 # ---- Cron ----
 output "cleanup_cron_schedules" {
-  value = try(cloudflare_workers_cron_trigger.cleanup_daily["cleanup"].schedules, [])
+  description = "Cleanup Worker cron trigger schedules (daily 03:00 UTC)."
+  value       = try(cloudflare_workers_cron_trigger.cleanup_daily["cleanup"].schedules, [])
 }
 
 # ---- Domains ----
 output "worker_domains" {
+  description = "Workers custom domain hostnames (empty if zone_id is not set)."
   value = {
     for k, r in cloudflare_workers_custom_domain.svc : k => r.hostname
   }
@@ -99,6 +115,7 @@ output "durable_object_classes" {
 # against wrangler.toml [vars])
 # ============================================================================
 output "external_backblaze_b2" {
+  description = "Backblaze B2 external dependency metadata (buckets are managed externally; for wrangler.toml cross-check)."
   value = {
     region           = var.b2_region
     ingestion_bucket = var.b2_ingestion_bucket
@@ -113,6 +130,7 @@ output "external_backblaze_b2" {
 }
 
 output "external_neo4j_auradb" {
+  description = "Neo4j AuraDB external dependency metadata (instance is managed externally; for wrangler.toml cross-check)."
   value = {
     url_placeholder = var.neo4j_url_placeholder
     user            = var.neo4j_user
