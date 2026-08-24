@@ -67,6 +67,10 @@ jobs:
         with:
           terraform_version: '~> 1.9'
           terraform_wrapper: true
+      - name: Purge stale cached providers (safety wipe before upgrade)
+        # Ensures no cached v4.40 – v4.55 binaries can override the new
+        # >= 4.56 constraint even when actions/cache accidentally restores them.
+        run: rm -rf infrastructure/terraform/.terraform/providers
       - name: Init without backend
         # Re-resolve providers at CI runtime via exclusionary constraint
         # (see versions.tf + .terraform.lock.hcl header note).
@@ -91,11 +95,16 @@ jobs:
         with:
           terraform_version: '~> 1.9'
           terraform_wrapper: true
-      - name: Cache providers
+      - name: Cache Terraform providers
         uses: actions/cache@v6
         with:
           path: infrastructure/terraform/.terraform/providers
-          key: tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
+          # Bumped salt (v2-) after tightening CF provider constraint to
+          # >= 4.56 so we intentionally miss any cached v4.52.x binaries
+          # which carry the cloudflare-go ListWorkerBindings panic.
+          key: v2-tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
+      - name: Purge stale cached providers (safety wipe before upgrade)
+        run: rm -rf infrastructure/terraform/.terraform/providers
       - name: Init
         # Re-resolve providers — cache key is lock-file based, so a fresh
         # lock entry from -upgrade is persisted for subsequent steps.
@@ -149,17 +158,22 @@ jobs:
         with:
           terraform_version: '~> 1.9'
           terraform_wrapper: true
-      - name: Cache providers
+      - name: Cache Terraform providers
         uses: actions/cache@v6
         with:
           path: infrastructure/terraform/.terraform/providers
-          key: tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
+          # Bumped salt (v2-) after tightening CF provider constraint to
+          # >= 4.56 so we intentionally miss any cached v4.52.x binaries
+          # which carry the cloudflare-go ListWorkerBindings panic.
+          key: v2-tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
       - name: Download saved plan (if present)
         uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           name: tfplan-${{ github.sha }}
           path: infrastructure/terraform/
+      - name: Purge stale cached providers (safety wipe before upgrade)
+        run: rm -rf infrastructure/terraform/.terraform/providers
       - name: Init
         # Apply runner may be different from plan runner; re-resolve so the
         # correct provider binary is available before applying the plan.

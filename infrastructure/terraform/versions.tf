@@ -4,13 +4,13 @@ terraform {
   required_providers {
     cloudflare = {
       source = "cloudflare/cloudflare"
-      # Scope: any 4.x release EXCEPT v4.52.8.
-      # v4.52.8 bundles cloudflare-go v0.117.0 which has an unchecked
-      # type-assertion panic in API.ListWorkerBindings (nil → string)
-      # triggered by recent Cloudflare API responses returning null
-      # optional string fields on service/queue bindings.
-      # -upgrade will resolve to the latest stable 4.x on CI.
-      version = ">= 4.40, != 4.52.8, < 5.0.0"
+      # >= 4.56 ships with cloudflare-go >= 0.120 which fixes the
+      # unchecked type assertion in API.ListWorkerBindings
+      # (workers_bindings.go nil → string crash) that was present in
+      # provider releases 4.40.0 – 4.55.x (cloudflare-go v0.113–v0.117).
+      # CI terraform init -upgrade resolves this range against the
+      # registry and picks the latest stable 4.x.
+      version = ">= 4.56, < 5.0.0"
     }
   }
 
