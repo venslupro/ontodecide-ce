@@ -1,17 +1,17 @@
-# Continuous Deployment (CD) — Worker Services
+# Continuous Deployment (CD) — Worker Services + Frontend Pages
 #
-# Deploys Cloudflare Worker code + runtime secrets when source changes.
-# Resource creation (D1 / KV / Queues / Service Bindings / Cron / Domains)
-# is handled in terraform.yml — provision BEFORE any service deploy.
+# Code deploys here; resource creation (D1/KV/Queues/Bindings/Cron/Domains
+# + Pages project) lives in terraform.yml — provision BEFORE service deploys.
 #
 # TRIGGERS:
-#   • push on ANY branch — detect-changes always runs.
-#     On main: deploy jobs auto-run for changed services.
-#     On non-main: ALL deploy jobs are SKIPPED.
-#   • workflow_dispatch — same as push + optional "Run D1 migration" checkbox.
+#   • push (any branch): detect-changes always; deploy only on main.
+#   • workflow_dispatch:  same as push + "Run D1 migration" checkbox.
 #
-# DEPENDENCY ORDER (3-layer):
-#   L1 (parallel) → L2 (ingestion → graph) → L3 (gateway → all)
+# DEPENDENCY ORDER (4-layer):
+#   L1 (parallel) → user · graph · ai · cleanup · web (Pages)
+#   L2            → ingestion (needs: graph)
+#   L3            → gateway   (needs: L1 + L2)
+#   L4 (manual)   → migrate-d1 (needs: L3 + web; main-only; checkbox)
 
 name: Deploy · Services
 
@@ -29,11 +29,9 @@ concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
-# GitHub Actions runner default Node runtime compatibility.
-# Node 20 is deprecated (2025-09); runners default to Node 24.
-# `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` opts any remaining
-# Node 20-declared 3rd-party actions into the Node 24 runtime,
-# suppressing the deprecation banner.
+# GitHub Actions runner Node runtime (20 deprecated 2025-09; default 24).
+# FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true opts Node 20 actions into Node 24
+# and suppresses the deprecation banner.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
@@ -48,6 +46,7 @@ jobs:
       cleanup:   ${{ steps.filter.outputs.cleanup }}
       ingestion: ${{ steps.filter.outputs.ingestion }}
       gateway:   ${{ steps.filter.outputs.gateway }}
+      web:       ${{ steps.filter.outputs.web }}
       any:       ${{ steps.filter.outputs.any }}
     steps:
       - uses: actions/checkout@v5
@@ -113,6 +112,15 @@ jobs:
               - 'vitest.config.ts'
               - '.github/workflows/deploy.yml'
               - 'apps/api/gateway/**'
+            web:
+              - 'apps/shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+              - 'tsconfig.base.json'
+              - 'vitest.config.ts'
+              - '.github/workflows/deploy.yml'
+              - 'apps/web/**'
             any:
               - 'apps/shared/**'
               - 'package.json'
@@ -127,6 +135,7 @@ jobs:
               - 'apps/api/cleanup/**'
               - 'apps/api/ingestion/**'
               - 'apps/api/gateway/**'
+              - 'apps/web/**'
 
       - name: Summary
         run: |
@@ -137,8 +146,10 @@ jobs:
           echo "  cleanup   = ${{ steps.filter.outputs.cleanup }}"
           echo "  ingestion = ${{ steps.filter.outputs.ingestion }}"
           echo "  gateway   = ${{ steps.filter.outputs.gateway }}"
+          echo "  web       = ${{ steps.filter.outputs.web }}"
 
   # ── LAYER 1 — Independent services (parallel) ──────────────────────
+  # Leaves: user · graph · ai · cleanup · **web (Pages)**
 
   deploy-user:
     name: Deploy · user
@@ -294,6 +305,38 @@ jobs:
           B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
           B2_KEY: ${{ secrets.B2_KEY }}
 
+  # web — L1, Cloudflare Pages SPA (parallel with leaves)
+  deploy-web:
+    name: Deploy · web
+    needs: detect-changes
+    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ontodecide/web build
+      # wrangler pages CLI reads CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
+      # (not the CF_* aliases used by wrangler-action).
+      - name: Deploy frontend to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN:  ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          PROJECT_NAME:          ${{ github.event.repository.name }}
+          ENVIRONMENT:           production
+        run: |
+          ENV_SHORT="$([[ "$ENVIRONMENT" == "production" ]] && echo "prd" || echo "$ENVIRONMENT")"
+          PROJECT="${PROJECT_NAME}-${ENV_SHORT}-web"
+          pnpm exec wrangler pages deploy apps/web/dist \
+            --project-name "$PROJECT" \
+            --branch main
+
   # ── LAYER 2 — ingestion (depends on graph) ──────────────────────────
 
   deploy-ingestion:
@@ -380,11 +423,12 @@ jobs:
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
-  # ── MIGRATE-D1 — Manual-only, main-only ──────────────────────────────
+  # ── LAYER 4 — migrate-d1 (Manual · main-only) ────────────────────────
+  # Runs ONLY via workflow_dispatch checkbox after all deploy-* jobs OK.
 
   migrate-d1:
     name: Migrate · D1 (Manual · main-only)
-    needs: [deploy-user, deploy-graph, deploy-ai, deploy-cleanup, deploy-ingestion, deploy-gateway]
+    needs: [deploy-user, deploy-graph, deploy-ai, deploy-cleanup, deploy-ingestion, deploy-gateway, deploy-web]
     if: |
       always() &&
       github.event_name == 'workflow_dispatch' &&
@@ -395,7 +439,8 @@ jobs:
       (needs.deploy-ai.result        == 'success' || needs.deploy-ai.result        == 'skipped') &&
       (needs.deploy-cleanup.result   == 'success' || needs.deploy-cleanup.result   == 'skipped') &&
       (needs.deploy-ingestion.result == 'success' || needs.deploy-ingestion.result == 'skipped') &&
-      (needs.deploy-gateway.result   == 'success' || needs.deploy-gateway.result   == 'skipped')
+      (needs.deploy-gateway.result   == 'success' || needs.deploy-gateway.result   == 'skipped') &&
+      (needs.deploy-web.result       == 'success' || needs.deploy-web.result       == 'skipped')
     runs-on: ubuntu-latest
     env:
       # wrangler d1 CLI reads CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
