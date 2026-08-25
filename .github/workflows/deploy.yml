@@ -4,8 +4,8 @@
 # + Pages project) lives in terraform.yml — provision BEFORE service deploys.
 #
 # TRIGGERS:
-#   • push (any branch): detect-changes always; deploy only on main.
-#   • workflow_dispatch:  same as push + "Run D1 migration" checkbox.
+#   • push (any branch): detect-changes always; deploy all services on main.
+#   • workflow_dispatch: same as push + optional "Run D1 migration" checkbox.
 #
 # DEPENDENCY ORDER (4-layer):
 #   L1 (parallel) → user · graph · ai · cleanup · web (Pages)
@@ -154,7 +154,7 @@ jobs:
   deploy-user:
     name: Deploy · user
     needs: detect-changes
-    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.user == 'true'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -197,7 +197,7 @@ jobs:
   deploy-graph:
     name: Deploy · graph
     needs: detect-changes
-    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.graph == 'true'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -231,7 +231,7 @@ jobs:
   deploy-ai:
     name: Deploy · ai
     needs: detect-changes
-    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.ai == 'true'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -263,7 +263,7 @@ jobs:
   deploy-cleanup:
     name: Deploy · cleanup
     needs: detect-changes
-    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.cleanup == 'true'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -309,7 +309,7 @@ jobs:
   deploy-web:
     name: Deploy · web
     needs: detect-changes
-    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.web == 'true'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -367,7 +367,6 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      needs.detect-changes.outputs.ingestion == 'true' &&
       (needs.deploy-graph.result == 'success' || needs.deploy-graph.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
@@ -409,7 +408,6 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      needs.detect-changes.outputs.gateway == 'true' &&
       (needs.deploy-user.result      == 'success' || needs.deploy-user.result      == 'skipped') &&
       (needs.deploy-graph.result     == 'success' || needs.deploy-graph.result     == 'skipped') &&
       (needs.deploy-ai.result        == 'success' || needs.deploy-ai.result        == 'skipped') &&
@@ -456,7 +454,8 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_migration == true)) &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.run_migration == true &&
       (needs.deploy-user.result      == 'success' || needs.deploy-user.result      == 'skipped') &&
       (needs.deploy-graph.result     == 'success' || needs.deploy-graph.result     == 'skipped') &&
       (needs.deploy-ai.result        == 'success' || needs.deploy-ai.result        == 'skipped') &&
