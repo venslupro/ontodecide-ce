@@ -1,0 +1,53 @@
+# Cloudflare Pages Project — frontend SPA (React + Vite)
+#
+# ============================================================
+# ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform: NOT involved in Pages project (code-coupled).
+#   • Wrangler: OWNS EVERYTHING Pages-related.
+#       - Pages project itself (created on first `wrangler pages project create`;
+#         updated by `wrangler pages deploy` / wrangler-action).
+#       - [assets] directory: points to Vite build output (dist/).
+#       - Static asset deployments (every CI deploy re-uploads dist/).
+#       - Pages Functions (functions/ directory) — reserved for future use:
+#         e.g. proxying /api/* → Gateway worker via Service Binding to
+#         avoid build-time hardcoding of VITE_API_BASE.
+# ============================================================
+#
+# Deploy path:
+#   CI (deploy.yml deploy-web job):
+#     1. pnpm --filter @ontodecide/web build   → Vite emits apps/web/dist/
+#     2. wrangler pages project create <name>  (idempotent; || true on exists)
+#     3. wrangler pages deploy dist --project-name <name> --branch main
+#        (wrangler.toml's `name` is the default; CLI flag overrides it)
+#
+# API routing:
+#   The SPA ships with build-time VITE_API_BASE injected during the CI build.
+#   This points to the Gateway worker's public workers.dev domain
+#   (e.g. https://ontodecide-prd-gateway.<subdomain>.workers.dev).
+#   Future: migrate /api/* to Pages Functions with a Service Binding to
+#   the Gateway worker for zero-cost in-account routing and no CORS.
+
+name = "ontodecide-prd-web"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ----- Pages Observability --------------------------------------------------
+# Pages observability (analogous to Worker [observability]).
+# Pages has its own analytics dashboard; explicit observability block
+# mirrors Worker config for parity and enables invocation log persistence.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+destinations = ["cloudflare"]
+head_sampling_rate = 1
+persist = true
+
+# ----- Static assets (Vite build output) ------------------------------------
+# `directory` is relative to this wrangler.toml → apps/web/dist.
+# Used by `wrangler pages deploy` and wrangler types.
+[assets]
+directory = "dist"

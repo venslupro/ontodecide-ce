@@ -188,6 +188,7 @@ jobs:
             "apps/api/ingestion/wrangler.toml"
             "apps/api/ai/wrangler.toml"
             "apps/api/cleanup/wrangler.toml"
+            "apps/web/wrangler.toml"
           )
           missing=()
           for f in "${expected[@]}"; do
@@ -200,4 +201,4 @@ jobs:
             printf '  %s\n' "${missing[@]}"
             exit 1
           fi
-          echo "All 6 wrangler.toml files present."
+          echo "All 7 wrangler.toml files present."
