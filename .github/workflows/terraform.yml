@@ -152,14 +152,14 @@ jobs:
             infrastructure/terraform/tfplan.binary
           retention-days: 30
 
-  # ── Phase 3: apply — ONLY via workflow_dispatch/push on main + approval ─
-  # Code-level gate: PR events can never reach this job (if: below).
+  # ── Phase 3: apply — ONLY via workflow_dispatch on main + approval ─
+  # Code-level gate: push/PR events can never reach this job (if: below).
   # Human gate: production Environment required reviewers pauses the job
   # before Terraform refreshes state and applies the change.
   apply:
-    name: Apply (dispatch/push · main · env approval)
+    name: Apply (dispatch · main · env approval)
     needs: plan
-    if: ( github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: production
