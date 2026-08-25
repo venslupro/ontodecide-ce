@@ -1,6 +1,11 @@
 # ============================================================================
 # Outputs: for human review / backfilling into Cloudflare Dashboard Variables & Secrets
 #          (NEVER commit real IDs back to git)
+#
+# Workers Scripts / Pages / Cron / Service Bindings / Custom Domains are
+# created/owned by wrangler deploy, not by Terraform — their metadata is
+# NOT exported here. Run `wrangler deploy` + Cloudflare Dashboard for
+# up-to-date Worker / Pages state.
 # ============================================================================
 
 output "project_name" {
@@ -23,26 +28,29 @@ output "shared_database_id" {
   sensitive   = true
 }
 output "shared_database_name" {
-  description = "Shared D1 database resource name."
+  description = "Shared D1 database resource name — matches [[d1_databases]].database_name in wrangler.toml."
   value       = cloudflare_d1_database.shared_db.name
 }
 
 # ---- KV ----
 output "kv_namespaces" {
-  description = "KV namespace metadata: svc / binding / title (id not exported to avoid accidental leakage)."
+  description = "KV namespace metadata: svc / binding / title / id (id marked sensitive; only populate wrangler.toml via resolve-kv-ids.sh)."
   value = {
     for k, r in cloudflare_workers_kv_namespace.kv :
     k => {
       svc = split("__", k)[0]
       # state key is lowercase; upper() restores the original case to align with the wrangler.toml binding name
       binding = upper(split("__", k)[1])
+      title   = r.title
+      id      = r.id
     }
   }
+  sensitive = true
 }
 
 # ---- Queues ----
 output "queues" {
-  description = "Cloudflare Queue resource names for ingestion and cleanup (main + DLQ)."
+  description = "Cloudflare Queue resource names for ingestion and cleanup (main + DLQ). Matches [[queues.producers/consumers]].queue in wrangler.toml."
   value = {
     ingestion_main = cloudflare_queue.ingestion.queue_name
     ingestion_dlq  = cloudflare_queue.ingestion_dlq.queue_name
@@ -51,65 +59,24 @@ output "queues" {
   }
 }
 
-# ---- Workers (merge Tier1 + Tier2 + Tier3 outputs) ----
-output "workers" {
-  description = "All Worker script metadata (name + compatibility_date + observability), merged across Tier1/Tier2/Tier3."
-  value = merge(
-    {
-      for k, w in cloudflare_workers_script.tier1 : k => {
-        name               = w.script_name
-        compatibility_date = w.compatibility_date
-        observability      = w.observability
-      }
-    },
-    {
-      ingestion = {
-        name               = cloudflare_workers_script.ingestion.script_name
-        compatibility_date = cloudflare_workers_script.ingestion.compatibility_date
-        observability      = cloudflare_workers_script.ingestion.observability
-      },
-      gateway = {
-        name               = cloudflare_workers_script.gateway.script_name
-        compatibility_date = cloudflare_workers_script.gateway.compatibility_date
-        observability      = cloudflare_workers_script.gateway.observability
-      },
-    },
-  )
-}
-
-# ---- Service Bindings ----
-output "gateway_service_bindings" {
-  description = "Gateway Worker service bindings mapping (binding name → target worker name)."
+# ---- Service convention (metadata-only; NOT created by Terraform) ----
+output "service_convention" {
+  description = "Expected Worker / Pages names per service (created by wrangler deploy). Cross-check with deploy.yml DEFAULTS_MATRIX and each wrangler.toml `name =` field."
   value = {
-    for b in local.gateway_service_bindings :
-    b.binding => local.workers[b.target].worker_name
-  }
-}
-output "ingestion_service_bindings" {
-  description = "Ingestion Worker service bindings mapping (binding name → target worker name)."
-  value = {
-    for b in local.ingestion_service_bindings :
-    b.binding => local.workers[b.target].worker_name
+    for svc, meta in local.workers : svc => {
+      worker_name = "${local.res_prefix}-${svc}"
+      has_db      = meta.has_db
+    }
   }
 }
 
-# ---- Cron ----
-output "cleanup_cron_schedules" {
-  description = "Cleanup Worker cron trigger schedules (daily 03:00 UTC)."
-  value       = try(cloudflare_workers_cron_trigger.cleanup_daily["cleanup"].schedules, [])
+output "pages_web_project_name" {
+  description = "Expected Cloudflare Pages Project name for the frontend SPA (created by `wrangler pages deploy` — upsert semantics on first deploy)."
+  value       = "${local.res_prefix}-web"
 }
 
-# ---- Domains ----
-output "worker_domains" {
-  description = "Workers custom domain hostnames (empty if zone_id is not set)."
-  value = {
-    for k, r in cloudflare_workers_custom_domain.svc : k => r.hostname
-  }
-}
-
-# ---- Durable Object ----
 output "durable_object_classes" {
-  description = "AI Worker Durable Object class list. Class code is uploaded via Wrangler [[migrations]] v1."
+  description = "AI Worker Durable Object class list (metadata-only parity with apps/api/ai/wrangler.toml [[migrations]] v1; class code uploaded by Wrangler)."
   value       = local.durable_object_classes
 }
 
@@ -139,36 +106,4 @@ output "external_neo4j_auradb" {
     user            = var.neo4j_user
     database        = var.neo4j_database
   }
-}
-
-# ============================================================================
-# 7) apps/web Pages Project — Cloudflare default pages.dev domain,
-#    no custom domain (per project spec).
-# ============================================================================
-output "pages_web_project" {
-  description = "Frontend (apps/web) Cloudflare Pages Project metadata. Hosted via default pages.dev subdomain — no custom domain."
-  value = {
-    name      = cloudflare_pages_project.web.name
-    id        = cloudflare_pages_project.web.id
-    subdomain = cloudflare_pages_project.web.subdomain
-    # Default reachable URL — ${subdomain}.pages.dev assigned by Cloudflare.
-    # Domains list also includes this; we expose subdomain+domains for convenience.
-    domains           = cloudflare_pages_project.web.domains
-    production_branch = cloudflare_pages_project.web.production_branch
-    created_on        = cloudflare_pages_project.web.created_on
-
-    # Governance tags (Pages resource does not support a native `tags`
-    # field — documented here for audit parity with Worker resources).
-    governance_tags = [
-      "Environment=${var.environment}",
-      "Project=${var.project_name}",
-      "Service=web",
-      "Lifecycle=long-lived",
-    ]
-  }
-}
-
-output "pages_web_default_domain" {
-  description = "Default Cloudflare-assigned pages.dev URL for the frontend SPA (no custom domain used). Use this URL once the first deployment has been made by CI (wrangler pages deploy apps/web/dist)."
-  value       = try(cloudflare_pages_project.web.domains[0], "${cloudflare_pages_project.web.subdomain}.pages.dev")
 }
