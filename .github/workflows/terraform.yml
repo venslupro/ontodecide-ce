@@ -149,6 +149,7 @@ jobs:
           path: |
             infrastructure/terraform/tfplan.json
             infrastructure/terraform/tfplan-summary.txt
+            infrastructure/terraform/tfplan.binary
           retention-days: 30
 
   # ── Phase 3: apply — ONLY via workflow_dispatch on main + env approval ─
@@ -156,9 +157,9 @@ jobs:
   # Human gate: production Environment required reviewers pauses the job
   # until reviewer clicks "Approve & deploy".
   apply:
-    name: Apply (dispatch · main · env approval)
+    name: Apply (dispatch/push · main · env approval)
     needs: plan
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: ( github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: production
