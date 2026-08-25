@@ -6,11 +6,16 @@
 #   • D1 shared database "shared-db" (shared by user/ai/cleanup)
 #   • All KV namespaces for the 6 workers
 #   • Ingestion / Cleanup main queues + DLQs (DLQ bindings live in wrangler.toml consumer)
-#   • Binding skeletons / Service Bindings / tag governance for the 6 workers
-#   • Cleanup cron trigger
-#   • Optional: custom domain (Workers Domain, created when zone_id is non-empty)
+#   • Service naming convention + binding name metadata for review/audit
 #
-# Out of scope (code layer · handled by deploy-service.yml / wrangler.toml):
+# Out of scope (code layer · handled by deploy.yml + wrangler.toml):
+#   • Workers Scripts (gateway / user / graph / ingestion / ai / cleanup)
+#     — created / updated / destroyed by `wrangler deploy` in deploy.yml
+#   • Workers Service Bindings between workers — declared in wrangler.toml [[services]]
+#   • Workers Cron triggers — declared in wrangler.toml [triggers].crons
+#   • Workers Observability — declared in wrangler.toml [observability]
+#   • Workers Custom Domains (api.ontodecide.com) — wrangler / Dashboard managed
+#   • Cloudflare Pages Project (apps/web SPA) — created by `wrangler pages deploy`
 #   • Worker script code versions (Wrangler Action)
 #   • [vars] plain-text env vars (native to wrangler.toml)
 #   • Workers AI [ai] binding (handled by wrangler.toml [ai])
@@ -26,11 +31,6 @@
 #             ontodecide-prd-gateway-jwt-blacklist (KV title lowercase + hyphens)
 #
 # Single-environment system: production only — no preview/staging environments.
-#
-# Creation order (Service Binding dependency):
-#   Tier 1 (leaf services, no service binding): user · ai · graph · cleanup
-#   Tier 2 (depends on graph): ingestion
-#   Tier 3 (depends on all downstreams): gateway
 # ============================================================================
 
 # -------- Unified naming locals --------
@@ -41,49 +41,16 @@ locals {
   # Unified resource name prefix: ontodecide-prd
   res_prefix = "${var.project_name}-${local.env_short}"
 
+  # Service metadata (for naming convention + audit cross-check with wrangler.toml).
+  # has_db = true indicates the worker declares [[d1_databases]] binding "DB"
+  # pointing at cloudflare_d1_database.shared_db.name in its wrangler.toml.
   workers = {
-    gateway = {
-      worker_name = "${local.res_prefix}-gateway"
-      service     = "gateway"
-      has_db      = false
-      cron        = []
-      tier        = 3
-    }
-    user = {
-      worker_name = "${local.res_prefix}-user"
-      service     = "user"
-      has_db      = true
-      cron        = []
-      tier        = 1
-    }
-    graph = {
-      worker_name = "${local.res_prefix}-graph"
-      service     = "graph"
-      has_db      = false
-      cron        = []
-      tier        = 1
-    }
-    ingestion = {
-      worker_name = "${local.res_prefix}-ingestion"
-      service     = "ingestion"
-      has_db      = false
-      cron        = []
-      tier        = 2
-    }
-    ai = {
-      worker_name = "${local.res_prefix}-ai"
-      service     = "ai"
-      has_db      = true
-      cron        = []
-      tier        = 1
-    }
-    cleanup = {
-      worker_name = "${local.res_prefix}-cleanup"
-      service     = "cleanup"
-      has_db      = true
-      cron        = ["0 3 * * *"]
-      tier        = 1
-    }
+    gateway   = { service = "gateway", has_db = false }
+    user      = { service = "user", has_db = true }
+    graph     = { service = "graph", has_db = false }
+    ingestion = { service = "ingestion", has_db = false }
+    ai        = { service = "ai", has_db = true }
+    cleanup   = { service = "cleanup", has_db = true }
   }
 
   kv_binding_map = [
@@ -97,34 +64,11 @@ locals {
     { svc = "cleanup", binding = "CLEANUP_JOBS" },
   ]
 
-  gateway_service_bindings = [
-    { binding = "USER_SERVICE", target = "user" },
-    { binding = "GRAPH_SERVICE", target = "graph" },
-    { binding = "INGESTION_SERVICE", target = "ingestion" },
-    { binding = "AI_SERVICE", target = "ai" },
-    { binding = "CLEANUP_SERVICE", target = "cleanup" },
-  ]
-
-  ingestion_service_bindings = [
-    { binding = "GRAPH_SERVICE", target = "graph" },
-  ]
-
-  # Durable Object class list (class code declared in wrangler.toml [[migrations]] v1)
+  # Durable Object class list (class code declared in ai/wrangler.toml [[migrations]] v1).
+  # Documented here for audit parity with the wrangler.toml declaration.
   durable_object_classes = {
     AGENT = "PlanningAgent"
   }
-
-  sentinel_script = <<-EOT
-  // Terraform reserved sentinel — actual code deployed via Wrangler Action.
-  export default {
-    fetch() {
-      return new Response(
-        'Sentinel: Worker metadata is managed by Terraform; code deploys via GitHub Actions + wrangler deploy.',
-        { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } }
-      );
-    },
-  };
-  EOT
 }
 
 # ============================================================================
@@ -198,342 +142,27 @@ resource "cloudflare_queue" "cleanup" {
 }
 
 # ============================================================================
-# 4) Worker binding skeleton (metadata-only) — split by dependency tier
+# NOTE: Sections 4–7 (Workers Script tiers, Cron trigger, Custom domains,
+#       Pages project) have been moved entirely to wrangler.toml + deploy.yml.
 #
-#    The Cloudflare API requires the target Worker of a Service Binding to exist
-#    when the binding is created. A single for_each resource creates in parallel
-#    and cannot guarantee ordering, so it is split into three tiers:
+# Why this separation works:
+#   • D1 / KV / Queues have stable IDs and cross-referencing constraints
+#     that benefit from declarative IaC ordering + drift correction.
+#   • Workers Scripts / Pages are code-coupled (script content, bindings,
+#     [vars], [ai], DO classes, [observability], cron, service bindings)
+#     and change every deploy — wrangler deploy handles them as one
+#     atomic PUT each time, and creates the resource automatically on
+#     the first deploy (upsert / PUT-if-absent semantics).
+#   • Service Binding ordering (L1→L2→L3) is enforced by deploy.yml job
+#     `needs:` dependency graph (identical to the former TF tier split).
 #
-#    Tier 1 (leaf):    user · ai · graph · cleanup — no service binding
-#    Tier 2:           ingestion — service_binding → graph (Tier1)
-#    Tier 3:           gateway   — service_binding → 5 downstreams (Tier1 + Tier2)
+# See each apps/api/*/wrangler.toml and .github/workflows/deploy.yml for
+# the code-layer resource declarations.
 #
-#    workers_script uses a unified bindings list; AI / DO / plain [vars]
-#    are still declared in wrangler.toml.
-#    content is a sentinel; Wrangler overwrites the script and vars on each deploy;
-#    lifecycle.ignore_changes ensures Terraform apply never rolls back wrangler's real code.
-# ============================================================================
-
-# ---- Tier 1: leaf services (user, ai, graph, cleanup) — no Service Binding ----
-resource "cloudflare_workers_script" "tier1" {
-  for_each = {
-    for k, w in local.workers : k => w
-    if w.tier == 1
-  }
-
-  account_id          = var.account_id
-  script_name         = each.value.worker_name
-  content             = local.sentinel_script
-  main_module         = "index.js"
-  compatibility_date  = "2024-10-01"
-  compatibility_flags = ["nodejs_compat"]
-
-  # Workers Observability: enabled at script-level scope.
-  # Observability is SOLELY managed by Terraform (not wrangler.toml) per
-  # project policy. Full nested logs block is required for the Cloudflare
-  # Dashboard to surface "Observability: Enabled"; a bare enabled=true
-  # without logs.enabled is insufficient.
-  observability = {
-    enabled            = true
-    head_sampling_rate = 1
-    logs = {
-      enabled            = true
-      invocation_logs    = true
-      destinations       = ["cloudflare"]
-      head_sampling_rate = 1
-      persist            = true
-    }
-  }
-
-  # ---- Unified bindings (all binding types in a single list) ----
-  # D1 + KV + Queue producer (cleanup only). Service bindings are absent
-  # in Tier 1 (leaf services). Wrangler overwrites bindings on each deploy;
-  # bindings is in ignore_changes so Terraform won't fight wrangler.
-  #
-  # NOTE: observability is intentionally NOT listed in ignore_changes so
-  # that Terraform retains ownership. If a future wrangler deploy's PUT
-  # resets observability, the next `terraform plan` will flag drift and
-  # `terraform apply` will restore the desired state.
-  bindings = concat(
-    # D1 (user, ai, cleanup)
-    each.value.has_db ? [{
-      name        = "DB"
-      type        = "d1"
-      database_id = cloudflare_d1_database.shared_db.id
-    }] : [],
-    # KV — binding NAME stays UPPER_SNAKE_CASE for wrangler.toml
-    [
-      for item in local.kv_binding_map : {
-        name         = item.binding
-        type         = "kv_namespace"
-        namespace_id = cloudflare_workers_kv_namespace.kv["${item.svc}__${lower(item.binding)}"].id
-      }
-      if item.svc == each.key
-    ],
-    # Queue producer (cleanup only)
-    each.key == "cleanup" ? [{
-      name       = "CLEANUP_QUEUE"
-      type       = "queue"
-      queue_name = cloudflare_queue.cleanup.queue_name
-    }] : []
-  )
-
-  lifecycle {
-    create_before_destroy = true
-    ignore_changes = [
-      content,
-      main_module,
-      compatibility_date,
-      compatibility_flags,
-      bindings,
-    ]
-  }
-}
-
-# ---- Tier 2: ingestion — Service Binding → graph (Tier1) ----
-resource "cloudflare_workers_script" "ingestion" {
-  account_id          = var.account_id
-  script_name         = local.workers["ingestion"].worker_name
-  content             = local.sentinel_script
-  main_module         = "index.js"
-  compatibility_date  = "2024-10-01"
-  compatibility_flags = ["nodejs_compat"]
-
-  # Workers Observability: enabled (Terraform-only managed).
-  # Full logs block required for Dashboard to show "Enabled".
-  observability = {
-    enabled            = true
-    head_sampling_rate = 1
-    logs = {
-      enabled            = true
-      invocation_logs    = true
-      destinations       = ["cloudflare"]
-      head_sampling_rate = 1
-      persist            = true
-    }
-  }
-
-  # ---- Unified bindings ----
-  # KV + Queue producer + Service Binding → Graph (Tier1)
-  bindings = concat(
-    # KV
-    [
-      for item in local.kv_binding_map : {
-        name         = item.binding
-        type         = "kv_namespace"
-        namespace_id = cloudflare_workers_kv_namespace.kv["${item.svc}__${lower(item.binding)}"].id
-      }
-      if item.svc == "ingestion"
-    ],
-    # Queue producer
-    [{
-      name       = "INGEST_QUEUE"
-      type       = "queue"
-      queue_name = cloudflare_queue.ingestion.queue_name
-    }],
-    # Service Binding → Graph (Tier1, must be created first)
-    [
-      for sb in local.ingestion_service_bindings : {
-        name        = sb.binding
-        type        = "service"
-        service     = cloudflare_workers_script.tier1["graph"].script_name
-        environment = var.environment
-      }
-    ]
-  )
-
-  # Explicit dependency: graph Worker must be created first
-  depends_on = [cloudflare_workers_script.tier1["graph"]]
-
-  lifecycle {
-    create_before_destroy = true
-    # observability intentionally NOT ignored (Terraform-owned, drift corrected)
-    ignore_changes = [
-      content,
-      main_module,
-      compatibility_date,
-      compatibility_flags,
-      bindings,
-    ]
-  }
-}
-
-# ---- Tier 3: gateway — Service Bindings → all 5 downstreams ----
-resource "cloudflare_workers_script" "gateway" {
-  account_id          = var.account_id
-  script_name         = local.workers["gateway"].worker_name
-  content             = local.sentinel_script
-  main_module         = "index.js"
-  compatibility_date  = "2024-10-01"
-  compatibility_flags = ["nodejs_compat"]
-
-  # Workers Observability: enabled (Terraform-only managed).
-  # Full logs block required for Dashboard to show "Enabled".
-  observability = {
-    enabled            = true
-    head_sampling_rate = 1
-    logs = {
-      enabled            = true
-      invocation_logs    = true
-      destinations       = ["cloudflare"]
-      head_sampling_rate = 1
-      persist            = true
-    }
-  }
-
-  # ---- Unified bindings ----
-  # KV + Service Bindings → 5 downstreams (Tier1 + Tier2 must be created first)
-  bindings = concat(
-    # KV
-    [
-      for item in local.kv_binding_map : {
-        name         = item.binding
-        type         = "kv_namespace"
-        namespace_id = cloudflare_workers_kv_namespace.kv["${item.svc}__${lower(item.binding)}"].id
-      }
-      if item.svc == "gateway"
-    ],
-    # Service Bindings → 5 downstreams
-    [
-      for sb in local.gateway_service_bindings : {
-        name = sb.binding
-        type = "service"
-        # ingestion is in Tier2, the rest in Tier1
-        service     = sb.target == "ingestion" ? cloudflare_workers_script.ingestion.script_name : cloudflare_workers_script.tier1[sb.target].script_name
-        environment = var.environment
-      }
-    ]
-  )
-
-  # Explicit dependency: all Tier1 + ingestion must be created first
-  depends_on = [
-    cloudflare_workers_script.tier1,
-    cloudflare_workers_script.ingestion,
-  ]
-
-  lifecycle {
-    create_before_destroy = true
-    # observability intentionally NOT ignored (Terraform-owned, drift corrected)
-    ignore_changes = [
-      content,
-      main_module,
-      compatibility_date,
-      compatibility_flags,
-      bindings,
-    ]
-  }
-}
-
-# ============================================================================
-# 5) Cron trigger: Cleanup daily at 03:00 UTC
-#    schedules = list(string) of cron expressions
-# ============================================================================
-resource "cloudflare_workers_cron_trigger" "cleanup_daily" {
-  for_each    = length(local.workers["cleanup"].cron) > 0 ? { cleanup = "cleanup" } : {}
-  account_id  = var.account_id
-  script_name = local.workers["cleanup"].worker_name
-  schedules   = [for c in local.workers["cleanup"].cron : { cron = c }]
-
-  # cleanup Worker (Tier1) must exist first; cron trigger references its worker_name
-  depends_on = [cloudflare_workers_script.tier1["cleanup"]]
-}
-
-# ============================================================================
-# 6) Optional: Workers custom domain
-# ============================================================================
-locals {
-  custom_domains = {
-    gateway   = "api.${var.project_name}.com"
-    user      = null
-    graph     = null
-    ingestion = null
-    ai        = null
-    cleanup   = null
-  }
-}
-
-resource "cloudflare_workers_custom_domain" "svc" {
-  for_each = {
-    for k, d in local.custom_domains : k => d
-    if d != null && var.zone_id != ""
-  }
-
-  account_id  = var.account_id
-  zone_id     = var.zone_id
-  hostname    = each.value
-  service     = local.workers[each.key].worker_name
-  environment = var.environment
-  # Governance: Environment=${var.environment} Project=${var.project_name}
-  #             Service=${each.key} Lifecycle=long-lived
-
-  # The corresponding Worker must be created first
-  depends_on = [cloudflare_workers_script.gateway]
-}
-
-# ============================================================================
-# 7) apps/web frontend SPA hosting — Cloudflare Pages Project
-#
-# Hosting choice: Pages Project over a 7th Worker for Vite React SPA because:
-#   • Native static asset serving + gzip/brotli/edge CDN out of the box
-#   • SPA hash routes need no fetch-routing glue (HashRouter lives client-side)
-#   • Single production environment — no preview deploys (no `--branch` aliases)
-#   • Default *.pages.dev subdomain assigned automatically — no custom domain
-#     per project spec (zone_id-based workers_domain not required).
-#   • build_config below is dashboard metadata only. Actual builds + deploys
-#     are driven by GitHub Actions using:
-#         wrangler pages deploy apps/web/dist --project-name ontodecide-prd-web
-#
-# Governance: Environment/Project/Service/Lifecycle are carried on the
-# resource name and output block (cloudflare_pages_project does not
-# support a native `tags` field).
-# ============================================================================
-
-resource "cloudflare_pages_project" "web" {
-  account_id        = var.account_id
-  name              = "${local.res_prefix}-web"
-  production_branch = "main"
-
-  # ------------------------------------------------------------------
-  # Build config (Dashboard-metadata — informational only).
-  # CI performs the real build: pnpm install && pnpm build for apps/web
-  # and deploys via `wrangler pages deploy apps/web/dist`.
-  # These values keep the Cloudflare UI "Retry deploy" aligned.
-  # ------------------------------------------------------------------
-  build_config = {
-    build_command   = "pnpm install --frozen-lockfile && pnpm --filter @ontodecide/web build"
-    destination_dir = "apps/web/dist"
-    root_dir        = ""
-  }
-
-  # ------------------------------------------------------------------
-  # Deployment configuration — single-environment system (production only).
-  # Cloudflare API requires fail_open to be set equally for both
-  # production and preview environments, so preview is mirrored here
-  # even though no preview deploys are used.
-  # ------------------------------------------------------------------
-  deployment_configs = {
-    production = {
-      fail_open          = false
-      compatibility_date = "2024-10-01"
-    }
-    preview = {
-      fail_open          = false
-      compatibility_date = "2024-10-01"
-    }
-  }
-}
-
-# ============================================================================
-# --------- apps/web (service #7) — Worker fallback (NOT USED) ---------
-# If a future iteration prefers a Worker-based edge-served SPA over Pages,
-# enabling it requires these four edits — no structural refactor of the
-# existing Worker tiers/for_each:
-#
-# (1) Add to local.workers:
-#     web = { worker_name="${local.res_prefix}-web", service="web", has_db=false, cron=[], tier=1 }
-# (2) If Gateway should forward to Web, append to local.gateway_service_bindings:
-#     { binding="WEB_SERVICE", target="web" }
-# (3) Append KV cache to local.kv_binding_map:
-#     { svc="web", binding="CACHE" }
-# (4) Append a web entry to DEFAULTS_MATRIX in deploy-service.yml
+# If you need a Worker-sentinel / metadata-only TF pattern again in the
+# future (e.g., pre-creating Service Binding targets before any code
+# deploy runs), restore the old Tier1/2/3 cloudflare_workers_script
+# blocks from git history. Under the current model the first deploy
+# simply creates the Worker via wrangler, and downstream Service
+# Bindings resolve on subsequent layers.
 # ============================================================================

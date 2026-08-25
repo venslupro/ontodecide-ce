@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================================
-# teardown-cloudflare.sh — Delete ALL Cloudflare resources created by the
-# OntoDecide Terraform manifest (infrastructure/terraform/main.tf).
+# teardown-cloudflare.sh — Delete ALL Cloudflare resources for OntoDecide,
+# regardless of which tool created them:
+#   • Infrastructure layer (Terraform-owned): D1 shared-db / KV / Queues
+#   • Code layer (wrangler deploy-owned): Workers / Cron / Pages / Domains
+#
+# Resources are matched by the ${PROJECT_NAME}-${ENV_SHORT}- prefix so
+# multiple environments on the same CF account stay isolated.
 #
 # Deletion order (reverse of Terraform dependency order) is CRITICAL:
 #   1. Cron triggers (must be removed before the referenced Worker)
