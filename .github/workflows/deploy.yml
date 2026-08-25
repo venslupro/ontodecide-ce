@@ -148,6 +148,8 @@ jobs:
   deploy-user:
     name: Deploy · user
     needs: detect-changes
+    environment:
+      name: production
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -191,6 +193,8 @@ jobs:
   deploy-graph:
     name: Deploy · graph
     needs: detect-changes
+    environment:
+      name: production
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -225,6 +229,8 @@ jobs:
   deploy-ai:
     name: Deploy · ai
     needs: detect-changes
+    environment:
+      name: production
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -257,6 +263,8 @@ jobs:
   deploy-cleanup:
     name: Deploy · cleanup
     needs: detect-changes
+    environment:
+      name: production
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -303,6 +311,8 @@ jobs:
   deploy-web:
     name: Deploy · web
     needs: detect-changes
+    environment:
+      name: production
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -443,8 +453,6 @@ jobs:
   migrate-d1:
     name: Migrate · D1 (Approval · main-only)
     needs: [deploy-user, deploy-graph, deploy-ai, deploy-cleanup, deploy-ingestion, deploy-gateway, deploy-web]
-    environment:
-      name: production
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
