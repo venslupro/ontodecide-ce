@@ -185,7 +185,7 @@ jobs:
           ENVIRONMENT: production
         run: ./scripts/resolve-d1-ids.sh apps/api/user
       - name: Deploy user worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
@@ -223,7 +223,7 @@ jobs:
           ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/graph
       - name: Deploy graph worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
@@ -261,7 +261,7 @@ jobs:
       - name: Deploy ai worker
         # GOOGLE_API_KEY / GROQ_API_KEY are optional — configured directly
         # on Cloudflare Dashboard Secrets so deploys never overwrite them.
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
@@ -300,7 +300,7 @@ jobs:
           ENVIRONMENT: production
         run: ./scripts/resolve-d1-ids.sh apps/api/cleanup
       - name: Deploy cleanup worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
@@ -357,6 +357,23 @@ jobs:
           VITE_API_BASE: ${{ steps.gateway-url.outputs.url }}
       # wrangler pages CLI reads CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
       # (not the CF_* aliases used by wrangler-action).
+      #
+      # NOTE on project create (Wrangler 4.x): `wrangler pages deploy` no longer
+      # auto-creates a missing Pages project — it fails with
+      # "The Pages project X does not exist." So we run `pages project create`
+      # first with || true. Idempotent: command errors out on duplicate name,
+      # which we suppress so subsequent deploys still succeed.
+      - name: Ensure Cloudflare Pages project exists
+        env:
+          CLOUDFLARE_API_TOKEN:  ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          PROJECT_NAME:          ${{ github.event.repository.name }}
+          ENVIRONMENT:           production
+        run: |
+          ENV_SHORT="$([[ "$ENVIRONMENT" == "production" ]] && echo "prd" || echo "$ENVIRONMENT")"
+          PROJECT="${PROJECT_NAME}-${ENV_SHORT}-web"
+          echo "Ensuring Pages project: $PROJECT"
+          pnpm exec wrangler pages project create "$PROJECT" --production-branch main || true
       - name: Deploy frontend to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CF_API_TOKEN }}
@@ -367,6 +384,7 @@ jobs:
           ENV_SHORT="$([[ "$ENVIRONMENT" == "production" ]] && echo "prd" || echo "$ENVIRONMENT")"
           PROJECT="${PROJECT_NAME}-${ENV_SHORT}-web"
           pnpm exec wrangler pages deploy apps/web/dist \
+            --config apps/web/wrangler.toml \
             --project-name "$PROJECT" \
             --branch main
 
@@ -399,7 +417,7 @@ jobs:
           ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/ingestion
       - name: Deploy ingestion worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
@@ -444,7 +462,7 @@ jobs:
           ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/gateway
       - name: Deploy gateway worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}

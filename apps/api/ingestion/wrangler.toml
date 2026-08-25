@@ -49,6 +49,11 @@ destinations = ["cloudflare"]
 head_sampling_rate = 1
 persist = true
 
+# ----- Workers Traces (distributed tracing) --------------------------------
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+
 # LOCAL-ONLY [build] block.
 [build]
 command = "pnpm --filter=@ontodecide/ingestion exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
