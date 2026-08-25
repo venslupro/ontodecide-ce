@@ -228,16 +228,32 @@ resource "cloudflare_workers_script" "tier1" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  # Workers Observability: logs + traces enabled for all leaf services
-  # (long-lived script setting owned by Terraform; default head_sampling_rate=1)
+  # Workers Observability: enabled at script-level scope.
+  # Observability is SOLELY managed by Terraform (not wrangler.toml) per
+  # project policy. Full nested logs block is required for the Cloudflare
+  # Dashboard to surface "Observability: Enabled"; a bare enabled=true
+  # without logs.enabled is insufficient.
   observability = {
-    enabled = true
+    enabled            = true
+    head_sampling_rate = 1
+    logs = {
+      enabled            = true
+      invocation_logs    = true
+      destinations       = ["cloudflare"]
+      head_sampling_rate = 1
+      persist            = true
+    }
   }
 
   # ---- Unified bindings (all binding types in a single list) ----
   # D1 + KV + Queue producer (cleanup only). Service bindings are absent
   # in Tier 1 (leaf services). Wrangler overwrites bindings on each deploy;
   # bindings is in ignore_changes so Terraform won't fight wrangler.
+  #
+  # NOTE: observability is intentionally NOT listed in ignore_changes so
+  # that Terraform retains ownership. If a future wrangler deploy's PUT
+  # resets observability, the next `terraform plan` will flag drift and
+  # `terraform apply` will restore the desired state.
   bindings = concat(
     # D1 (user, ai, cleanup)
     each.value.has_db ? [{
@@ -283,9 +299,18 @@ resource "cloudflare_workers_script" "ingestion" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  # Workers Observability: logs + traces enabled
+  # Workers Observability: enabled (Terraform-only managed).
+  # Full logs block required for Dashboard to show "Enabled".
   observability = {
-    enabled = true
+    enabled            = true
+    head_sampling_rate = 1
+    logs = {
+      enabled            = true
+      invocation_logs    = true
+      destinations       = ["cloudflare"]
+      head_sampling_rate = 1
+      persist            = true
+    }
   }
 
   # ---- Unified bindings ----
@@ -322,6 +347,7 @@ resource "cloudflare_workers_script" "ingestion" {
 
   lifecycle {
     create_before_destroy = true
+    # observability intentionally NOT ignored (Terraform-owned, drift corrected)
     ignore_changes = [
       content,
       main_module,
@@ -341,9 +367,18 @@ resource "cloudflare_workers_script" "gateway" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
-  # Workers Observability: logs + traces enabled
+  # Workers Observability: enabled (Terraform-only managed).
+  # Full logs block required for Dashboard to show "Enabled".
   observability = {
-    enabled = true
+    enabled            = true
+    head_sampling_rate = 1
+    logs = {
+      enabled            = true
+      invocation_logs    = true
+      destinations       = ["cloudflare"]
+      head_sampling_rate = 1
+      persist            = true
+    }
   }
 
   # ---- Unified bindings ----
@@ -378,6 +413,7 @@ resource "cloudflare_workers_script" "gateway" {
 
   lifecycle {
     create_before_destroy = true
+    # observability intentionally NOT ignored (Terraform-owned, drift corrected)
     ignore_changes = [
       content,
       main_module,
