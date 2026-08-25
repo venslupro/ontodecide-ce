@@ -1,12 +1,16 @@
 # User Service Worker — authentication and account management.
 #
 # ============================================================
-# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
-#   • Terraform CREATES & GOVERNS:
-#       - Worker skeleton + 4D tags
-#       - D1 binding "DB" → cloudflare_d1_database.shared_db.id
+# ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform CREATES & GOVERNS LONG-LIVED RESOURCES ONLY:
+#       - D1 shared-db (cloudflare_d1_database.shared_db)
 #       - KV namespace "CACHE"
-#   • Wrangler deploys: script code · [vars] · JWT_SECRET + EMAIL_API_KEY
+#   • Wrangler OWNS EVERYTHING WORKER-RELATED:
+#       - Worker itself (created / updated by `wrangler deploy`)
+#       - [[d1_databases]] DB binding (database_id injected by resolve-d1-ids.sh)
+#       - [[kv_namespaces]] CACHE binding (id injected by resolve-kv-ids.sh)
+#       - [observability] block — Workers Observability enabled here
+#       - [triggers].crons, script code · [vars] · JWT_SECRET + EMAIL_API_KEY
 # ============================================================
 #
 # Identity model:
@@ -22,6 +26,20 @@ name = "ontodecide-prd-user"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
+
+# ----- Workers Observability ------------------------------------------------
+# Enabled at the Worker by this wrangler.toml; every `wrangler deploy`
+# re-applies the full block. Dashboard shows "Observability: Enabled".
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+destinations = ["cloudflare"]
+head_sampling_rate = 1
+persist = true
 
 # LOCAL-ONLY [build] block.
 [build]

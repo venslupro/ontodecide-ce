@@ -1,7 +1,14 @@
 # Continuous Deployment (CD) — Worker Services + Frontend Pages
 #
-# Code deploys here; resource creation (D1/KV/Queues/Bindings/Cron/Domains
-# + Pages project) lives in terraform.yml — provision BEFORE service deploys.
+# Code + configuration deploys here. Long-lived resources (D1 / KV / Queues)
+# live in infrastructure/terraform via terraform.yml — run Terraform apply
+# BEFORE service deploys the first time so resolve-d1-ids.sh / resolve-kv-ids.sh
+# can look up the real resource IDs from the Cloudflare API.
+#
+# Workers Scripts, Cron triggers, Service Bindings, Observability settings,
+# and the Cloudflare Pages Project (apps/web) are ALL created automatically
+# by `wrangler deploy` / `wrangler pages deploy` on first run (upsert / PUT
+# semantics) — no Terraform sentinel or pre-creation required.
 #
 # TRIGGERS:
 #   • push (any branch): detect-changes always; deploy all services on main.
