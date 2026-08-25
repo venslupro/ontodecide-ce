@@ -55,6 +55,14 @@ destinations = ["cloudflare"]
 head_sampling_rate = 1
 persist = true
 
+# ----- Workers Traces (distributed tracing) --------------------------------
+# Full-rate trace capture → Cloudflare Observability dashboard.
+# Mirrors the sampling ratio of logs so every sampled invocation has
+# paired logs + traces for debugging.
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+
 # LOCAL-ONLY [build] block.
 [build]
 command = "pnpm --filter=@ontodecide/gateway exec tsc -p tsconfig.json --noEmit && pnpm --filter=@ontodecide/shared run build"
