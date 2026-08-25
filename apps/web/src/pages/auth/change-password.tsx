@@ -52,14 +52,13 @@ export default function ChangePasswordPage() {
   const mismatch = confirm.length > 0 && confirm !== nextPwd;
   const canSubmit = !loading && current.length > 0 && strength.score >= 2 && confirm === nextPwd;
 
-  /** Submits the password rotation form (mock fallback path included). */
+  /** Submits the password rotation form. */
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     setSuccess(false);
     try {
-      // await changePassword(current, nextPwd);
-      void changePassword;
+      await changePassword(current, nextPwd);
       setSuccess(true);
       setTimeout(() => navigate('/dashboard', { replace: true }), 1800);
     } catch {

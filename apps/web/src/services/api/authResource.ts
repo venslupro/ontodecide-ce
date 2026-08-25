@@ -39,8 +39,8 @@ export async function logout(): Promise<ApiResponse<{ success: boolean }>> {
  * success returns fresh tokens because a password change cycles the JWT.
  */
 export async function changePassword(body: {
-  current_password: string;
-  new_password: string;
+  currentPassword: string;
+  newPassword: string;
 }): Promise<ApiResponse<AuthTokens>> {
   return httpPost<AuthTokens>('/api/auth/change-password', body);
 }
