@@ -49,6 +49,43 @@ type AppEnv = {
 
 const app = new OpenAPIHono<AppEnv>();
 
+// CORS middleware — the frontend SPA is served from a different origin
+// (*.pages.dev) than the Gateway (*.workers.dev), so every response needs
+// the appropriate Cross-Origin headers.
+app.use('*', async (c, next) => {
+  const origin = c.req.header('Origin');
+
+  // Preflight requests are answered immediately (no downstream call).
+  if (c.req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': origin ?? '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-trace-id',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Max-Age': '86400',
+      },
+    });
+  }
+
+  await next();
+
+  // Add CORS headers to the actual (forwarded or local) response.
+  if (origin) {
+    const headers = new Headers(c.res.headers);
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Credentials', 'true');
+    headers.set('Access-Control-Expose-Headers', 'x-trace-id');
+    c.res = new Response(c.res.body, {
+      status: c.res.status,
+      statusText: c.res.statusText,
+      headers,
+    });
+  }
+  return;
+});
+
 // Global error handler — translates thrown ApiErrorImpl into the standard
 // JSON envelope.
 app.onError(honoErrorHandler);
