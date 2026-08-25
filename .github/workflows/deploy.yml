@@ -451,11 +451,12 @@ jobs:
   migrate-d1:
     name: Migrate · D1 (Manual · main-only)
     needs: [deploy-user, deploy-graph, deploy-ai, deploy-cleanup, deploy-ingestion, deploy-gateway, deploy-web]
+    environment:
+      name: production
     if: |
       always() &&
-      github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
-      inputs.run_migration == true &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_migration == true)) &&
       (needs.deploy-user.result      == 'success' || needs.deploy-user.result      == 'skipped') &&
       (needs.deploy-graph.result     == 'success' || needs.deploy-graph.result     == 'skipped') &&
       (needs.deploy-ai.result        == 'success' || needs.deploy-ai.result        == 'skipped') &&
