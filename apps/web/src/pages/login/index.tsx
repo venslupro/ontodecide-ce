@@ -25,9 +25,10 @@ export default function LoginPage() {
   const loading = useAuthStore((s) => s.loading);
   const errorMessage = useAuthStore((s) => s.errorMessage);
   const clear = useAuthStore((s) => s.clear);
+  const login = useAuthStore((s) => s.login);
 
-  const [email, setEmail] = useState('admin@ontodecide.ai');
-  const [password, setPassword] = useState('ChangeMe123!');
+  const [email, setEmail] = useState('admin');
+  const [password, setPassword] = useState('ChangeMeNow!');
   const [remember, setRemember] = useState(true);
   const [showPwd, setShowPwd] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -38,16 +39,9 @@ export default function LoginPage() {
     clear();
     setSubmitError(null);
     try {
-      // try {
-      //   const { needsPasswordChange } = await login({ username: email, password });
-      //   if (needsPasswordChange) navigate('/auth/change-password', { replace: true });
-      //   else navigate('/dashboard', { replace: true });
-      // } catch (err) {
-      //   setSubmitError(errorMessage ?? 'Login failed. Please check your credentials.');
-      // }
-      // Fallback mock path (backend not ready):
-      void remember;
-      navigate('/dashboard', { replace: true });
+      const { needsPasswordChange } = await login({ username: email, password });
+      if (needsPasswordChange) navigate('/auth/change-password', { replace: true });
+      else navigate('/dashboard', { replace: true });
     } catch {
       setSubmitError(errorMessage ?? 'Login failed. Please check your credentials.');
     }

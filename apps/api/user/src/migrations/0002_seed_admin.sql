@@ -1,9 +1,9 @@
 -- ============================================================
 -- Migration 0002: seed the bootstrap admin account.
 --
--- The password hash below is PBKDF2-SHA256 (100k iterations) of the
--- string "ChangeMeNow!" — operators MUST rotate it on first login via
--- the `POST /admin/users/:id/reset` endpoint.
+-- The password hash below is PBKDF2-SHA256 (100k iterations, 16-byte
+-- salt) of the string "ChangeMeNow!" — operators MUST rotate it on
+-- first login via the `POST /admin/users/:id/reset` endpoint.
 -- ============================================================
 
 INSERT OR IGNORE INTO users (
@@ -13,7 +13,7 @@ INSERT OR IGNORE INTO users (
   '00000000-0000-0000-0000-root-admin',
   'tenant_root',
   'admin',
-  'pbkdf2$100000$REPLACE_AT_DEPLOY$REPLACE_AT_DEPLOY',
+  'pbkdf2$100000$D77nSczxs4SwfdPpGLwcvQ$ZW9v_l7zVNkGI0wpPOYOrSuIcgbjptknlW7nc1pXrbA',
   'admin@example.com',
   'admin',
   1,

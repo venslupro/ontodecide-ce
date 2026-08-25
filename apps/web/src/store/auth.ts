@@ -123,11 +123,13 @@ function extractNeedsChange(
     const asRecord = data as Record<string, unknown>;
     if (asRecord.mustChangePassword === true) return true;
     if (asRecord.pwd_change_required === true) return true;
+    if (asRecord.requirePasswordChange === true) return true;
     if (asRecord.needsPasswordChange === true) return true;
     if (asRecord.data && typeof asRecord.data === 'object') {
       const inner = asRecord.data as Record<string, unknown>;
       if (inner.mustChangePassword === true) return true;
       if (inner.pwd_change_required === true) return true;
+      if (inner.requirePasswordChange === true) return true;
     }
   }
   return false;
@@ -225,8 +227,8 @@ export const useAuthStore = create<AuthState>((set, get) => {
       set({ loading: true, errorMessage: null });
       try {
         const response = await authResource.changePassword({
-          current_password: current,
-          new_password: nextPwd,
+          currentPassword: current,
+          newPassword: nextPwd,
         });
         const data = (response as { data?: AuthTokens } | undefined)
           ?.data as AuthTokens | undefined;
