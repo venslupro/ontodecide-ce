@@ -5,25 +5,19 @@
 #
 # TRIGGERS:
 #   • push (any branch): detect-changes always; deploy all services on main.
-#   • workflow_dispatch: same as push + optional "Run D1 migration" checkbox.
+#   • workflow_dispatch: same as push; D1 migration still requires approval.
 #
 # DEPENDENCY ORDER (4-layer):
 #   L1 (parallel) → user · graph · ai · cleanup · web (Pages)
 #   L2            → ingestion (needs: graph)
 #   L3            → gateway   (needs: L1 + L2)
-#   L4 (manual)   → migrate-d1 (needs: L3 + web; main-only; checkbox)
+#   L4 (approval) → migrate-d1 (needs: L3 + web; main-only; environment review)
 
 name: Deploy · Services
 
 on:
   push: {}
-  workflow_dispatch:
-    inputs:
-      run_migration:
-        description: 'Run D1 migration after deploy (wrangler d1 migrate --remote)'
-        required: true
-        default: false
-        type: boolean
+  workflow_dispatch: {}
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -443,19 +437,17 @@ jobs:
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
-  # ── LAYER 4 — migrate-d1 (Manual · main-only) ────────────────────────
-  # Runs ONLY via workflow_dispatch checkbox after all deploy-* jobs OK.
+  # ── LAYER 4 — migrate-d1 (Approval · main-only) ──────────────────────
+  # Waits for required reviewers on the production environment after deploy.
 
   migrate-d1:
-    name: Migrate · D1 (Manual · main-only)
+    name: Migrate · D1 (Approval · main-only)
     needs: [deploy-user, deploy-graph, deploy-ai, deploy-cleanup, deploy-ingestion, deploy-gateway, deploy-web]
     environment:
       name: production
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.run_migration == true &&
       (needs.deploy-user.result      == 'success' || needs.deploy-user.result      == 'skipped') &&
       (needs.deploy-graph.result     == 'success' || needs.deploy-graph.result     == 'skipped') &&
       (needs.deploy-ai.result        == 'success' || needs.deploy-ai.result        == 'skipped') &&
