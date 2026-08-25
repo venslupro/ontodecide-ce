@@ -470,15 +470,17 @@ resource "cloudflare_pages_project" "web" {
   }
 
   # ------------------------------------------------------------------
-  # Deployment configuration — production only (single-environment system;
-  # no preview environment). No custom domains per project spec; frontend
-  # is reachable via default Cloudflare pages.dev subdomain (HTTPS is
-  # always enabled on pages.dev — no separate config flag on the Pages
-  # resource). compatibility_* below apply to Pages Functions / Middleware
-  # should we later add SSR/edge-auth handlers.
+  # Deployment configuration — single-environment system (production only).
+  # Cloudflare API requires fail_open to be set equally for both
+  # production and preview environments, so preview is mirrored here
+  # even though no preview deploys are used.
   # ------------------------------------------------------------------
   deployment_configs = {
     production = {
+      fail_open          = false
+      compatibility_date = "2024-10-01"
+    }
+    preview = {
       fail_open          = false
       compatibility_date = "2024-10-01"
     }
