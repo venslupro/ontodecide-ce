@@ -152,10 +152,10 @@ jobs:
             infrastructure/terraform/tfplan.binary
           retention-days: 30
 
-  # ── Phase 3: apply — ONLY via workflow_dispatch on main + env approval ─
-  # Code-level gate: push/PR events can never reach this job (if: below).
+  # ── Phase 3: apply — ONLY via workflow_dispatch/push on main + approval ─
+  # Code-level gate: PR events can never reach this job (if: below).
   # Human gate: production Environment required reviewers pauses the job
-  # until reviewer clicks "Approve & deploy".
+  # before Terraform refreshes state and applies the change.
   apply:
     name: Apply (dispatch/push · main · env approval)
     needs: plan
@@ -175,23 +175,15 @@ jobs:
           path: infrastructure/terraform/.terraform/providers
           # Bumped salt (v3-) for the v4→v5 major-version upgrade.
           key: v3-tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
-      - name: Download saved plan (if present)
-        uses: actions/download-artifact@v7
-        continue-on-error: true
-        with:
-          name: tfplan-${{ github.sha }}
-          path: infrastructure/terraform/
       - name: Purge stale cached providers (safety wipe before upgrade)
         run: rm -rf infrastructure/terraform/.terraform/providers
       - name: Init
         # Apply runner may be different from plan runner; re-resolve so the
         # correct provider binary is available before applying the plan.
         run: terraform init -input=false -upgrade
-      - name: Apply
+      - name: Apply (fresh plan after approval)
         run: |
-          if [ -f tfplan.binary ]; then
-            terraform apply -input=false tfplan.binary
-          elif [ -f terraform.tfvars ]; then
+          if [ -f terraform.tfvars ]; then
             terraform apply -input=false -auto-approve -var-file=terraform.tfvars
           else
             terraform apply -input=false -auto-approve
