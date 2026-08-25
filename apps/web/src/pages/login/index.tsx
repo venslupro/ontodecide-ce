@@ -27,7 +27,7 @@ export default function LoginPage() {
   const clear = useAuthStore((s) => s.clear);
   const login = useAuthStore((s) => s.login);
 
-  const [email, setEmail] = useState('admin');
+  const [email, setEmail] = useState('admin@ontodecide.ai');
   const [password, setPassword] = useState('ChangeMeNow!');
   const [remember, setRemember] = useState(true);
   const [showPwd, setShowPwd] = useState(false);
