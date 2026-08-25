@@ -3,10 +3,11 @@
 # Worker Bindings / Cron / Domains) via Terraform declarative model.
 #
 # TRIGGERS:
-#   push/main          → fmt · validate · plan; apply waits for approval
+#   push/main          → fmt · validate · plan (READ-ONLY, apply skipped)
 #   pull_request/main  → fmt · validate · plan (READ-ONLY, apply skipped)
 #   workflow_dispatch  → fmt · validate · plan; apply runs on main branch
-#                        and requires production Environment approval.
+#                        (manual trigger only) and requires production
+#                        Environment approval.
 #
 # REQUIRED SECRETS (Settings → Secrets and variables → Actions):
 #   CF_API_TOKEN      Cloudflare admin token (shared with deploy-service.yml)
@@ -152,12 +153,12 @@ jobs:
             infrastructure/terraform/tfplan.binary
           retention-days: 30
 
-  # ── Phase 3: apply — main only + approval ─────────────────────────────
-  # PR events can never reach this job because their ref is not main.
-  # Human gate: production Environment required reviewers pauses the job
-  # before Terraform refreshes state and applies the change.
+  # ── Phase 3: apply — manual dispatch + main only + env approval ────────
+  # Apply NEVER runs automatically on push/PR. Only workflow_dispatch
+  # (manual click) on main branch can trigger this job, gated by the
+  # production Environment required reviewers.
   apply:
-    name: Apply (dispatch · main · env approval)
+    name: Apply (manual dispatch · main · env approval)
     needs: plan
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
