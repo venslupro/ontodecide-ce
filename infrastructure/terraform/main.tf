@@ -25,6 +25,8 @@
 #             ontodecide-prd-ingestion, ontodecide-prd-ingestion-dlq
 #             ontodecide-prd-gateway-jwt-blacklist (KV title lowercase + hyphens)
 #
+# Single-environment system: production only — no preview/staging environments.
+#
 # Creation order (Service Binding dependency):
 #   Tier 1 (leaf services, no service binding): user · ai · graph · cleanup
 #   Tier 2 (depends on graph): ingestion
@@ -33,8 +35,8 @@
 
 # -------- Unified naming locals --------
 locals {
-  # Env short form: production→prd, staging→stg (used in resource naming)
-  env_short = var.environment == "production" ? "prd" : (var.environment == "staging" ? "stg" : var.environment)
+  # Env short form: production→prd (single-environment system; no staging/preview)
+  env_short = "prd"
 
   # Unified resource name prefix: ontodecide-prd
   res_prefix = "${var.project_name}-${local.env_short}"
@@ -226,6 +228,12 @@ resource "cloudflare_workers_script" "tier1" {
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
 
+  # Workers Observability: logs + traces enabled for all leaf services
+  # (long-lived script setting owned by Terraform; default head_sampling_rate=1)
+  observability = {
+    enabled = true
+  }
+
   # ---- Unified bindings (all binding types in a single list) ----
   # D1 + KV + Queue producer (cleanup only). Service bindings are absent
   # in Tier 1 (leaf services). Wrangler overwrites bindings on each deploy;
@@ -274,6 +282,11 @@ resource "cloudflare_workers_script" "ingestion" {
   main_module         = "index.js"
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
+
+  # Workers Observability: logs + traces enabled
+  observability = {
+    enabled = true
+  }
 
   # ---- Unified bindings ----
   # KV + Queue producer + Service Binding → Graph (Tier1)
@@ -327,6 +340,11 @@ resource "cloudflare_workers_script" "gateway" {
   main_module         = "index.js"
   compatibility_date  = "2024-10-01"
   compatibility_flags = ["nodejs_compat"]
+
+  # Workers Observability: logs + traces enabled
+  observability = {
+    enabled = true
+  }
 
   # ---- Unified bindings ----
   # KV + Service Bindings → 5 downstreams (Tier1 + Tier2 must be created first)
@@ -422,7 +440,7 @@ resource "cloudflare_workers_custom_domain" "svc" {
 # Hosting choice: Pages Project over a 7th Worker for Vite React SPA because:
 #   • Native static asset serving + gzip/brotli/edge CDN out of the box
 #   • SPA hash routes need no fetch-routing glue (HashRouter lives client-side)
-#   • Per-PR preview deploys via `wrangler pages deploy --branch=<sha>`
+#   • Single production environment — no preview deploys (no `--branch` aliases)
 #   • Default *.pages.dev subdomain assigned automatically — no custom domain
 #     per project spec (zone_id-based workers_domain not required).
 #   • build_config below is dashboard metadata only. Actual builds + deploys
@@ -452,18 +470,15 @@ resource "cloudflare_pages_project" "web" {
   }
 
   # ------------------------------------------------------------------
-  # Deployment configuration — no custom domains per project spec;
-  # frontend is reachable via default Cloudflare pages.dev subdomain
-  # (HTTPS is always enabled on pages.dev — no separate config flag
-  # on the Pages resource). compatibility_* below apply to Pages
-  # Functions / Middleware should we later add SSR/edge-auth handlers.
+  # Deployment configuration — production only (single-environment system;
+  # no preview environment). No custom domains per project spec; frontend
+  # is reachable via default Cloudflare pages.dev subdomain (HTTPS is
+  # always enabled on pages.dev — no separate config flag on the Pages
+  # resource). compatibility_* below apply to Pages Functions / Middleware
+  # should we later add SSR/edge-auth handlers.
   # ------------------------------------------------------------------
   deployment_configs = {
     production = {
-      fail_open          = false
-      compatibility_date = "2024-10-01"
-    }
-    preview = {
       fail_open          = false
       compatibility_date = "2024-10-01"
     }
