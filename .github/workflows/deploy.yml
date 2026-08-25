@@ -375,6 +375,13 @@ jobs:
           echo "Ensuring Pages project: $PROJECT"
           pnpm exec wrangler pages project create "$PROJECT" --production-branch main || true
       - name: Deploy frontend to Cloudflare Pages
+        # IMPORTANT: `wrangler pages deploy` does NOT support --config (unlike
+        # Worker `wrangler deploy`).  So we set working-directory to apps/web
+        # so Wrangler auto-loads ./wrangler.toml from the cwd and the [assets]
+        # directory = "dist" resolves correctly.  Attempting to use --config
+        # here fails with: "Pages does not support custom paths for the
+        # Wrangler configuration file" (Wrangler 4.x).
+        working-directory: apps/web
         env:
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -383,8 +390,7 @@ jobs:
         run: |
           ENV_SHORT="$([[ "$ENVIRONMENT" == "production" ]] && echo "prd" || echo "$ENVIRONMENT")"
           PROJECT="${PROJECT_NAME}-${ENV_SHORT}-web"
-          pnpm exec wrangler pages deploy apps/web/dist \
-            --config apps/web/wrangler.toml \
+          pnpm exec wrangler pages deploy dist \
             --project-name "$PROJECT" \
             --branch main
 
