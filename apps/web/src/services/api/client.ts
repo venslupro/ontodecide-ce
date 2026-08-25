@@ -12,6 +12,24 @@
 import type { ApiError, ApiResponse } from '@ontodecide/shared';
 
 /**
+ * Vite build-time injected base URL for the Gateway worker.
+ *
+ * ⚠️ DO NOT refactor this into an {@code import.meta.env['VITE_API_BASE']}
+ * bracket accessor or an indirect {@code globalThis.import.meta.env} read.
+ * Vite's static analyzer ONLY replaces literal `import.meta.env.VITE_*`
+ * expressions during {@code vite build}. Any indirect form is left as
+ * runtime code and {@code import.meta.env} does not exist in production
+ * browsers (process.env is also absent there).
+ *
+ * The value is set by the CI deploy-web job via the build step's env:
+ *   VITE_API_BASE=${{ steps.gateway-url.outputs.url }}
+ * and resolves to the public workers.dev domain of the Gateway worker,
+ * e.g. {@code https://ontodecide-prd-gateway.<subdomain>.workers.dev}.
+ */
+const VITE_INJECTED_API_BASE: string | undefined =
+  import.meta.env.VITE_API_BASE;
+
+/**
  * Shape exposed by the auth store so the transport can read tokens on
  * demand. Stored as a callback to avoid a circular import from the store.
  */
@@ -40,30 +58,32 @@ export function setSessionAccessor(
 
 /**
  * Reads the configured backend base URL. Order of precedence:
- * 1. Vite runtime {@code import.meta.env.VITE_API_BASE},
- * 2. Node {@code process.env.VITE_API_BASE},
- * 3. Next-compatible {@code NEXT_PUBLIC_API_BASE}.
- * Defaults to the empty string so same-origin fetch is used in dev.
+ * 1. Vite build-time replaced literal {@code import.meta.env.VITE_API_BASE}
+ *    (replaced with the real Gateway workers.dev URL during CI build).
+ * 2. Node {@code process.env.VITE_API_BASE} – only valid in SSR/Node
+ *    tooling contexts (production browsers have no {@code process}).
+ * 3. Next-compatible {@code NEXT_PUBLIC_VITE_API_BASE}.
+ * Defaults to the empty string so same-origin fetch is used in local dev
+ * (where a Vite dev-server proxy or Pages Function handles /api/*).
  *
  * @returns Base URL (without trailing slash) or the empty string.
  */
 export function getApiBase(): string {
+  // 1. Literal replaced by Vite at build time → primary source in prod browsers
+  if (VITE_INJECTED_API_BASE) {
+    return VITE_INJECTED_API_BASE.replace(/\/$/, '');
+  }
+  // 2. process.env fallback (SSR / Vitest / Node contexts only)
   const env: Record<string, string | undefined> = (
     globalThis as unknown as {
       process?: { env?: Record<string, string | undefined> };
     }
   ).process?.env ?? {};
-  const viteEnv = (
-    globalThis as unknown as {
-      import?: {
-        meta?: { env?: Record<string, string | undefined> };
-      };
-    }
-  ).import?.meta?.env;
-  const viteBase = viteEnv?.VITE_API_BASE ?? env.VITE_API_BASE ?? '';
-  if (viteBase) return viteBase.replace(/\/$/, '');
-  const nextBase = env.NEXT_PUBLIC_API_BASE ?? '';
-  return nextBase.replace(/\/$/, '');
+  const nodeBase = env.VITE_API_BASE ?? env.NEXT_PUBLIC_VITE_API_BASE ?? '';
+  if (nodeBase) return nodeBase.replace(/\/$/, '');
+  // 3. Legacy Next alias (kept for cross-framework compat)
+  const legacyBase = env.NEXT_PUBLIC_API_BASE ?? '';
+  return legacyBase.replace(/\/$/, '');
 }
 
 /**
