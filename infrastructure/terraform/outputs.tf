@@ -8,7 +8,7 @@ output "project_name" {
   value       = var.project_name
 }
 output "environment" {
-  description = "Environment suffix (production / staging)."
+  description = "Environment suffix (single-environment system: production only)."
   value       = var.environment
 }
 output "zone_id" {
@@ -53,22 +53,25 @@ output "queues" {
 
 # ---- Workers (merge Tier1 + Tier2 + Tier3 outputs) ----
 output "workers" {
-  description = "All Worker script metadata (name + compatibility_date), merged across Tier1/Tier2/Tier3."
+  description = "All Worker script metadata (name + compatibility_date + observability), merged across Tier1/Tier2/Tier3."
   value = merge(
     {
       for k, w in cloudflare_workers_script.tier1 : k => {
         name               = w.script_name
         compatibility_date = w.compatibility_date
+        observability      = w.observability
       }
     },
     {
       ingestion = {
         name               = cloudflare_workers_script.ingestion.script_name
         compatibility_date = cloudflare_workers_script.ingestion.compatibility_date
+        observability      = cloudflare_workers_script.ingestion.observability
       },
       gateway = {
         name               = cloudflare_workers_script.gateway.script_name
         compatibility_date = cloudflare_workers_script.gateway.compatibility_date
+        observability      = cloudflare_workers_script.gateway.observability
       },
     },
   )
