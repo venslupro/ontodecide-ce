@@ -1,19 +1,21 @@
 # Cleanup Service Worker — daily retention enforcement + manual purge.
 #
 # ============================================================
-# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
-#   • Terraform CREATES & GOVERNS:
-#       - Worker skeleton + 4D tags
-#       - D1 binding "DB" → shared-db (cloudflare_d1_database.shared_db)
+# ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform CREATES & GOVERNS LONG-LIVED RESOURCES ONLY:
+#       - D1 shared-db (cloudflare_d1_database.shared_db)
 #       - 4 KV namespaces (USER_CACHE / INGESTION_JOBS /
 #         AI_CACHE / CLEANUP_JOBS) — for cross-service cache invalidation
-#       - Queue producer "CLEANUP_QUEUE" + cleanup / cleanup-dlq Queues
-#       - cloudflare_workers_cron_trigger.cleanup_daily  (0 3 * * * UTC)
-#   • Wrangler deploys:
+#       - Cloudflare Queue resources: cleanup + cleanup-dlq
+#   • Wrangler OWNS EVERYTHING WORKER-RELATED:
+#       - Worker itself (created / updated by `wrangler deploy`)
+#       - [triggers].crons (0 3 * * * UTC — replaces former TF cron_trigger)
+#       - [[queues.producers]] CLEANUP_QUEUE +
+#         [[queues.consumers]] + dead_letter_queue wiring
+#       - [[d1_databases]] DB binding (database_id by resolve-d1-ids.sh)
+#       - [[kv_namespaces]] ×4 bindings (ids by resolve-kv-ids.sh)
+#       - [observability] block — Workers Observability enabled here
 #       - script code · [vars] · NEO4J_PASSWORD + B2_KEY_ID + B2_KEY
-#       - [triggers].crons  (redundant with Terraform's cron trigger —
-#         kept here so `wrangler types` + `wrangler dev` work locally)
-#       - [[queues.consumers]] + dead_letter_queue wiring
 # ============================================================
 #
 # Exports:
@@ -32,6 +34,20 @@ name = "ontodecide-prd-cleanup"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
+
+# ----- Workers Observability ------------------------------------------------
+# Enabled at the Worker by this wrangler.toml; every `wrangler deploy`
+# re-applies the full block. Dashboard shows "Observability: Enabled".
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+destinations = ["cloudflare"]
+head_sampling_rate = 1
+persist = true
 
 # LOCAL-ONLY [build] block.
 [build]

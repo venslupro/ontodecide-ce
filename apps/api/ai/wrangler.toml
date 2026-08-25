@@ -1,15 +1,16 @@
 # AI Service Worker — multi-LLM decision intelligence.
 #
 # ============================================================
-# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
-#   • Terraform CREATES & GOVERNS:
-#       - Worker skeleton + 4D tags
-#       - D1 binding "DB" → shared-db (cloudflare_d1_database.shared_db)
-#       - Gateway → AI Service Binding (binding=AI_SERVICE)
-#   • Wrangler deploys (NOT Terraform — Provider v4 lacks support):
-#       - [ai] AI binding     → Workers AI (Neurons / models catalog)
-#       - Durable Object "AGENT"  → PlanningAgent class
-#       - [[migrations]] tag=v1  → DO class code upload
+# ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform CREATES & GOVERNS LONG-LIVED RESOURCES ONLY:
+#       - D1 shared-db (cloudflare_d1_database.shared_db)
+#       - Naming convention + Durable Object class audit metadata
+#   • Wrangler OWNS EVERYTHING WORKER-RELATED:
+#       - Worker itself (created / updated by `wrangler deploy`)
+#       - Gateway → AI Service Binding (declared in gateway wrangler.toml)
+#       - [ai] AI binding · [[durable_objects.bindings]] · [[migrations]]
+#       - [[d1_databases]] DB binding (database_id injected by resolve-d1-ids.sh)
+#       - [observability] block — Workers Observability enabled here
 #       - [vars] plain-text · optional LLM provider secrets
 # ============================================================
 #
@@ -30,6 +31,20 @@ name = "ontodecide-prd-ai"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
+
+# ----- Workers Observability ------------------------------------------------
+# Enabled at the Worker by this wrangler.toml; every `wrangler deploy`
+# re-applies the full block. Dashboard shows "Observability: Enabled".
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+destinations = ["cloudflare"]
+head_sampling_rate = 1
+persist = true
 
 # LOCAL-ONLY [build] block.
 [build]

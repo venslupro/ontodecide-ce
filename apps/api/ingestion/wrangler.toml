@@ -1,19 +1,18 @@
 # Ingestion Service Worker — multi-source data fusion.
 #
 # ============================================================
-# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
-#   • Terraform CREATES & GOVERNS:
-#       - Worker skeleton + 4D tags
-#       - Service Binding → GRAPH_SERVICE (Ingestion → Graph)
-#       - Queue producer "INGEST_QUEUE"  → queue=${project}-ingestion-${env}
-#       - Cloudflare Queue resources: ingestion + ingestion-dlq
+# ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform CREATES & GOVERNS LONG-LIVED RESOURCES ONLY:
+#       - Queue resources: ingestion + ingestion-dlq (raw queue entities)
 #       - KV namespace "JOBS"
-#   • Wrangler deploys:
+#       - Naming convention + shared-db / shared queues metadata
+#   • Wrangler OWNS EVERYTHING WORKER-RELATED:
+#       - Worker itself (created / updated by `wrangler deploy`)
+#       - Service Binding → GRAPH_SERVICE (Ingestion → Graph)
+#       - [[queues.producers]] / [[queues.consumers]] wiring + DLQ
+#       - [[kv_namespaces]] JOBS binding (id injected by resolve-kv-ids.sh)
+#       - [observability] block — Workers Observability enabled here
 #       - script code · [vars] · B2_KEY_ID + B2_KEY secrets
-#       - [[queues.consumers]] block + dead_letter_queue link
-#         (consumer mapping is code-layer — Terraform only creates
-#         the bare Queue resources; DLQ ↔ consumer binding is
-#         a Wrangler responsibility)
 #   • EXTERNAL IaC: Backblaze B2 bucket (ingestion staging)
 #     — Terraform outputs required bucket tags schema in
 #       external_backblaze_b2; bucket created via B2 console.
@@ -35,6 +34,20 @@ name = "ontodecide-prd-ingestion"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
+
+# ----- Workers Observability ------------------------------------------------
+# Enabled at the Worker by this wrangler.toml; every `wrangler deploy`
+# re-applies the full block. Dashboard shows "Observability: Enabled".
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+destinations = ["cloudflare"]
+head_sampling_rate = 1
+persist = true
 
 # LOCAL-ONLY [build] block.
 [build]

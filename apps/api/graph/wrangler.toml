@@ -1,12 +1,16 @@
 # Graph Service Worker — Neo4j AuraDB-backed knowledge graph.
 #
 # ============================================================
-# HYBRID ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
-#   • Terraform CREATES & GOVERNS:
-#       - Worker skeleton + 4D tags
-#       - Gateway → Graph Service Binding (binding=GRAPH_SERVICE)
-#       - Ingestion → Graph Service Binding (binding=GRAPH_SERVICE)
-#   • Wrangler deploys: script code · [vars] · NEO4J_PASSWORD secret
+# ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
+#   • Terraform CREATES & GOVERNS LONG-LIVED RESOURCES ONLY:
+#       - (Graph does not directly consume D1/KV — only uses Neo4j externally)
+#       - Naming convention + audit metadata (main.tf locals.workers)
+#   • Wrangler OWNS EVERYTHING WORKER-RELATED:
+#       - Worker itself (created / updated by `wrangler deploy`)
+#       - Gateway → Graph & Ingestion → Graph Service Bindings
+#         (declared in gateway/ingestion wrangler.toml [[services]])
+#       - [observability] block — Workers Observability enabled here
+#       - script code · [vars] · NEO4J_PASSWORD secret
 #   • EXTERNAL IaC: Neo4j AuraDB instance (not managed by Cloudflare TF)
 #     — connection details via Dashboard [vars] override; Terraform
 #       outputs the expected schema in external_neo4j_auradb for review.
@@ -23,6 +27,20 @@ name = "ontodecide-prd-graph"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
+
+# ----- Workers Observability ------------------------------------------------
+# Enabled at the Worker by this wrangler.toml; every `wrangler deploy`
+# re-applies the full block. Dashboard shows "Observability: Enabled".
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+destinations = ["cloudflare"]
+head_sampling_rate = 1
+persist = true
 
 # LOCAL-ONLY [build] block.
 [build]
