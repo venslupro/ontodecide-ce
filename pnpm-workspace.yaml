@@ -2,3 +2,6 @@ packages:
   - 'apps/api/*'
   - 'apps/shared'
   - 'apps/web'
+allowBuilds:
+  esbuild: false
+  workerd: false
