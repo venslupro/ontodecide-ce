@@ -85,7 +85,7 @@ export const pageQuerySchema = z.object({
 // ---------------------------------------------------------------------------
 
 /** Role assigned to a user; gates which admin endpoints they may call. */
-export const userRoleSchema = z.enum(['admin', 'analyst', 'viewer']);
+export const userRoleSchema = z.enum(['admin', 'user']);
 
 /** Public user record returned to clients (never contains password_hash). */
 export const userPublicSchema = z.object({
@@ -362,7 +362,7 @@ export const createUserSchema = z.object({
   }),
   role: userRoleSchema
     .optional()
-    .openapi({ description: 'Role assigned to the new user. Defaults to analyst.' }),
+    .openapi({ description: 'Role assigned to the new user. Defaults to user.' }),
   email: z
     .email()
     .optional()

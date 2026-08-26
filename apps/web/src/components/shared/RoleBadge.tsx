@@ -1,19 +1,17 @@
 /**
- * RoleBadge — colored pill for UserRole (admin / analyst / viewer).
- * Uses shared types: UserRole = 'admin' | 'analyst' | 'viewer'.
+ * RoleBadge — colored pill for UserRole (admin / user).
+ * Uses shared types: UserRole = 'admin' | 'user'.
  */
 import type { UserRole } from '@ontodecide/shared';
 import Badge, { BadgeTone } from '@/components/ui/Badge';
 
 const toneMap: Record<UserRole, BadgeTone> = {
-  admin:   'danger',
-  analyst: 'primary',
-  viewer:  'info',
+  admin: 'danger',
+  user:  'primary',
 };
 const labelMap: Record<UserRole, string> = {
-  admin:   'Admin',
-  analyst: 'Analyst',
-  viewer:  'Viewer',
+  admin: 'Admin',
+  user:  'User',
 };
 
 export interface RoleBadgeProps {

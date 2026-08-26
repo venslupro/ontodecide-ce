@@ -140,7 +140,7 @@ describe('auth store', () => {
           user_id: 'u_2',
           tenant_id: 'tenant_1',
           username: 'bob',
-          role: 'viewer',
+          role: 'user',
           exp: Math.floor(Date.now() / 1000) + 3600,
           iat: Math.floor(Date.now() / 1000),
           jti: 'jti_2',

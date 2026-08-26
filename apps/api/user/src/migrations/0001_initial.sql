@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   email TEXT,
-  role TEXT NOT NULL DEFAULT 'analyst' CHECK (role IN ('admin', 'analyst', 'viewer')),
+  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
   is_data_cleared INTEGER NOT NULL DEFAULT 0 CHECK (is_data_cleared IN (0, 1)),
   created_by TEXT,

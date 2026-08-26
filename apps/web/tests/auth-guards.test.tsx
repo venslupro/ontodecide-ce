@@ -97,14 +97,14 @@ describe('AuthGuard', () => {
 
 describe('AdminGuard', () => {
   it('redirects non-admin users to /401', async () => {
-    const analystSession = {
+    const userSession = {
       user_id: 'u_1',
       tenant_id: 'tenant_1',
       username: 'eve',
-      role: 'analyst',
+      role: 'user',
       exp: Math.floor(Date.now() / 1000) + 3600,
       iat: Math.floor(Date.now() / 1000),
-      jti: 'jti_analyst',
+      jti: 'jti_user',
     };
     localStorage.setItem(
       TOKENS_KEY,
@@ -117,7 +117,7 @@ describe('AdminGuard', () => {
           <div>admin content</div>
         </AdminGuard>
       ),
-      analystSession,
+      userSession,
     );
 
     expect(screen.getByTestId('unauthorized-route')).toBeInTheDocument();

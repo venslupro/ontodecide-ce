@@ -16,7 +16,7 @@ export default function UserMenu({ className, style }: {
   const logout = useAuthStore((s) => s.logout);
   const s = getSessionStub();
   const username = s.username ?? 'user';
-  const role = s.role ?? 'viewer';
+  const role = s.role ?? 'user';
   const initials = username
     .split(/[^A-Za-z0-9]+/)
     .map((x: string) => x.charAt(0).toUpperCase())

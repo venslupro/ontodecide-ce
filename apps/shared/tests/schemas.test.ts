@@ -83,7 +83,7 @@ describe('createUserSchema', () => {
   it('accepts a full valid body', () => {
     const result = createUserSchema.safeParse({
       username: 'charlie_42',
-      role: 'analyst',
+      role: 'user',
       email: 'charlie@example.com',
       dataRetentionDays: 60,
     });
@@ -136,7 +136,7 @@ describe('createUserSchema', () => {
 });
 
 describe('userRoleSchema', () => {
-  it.each(['admin', 'analyst', 'viewer'])('accepts "%s"', (role) => {
+  it.each(['admin', 'user'])('accepts "%s"', (role) => {
     expect(userRoleSchema.safeParse(role).success).toBe(true);
   });
 
@@ -319,7 +319,7 @@ describe('paginatedResponseSchema', () => {
       total: 3,
       page: 1,
       size: 10,
-      list: ['admin', 'analyst', 'viewer'],
+      list: ['admin', 'user'],
     });
     expect(result.success).toBe(true);
   });

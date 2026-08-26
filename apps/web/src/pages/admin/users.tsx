@@ -44,8 +44,7 @@ import { useToast } from '@/components/ui/Toast';
 const ROLE_OPTIONS = [
   { label: 'All roles', value: 'all' },
   { label: 'Admin', value: 'admin' },
-  { label: 'Analyst', value: 'analyst' },
-  { label: 'Viewer', value: 'viewer' },
+  { label: 'User', value: 'user' },
 ];
 const STATE_OPTIONS = [
   { label: 'All states', value: 'all' },
@@ -55,8 +54,7 @@ const STATE_OPTIONS = [
   { label: 'Data Cleared', value: 'data_cleared' },
 ];
 const CREATE_ROLE_OPTIONS = [
-  { label: 'Analyst', value: 'analyst' },
-  { label: 'Viewer', value: 'viewer' },
+  { label: 'User', value: 'user' },
   { label: 'Admin', value: 'admin' },
 ];
 const AVATAR_COLORS = [
@@ -289,7 +287,7 @@ export default function AdminUsersPage() {
   >({
     username: '',
     email: '',
-    role: 'analyst',
+    role: 'user',
     dataRetentionDays: undefined,
   });
   const [inviteFormError, setInviteFormError] = useState<string | null>(null);
@@ -299,7 +297,7 @@ export default function AdminUsersPage() {
     setInviteForm({
       username: '',
       email: '',
-      role: 'analyst',
+      role: 'user',
       dataRetentionDays: undefined,
     });
     setInviteFormError(null);
@@ -402,7 +400,9 @@ export default function AdminUsersPage() {
               options={STATE_OPTIONS}
             />
             <Badge tone="info">
-              {loading ? 'Loading…' : `${filteredRows.length} user${filteredRows.length === 1 ? '' : 's'}`}
+              {loading
+                ? 'Loading…'
+                : `${filteredRows.length} user${filteredRows.length === 1 ? '' : 's'}`}
             </Badge>
           </div>
           {selected.size > 0 && (
@@ -485,7 +485,11 @@ export default function AdminUsersPage() {
             <tbody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={7} align="center" style={{ padding: 40, color: 'var(--color-neutral-500)' }}>
+                  <TableCell
+                    colSpan={7}
+                    align="center"
+                    style={{ padding: 40, color: 'var(--color-neutral-500)' }}
+                  >
                     Loading users…
                   </TableCell>
                 </TableRow>
@@ -771,7 +775,11 @@ export default function AdminUsersPage() {
             </>
           ) : (
             <>
-              <Button variant="ghost" onClick={() => setInviteOpen(false)} disabled={inviteSubmitting}>
+              <Button
+                variant="ghost"
+                onClick={() => setInviteOpen(false)}
+                disabled={inviteSubmitting}
+              >
                 Cancel
               </Button>
               <Button
@@ -850,7 +858,9 @@ export default function AdminUsersPage() {
             </div>
             <div style={{ fontSize: 12, color: 'var(--color-neutral-600)' }}>
               {inviteResult.email_sent
-                ? '📧 An email with the login credentials and instructions has been sent to the user. You may also copy the credentials below as a backup.'
+                ? '📧 An email with the login credentials and instructions '
+                    + 'has been sent to the user. You may also copy the '
+                    + 'credentials below as a backup.'
                 : '🔗 Share the login page URL ('
                   + '#/login'
                   + '), username and temporary password with the user via a secure channel.'}
@@ -927,7 +937,10 @@ export default function AdminUsersPage() {
                     marginBottom: 6,
                   }}
                 >
-                  Data retention (days) <em style={{ fontWeight: 400, color: 'var(--color-neutral-500)' }}>optional</em>
+                  Data retention (days){' '}
+                  <em style={{ fontWeight: 400, color: 'var(--color-neutral-500)' }}>
+                    optional
+                  </em>
                 </label>
                 <Input
                   id="invite-retention"
@@ -939,8 +952,13 @@ export default function AdminUsersPage() {
                   value={inviteForm.dataRetentionDays ?? ''}
                   onChange={(e) => {
                     const raw = e.target.value;
-                    const n = raw === '' ? undefined : Math.max(1, Math.min(365, parseInt(raw, 10)));
-                    setInviteForm((f) => ({ ...f, dataRetentionDays: Number.isFinite(n as any) ? n : undefined }));
+                    const parsed = raw === ''
+                      ? undefined
+                      : Math.max(1, Math.min(365, parseInt(raw, 10)));
+                    setInviteForm((f) => ({
+                      ...f,
+                      dataRetentionDays: Number.isFinite(parsed as number) ? parsed : undefined,
+                    }));
                   }}
                 />
                 <div style={{ fontSize: 12, color: 'var(--color-neutral-500)', marginTop: 6 }}>

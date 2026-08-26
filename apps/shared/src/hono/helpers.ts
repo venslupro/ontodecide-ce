@@ -142,7 +142,7 @@ export function getAuthContext(c: Context): {
   return {
     userId: c.req.header(HEADERS.USER_ID) ?? 'anon',
     tenantId: c.req.header(HEADERS.TENANT_ID) ?? 'tenant_anon',
-    role: c.req.header(HEADERS.USER_ROLE) ?? 'viewer',
+    role: c.req.header(HEADERS.USER_ROLE) ?? 'user',
     traceId: c.req.header(HEADERS.TRACE_ID) ?? 'no-trace',
     ip: c.req.header('cf-connecting-ip') ?? null,
     userAgent: c.req.header('user-agent') ?? null,

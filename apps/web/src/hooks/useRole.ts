@@ -21,16 +21,14 @@ export interface UseRoleResult {
   hasRole: (role: UserRole) => boolean;
   /** True when the current user is an administrator. */
   isAdmin: boolean;
-  /** True when the current user is an analyst. */
-  isAnalyst: boolean;
-  /** True when the current user is a viewer. */
-  isViewer: boolean;
+  /** True when the current user is a business user. */
+  isUser: boolean;
 }
 
 /**
  * Read role-related predicates for the current session.
  *
- * @returns Predicates for admin, analyst and viewer roles plus a generic
+ * @returns Predicates for admin and user roles plus a generic
  *   {@link UseRoleResult.hasRole | hasRole} helper.
  */
 export function useRole(): UseRoleResult {
@@ -41,7 +39,6 @@ export function useRole(): UseRoleResult {
   return {
     hasRole,
     isAdmin: hasRole('admin'),
-    isAnalyst: hasRole('analyst'),
-    isViewer: hasRole('viewer'),
+    isUser: hasRole('user'),
   };
 }

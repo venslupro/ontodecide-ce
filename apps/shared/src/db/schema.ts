@@ -26,7 +26,7 @@ export const users = sqliteTable(
     username: text('username').notNull().unique(),
     password_hash: text('password_hash').notNull(),
     email: text('email'),
-    role: text('role').notNull().default('analyst'),
+    role: text('role').notNull().default('user'),
     is_active: integer('is_active').notNull().default(1),
     is_data_cleared: integer('is_data_cleared').notNull().default(0),
     must_change_password: integer('must_change_password').notNull().default(0),
@@ -42,7 +42,7 @@ export const users = sqliteTable(
     metadata: text('metadata'),
   },
   () => [
-    check('users_role_check', sql`role IN ('admin', 'analyst', 'viewer')`),
+    check('users_role_check', sql`role IN ('admin', 'user')`),
     check('users_is_active_check', sql`is_active IN (0, 1)`),
     check('users_is_data_cleared_check', sql`is_data_cleared IN (0, 1)`),
     check('users_must_change_password_check', sql`must_change_password IN (0, 1)`),
