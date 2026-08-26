@@ -28,7 +28,7 @@ export async function listUsersHandler(c: Context, service: UserManagementServic
 export async function createUserHandler(c: Context, service: UserManagementService) {
   const dto = await c.req.json();
   const ctx = auditContext(c);
-  const { user, temporaryPassword } = await service.createUser(dto, ctx);
+  const { user, temporaryPassword, emailSent } = await service.createUser(dto, ctx);
   return c.json(
     ok(
       {
@@ -36,6 +36,7 @@ export async function createUserHandler(c: Context, service: UserManagementServi
         tenant_id: user.tenantId,
         username: user.username,
         temporary_password: temporaryPassword,
+        email_sent: emailSent,
       },
       c.req.header(HEADERS.TRACE_ID),
     ),

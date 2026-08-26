@@ -849,9 +849,11 @@ export default function AdminUsersPage() {
               </div>
             </div>
             <div style={{ fontSize: 12, color: 'var(--color-neutral-600)' }}>
-              🔗 Share the login page URL (
-              <code style={{ fontSize: 12 }}>/#/login</code>
-              ), username and temporary password with the user via a secure channel.
+              {inviteResult.email_sent
+                ? '📧 An email with the login credentials and instructions has been sent to the user. You may also copy the credentials below as a backup.'
+                : '🔗 Share the login page URL ('
+                  + '#/login'
+                  + '), username and temporary password with the user via a secure channel.'}
             </div>
           </div>
         ) : (

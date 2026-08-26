@@ -27,8 +27,8 @@ export default function LoginPage() {
   const clear = useAuthStore((s) => s.clear);
   const login = useAuthStore((s) => s.login);
 
-  const [email, setEmail] = useState('admin@ontodecide.ai');
-  const [password, setPassword] = useState('ChangeMeNow!');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(true);
   const [showPwd, setShowPwd] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -86,16 +86,17 @@ export default function LoginPage() {
         />
         <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <img
-              src="https://www.google.com/images/branding/googleg/1x/googleg_standard_color_128dp.png"
-              alt="OntoDecide logo"
-              width={40}
-              height={40}
+            <div
               style={{
-                background: '#fff', borderRadius: 10, padding: 4,
+                width: 40, height: 40, borderRadius: 10,
+                background: 'rgba(255,255,255,0.2)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 20, fontWeight: 700, color: '#fff',
                 boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
               }}
-            />
+            >
+              OD
+            </div>
             <div>
               <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.01em' }}>OntoDecide</div>
               <div style={{ fontSize: 13, opacity: 0.9 }}>AI-Driven Intelligent Decision System</div>
@@ -237,13 +238,9 @@ export default function LoginPage() {
                   onChange={(e) => setRemember(e.target.checked)}
                   label="Remember me"
                 />
-                <a
-                  href="#/401"
-                  style={{ fontSize: 13, fontWeight: 500 }}
-                  onClick={(e) => { e.preventDefault(); }}
-                >
-                  Forgot password?
-                </a>
+                <span style={{ fontSize: 12, color: 'var(--color-neutral-400)' }}>
+                  Email-only login
+                </span>
               </div>
 
               <Button type="submit" size="lg" disabled={loading} style={{ marginTop: 4, width: '100%' }}>

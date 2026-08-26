@@ -3,14 +3,17 @@
  * role badge, change password link, logout button.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import RoleBadge from '@/components/shared/RoleBadge';
 import { getSessionStub } from '@/components/shared/guards';
+import { useAuthStore } from '@/store/auth';
 
 export default function UserMenu({ className, style }: {
   className?: string;
   style?: React.CSSProperties;
 }) {
+  const navigate = useNavigate();
+  const logout = useAuthStore((s) => s.logout);
   const s = getSessionStub();
   const username = s.username ?? 'user';
   const role = s.role ?? 'viewer';
@@ -113,9 +116,10 @@ export default function UserMenu({ className, style }: {
           <button
             type="button"
             role="menuitem"
-            onClick={() => {
+            onClick={async () => {
               setOpen(false);
-              if (typeof window !== 'undefined') window.location.hash = '#/login';
+              await logout();
+              navigate('/login', { replace: true });
             }}
             style={{
               display: 'block', width: '100%', textAlign: 'left',
