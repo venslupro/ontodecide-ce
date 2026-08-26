@@ -77,7 +77,8 @@ export class D1TenantCleanupRepository implements ITenantCleanupRepository {
 
   public async listDueForCleanup(inactiveDays?: number): Promise<TenantDueRow[]> {
     // Expiry leg: standard retention-exceeded condition.
-    const expiryLeg = sql`${users.expires_at} IS NOT NULL AND datetime(${users.expires_at}) <= datetime('now')`;
+    const expiryLeg = sql`${users.expires_at} IS NOT NULL
+      AND datetime(${users.expires_at}) <= datetime('now')`;
 
     // When inactiveDays is supplied, combine the two legs with OR.
     // Otherwise (for backwards compatibility) only the expiry leg runs.
@@ -109,15 +110,19 @@ export class D1TenantCleanupRepository implements ITenantCleanupRepository {
       .where(whereClause)
       .all();
 
-    return (rows as unknown as Array<TenantRow & { due_expired: 0 | 1; due_inactive: 0 | 1 }>).map(
-      (row) => {
-        const { due_expired, due_inactive, ...tenant } = row;
-        return {
-          ...tenant,
-          due_reason: classifyDueReason(due_expired === 1, due_inactive === 1),
-        };
-      },
-    );
+    return (
+      rows as unknown as Array<TenantRow & { due_expired: 0 | 1; due_inactive: 0 | 1 }>
+    ).map((row) => {
+      const {
+        due_expired: dueExpired,
+        due_inactive: dueInactive,
+        ...tenant
+      } = row;
+      return {
+        ...tenant,
+        due_reason: classifyDueReason(dueExpired === 1, dueInactive === 1),
+      };
+    });
   }
 
   public async findById(id: string): Promise<TenantRow | null> {
