@@ -3,7 +3,7 @@
  */
 
 /** Role assigned to a user; gates what admin endpoints they can call. */
-export type UserRole = 'admin' | 'analyst' | 'viewer';
+export type UserRole = 'admin' | 'user';
 
 /** Lifecycle state derived from `is_active` / `is_data_cleared` flags. */
 export type UserState = 'pending' | 'active' | 'disabled' | 'data_cleared';

@@ -78,7 +78,7 @@ export interface CleanupTaskRecord {
 export interface TenantRow {
   id: string;
   tenant_id: string;
-  role: 'admin' | 'analyst' | 'viewer';
+  role: 'admin' | 'user';
   is_active: 0 | 1;
   is_data_cleared: 0 | 1;
   last_cleanup_at: string | null;

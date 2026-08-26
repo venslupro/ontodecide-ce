@@ -15,7 +15,7 @@ import type { UserDbRow, UserRole } from '../types/env.js';
 
 export type UserState = 'pending' | 'active' | 'disabled' | 'data_cleared';
 
-/** Public projection of a user (no password hash). */
+/** Public projection of a user (no password hash) — camelCase for internal use. */
 export interface UserSnapshot {
   id: string;
   tenantId: string;
@@ -32,6 +32,24 @@ export interface UserSnapshot {
   lastCleanupAt: string | null;
   dataRetentionDays: number;
   dataSizeEstimate: number;
+}
+
+/** API-facing user record — snake_case matching userPublicSchema. */
+export interface UserPublicRecord {
+  id: string;
+  tenant_id: string;
+  username: string;
+  email: string | null;
+  role: UserRole;
+  is_active: boolean;
+  is_data_cleared: boolean;
+  must_change_password: boolean;
+  expires_at: string | null;
+  created_at: string;
+  last_login_at: string | null;
+  last_cleanup_at: string | null;
+  data_retention_days: number;
+  data_size_estimate: number;
 }
 
 /**
@@ -114,7 +132,7 @@ export class User {
     });
   }
 
-  /** Public projection safe to return to clients. */
+  /** Public projection safe to return to clients (camelCase, internal). */
   public snapshot(): UserSnapshot {
     return {
       id: this.id,
@@ -132,6 +150,26 @@ export class User {
       lastCleanupAt: this.lastCleanupAt,
       dataRetentionDays: this.dataRetentionDays,
       dataSizeEstimate: this.dataSizeEstimate,
+    };
+  }
+
+  /** API-facing record in snake_case matching userPublicSchema. */
+  public toPublic(): UserPublicRecord {
+    return {
+      id: this.id,
+      tenant_id: this.tenantId,
+      username: this.username,
+      email: this.email,
+      role: this.role,
+      is_active: this.active,
+      is_data_cleared: this.dataCleared,
+      must_change_password: this.mustChangePassword,
+      expires_at: this.expiresAt,
+      created_at: this.createdAt,
+      last_login_at: this.lastLoginAt,
+      last_cleanup_at: this.lastCleanupAt,
+      data_retention_days: this.dataRetentionDays,
+      data_size_estimate: this.dataSizeEstimate,
     };
   }
 

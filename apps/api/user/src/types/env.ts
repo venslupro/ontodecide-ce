@@ -20,7 +20,7 @@ export interface UserEnv extends BaseEnv, JwtEnv {
 }
 
 /** Role assigned to a user; determines API permissions. */
-export type UserRole = 'admin' | 'analyst' | 'viewer';
+export type UserRole = 'admin' | 'user';
 
 /** D1 row shape returned by SELECT * FROM users. */
 export interface UserDbRow {

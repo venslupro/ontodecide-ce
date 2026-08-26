@@ -15,13 +15,30 @@ import { ERROR_CODES, HEADERS, fail, ok } from '@ontodecide/shared';
 import type { UserManagementService } from '../service/user.service.js';
 import type { AuditContext } from '../service/user.service.js';
 
-/** GET /admin/users?page=1&size=20&role=analyst */
+/** GET /admin/users?page=1&size=20&role=user */
 export async function listUsersHandler(c: Context, service: UserManagementService) {
   const page = parseInt(c.req.query('page') ?? '1', 10);
   const size = parseInt(c.req.query('size') ?? '50', 10);
   const role = c.req.query('role') ?? undefined;
   const { total, items } = await service.listUsers({ page, size, role });
-  return c.json(ok({ total, page, size, list: items }, c.req.header(HEADERS.TRACE_ID)), 200);
+  // items are UserSnapshot (camelCase) — map to UserPublicRecord (snake_case) for the API.
+  const list = items.map((item) => ({
+    id: item.id,
+    tenant_id: item.tenantId,
+    username: item.username,
+    email: item.email,
+    role: item.role,
+    is_active: item.isActive,
+    is_data_cleared: item.isDataCleared,
+    must_change_password: item.mustChangePassword,
+    expires_at: item.expiresAt,
+    created_at: item.createdAt,
+    last_login_at: item.lastLoginAt,
+    last_cleanup_at: item.lastCleanupAt,
+    data_retention_days: item.dataRetentionDays,
+    data_size_estimate: item.dataSizeEstimate,
+  }));
+  return c.json(ok({ total, page, size, list }, c.req.header(HEADERS.TRACE_ID)), 200);
 }
 
 /** POST /admin/users */
@@ -51,13 +68,19 @@ export async function updateStatusHandler(c: Context, id: string, service: UserM
     return c.json(fail(ERROR_CODES.VALIDATION_FAILED, 'is_active is required.'), 400);
   }
   const user = await service.setStatus(id, body.is_active, auditContext(c));
-  return c.json(ok(user.snapshot(), c.req.header(HEADERS.TRACE_ID)), 200);
+  return c.json(ok(user.toPublic(), c.req.header(HEADERS.TRACE_ID)), 200);
 }
 
 /** POST /admin/users/:id/reset */
 export async function resetPasswordHandler(c: Context, id: string, service: UserManagementService) {
   const temporaryPassword = await service.resetPassword(id, auditContext(c));
-  return c.json(ok({ temporary_password: temporaryPassword }, c.req.header(HEADERS.TRACE_ID)), 200);
+  const user = await service.getUser(id);
+  return c.json(ok({
+    id: user.id,
+    tenant_id: user.tenantId,
+    username: user.username,
+    temporary_password: temporaryPassword,
+  }, c.req.header(HEADERS.TRACE_ID)), 200);
 }
 
 /** DELETE /admin/users/:id */
