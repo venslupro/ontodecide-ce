@@ -2,6 +2,7 @@
  * Per-tenant cleanup orchestrator.
  *
  * Drives the purge pipeline described in the design doc §4.6:
+ *   0. Audit log: record that cleanup is starting (reason + mode).
  *   1. Archive user metadata to B2 tenant-archive bucket (backup).
  *      Includes: user record, audit logs, decisions, config snapshots.
  *   2. Neo4j:   `MATCH (n {tenant_id: $tid}) DETACH DELETE n` on the
@@ -25,17 +26,20 @@ import {
   ERROR_CODES,
   nowIso,
   throwError,
+  uuid,
   type B2Client,
   createArchiveB2Client,
   createIngestionB2Client,
 } from '@ontodecide/shared';
 import type { CleanupEnv } from '../types/env.js';
+import type { CleanupReason } from '../types/env.js';
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { auditLogs, decisions, refreshTokens, users, systemConfig } from '@ontodecide/shared/db';
 
 export interface CleanupOutcome {
   tenantId: string;
+  reason: CleanupReason;
   archived: boolean;
   neo4jDeleted: number;
   d1Deleted: number;
@@ -51,10 +55,16 @@ export async function cleanupTenant(
   mode: 'soft' | 'hard',
   env: CleanupEnv,
   deleteAccount: boolean,
+  reason: CleanupReason = 'manual',
 ): Promise<CleanupOutcome> {
   const started = Date.now();
   const archiveClient = createArchiveB2Client(env);
   const ingestionClient = createIngestionB2Client(env);
+
+  // Step 0 — Audit log: record the cleanup action with its reason/mode.
+  // Written BEFORE archiving so the record itself is captured in the
+  // compliance snapshot, then deleted with the rest of tenant data.
+  await writeCleanupAuditLog(tenantId, mode, reason, env);
 
   // Step 1 — archive user metadata to the B2 tenant-archive bucket.
   // Always archive (both soft and hard modes) so the user's metadata
@@ -96,6 +106,7 @@ export async function cleanupTenant(
 
   return {
     tenantId,
+    reason,
     archived,
     neo4jDeleted,
     d1Deleted,
@@ -104,6 +115,34 @@ export async function cleanupTenant(
     accountDeleted,
     durationMs: Date.now() - started,
   };
+}
+
+/**
+ * Insert a `cleanup_data` audit entry for this tenant. Written before
+ * archiving so the event is preserved in the compliance backup.
+ */
+async function writeCleanupAuditLog(
+  tenantId: string,
+  mode: 'soft' | 'hard',
+  reason: CleanupReason,
+  env: CleanupEnv,
+): Promise<void> {
+  const orm = drizzle(env.DB);
+  const details = JSON.stringify({ mode, reason, timestamp: nowIso() });
+  await orm
+    .insert(auditLogs)
+    .values({
+      id: uuid(),
+      tenant_id: tenantId,
+      operator_id: 'system:cleanup',
+      action: 'cleanup_data',
+      target_user_id: tenantId,
+      details,
+      ip: null,
+      user_agent: 'cleanup-service/cron',
+      created_at: nowIso(),
+    })
+    .run();
 }
 
 /**

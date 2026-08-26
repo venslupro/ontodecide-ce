@@ -15,7 +15,6 @@
 import type { ApiError, ApiResponse } from '@ontodecide/shared';
 
 import * as authResource from './authResource';
-import * as applicationsResource from './applicationsResource';
 import * as userResource from './userResource';
 import * as adminUsersResource from './adminUsersResource';
 import * as adminAuditResource from './adminAuditResource';
@@ -38,7 +37,6 @@ export { getApiBase, setSessionAccessor } from './client';
 
 // Resource module re-exports (barrel).
 export * as authResource from './authResource';
-export * as applicationsResource from './applicationsResource';
 export * as userResource from './userResource';
 export * as adminUsersResource from './adminUsersResource';
 export * as adminAuditResource from './adminAuditResource';
@@ -55,7 +53,7 @@ export * as aiRecommendResource from './aiRecommendResource';
 export * as aiAgentResource from './aiAgentResource';
 export * as aiHistoryResource from './aiHistoryResource';
 
-/** Stable route prefix constants (registry has exactly 16 entries). */
+/** Stable route prefix constants (registry has exactly 15 entries). */
 export const PREFIX_AUTH_LOGIN = '/api/auth/login';
 export const PREFIX_AUTH_REFRESH = '/api/auth/refresh';
 export const PREFIX_ADMIN_CLEANUP_STATUS =
@@ -65,7 +63,6 @@ export const PREFIX_ADMIN_USERS = '/api/admin/users';
 export const PREFIX_ADMIN_AUDIT = '/api/admin/audit';
 export const PREFIX_ADMIN_CONFIG = '/api/admin/config';
 export const PREFIX_AUTH = '/api/auth/';
-export const PREFIX_APPLICATIONS = '/api/applications';
 export const PREFIX_USER = '/api/user';
 export const PREFIX_GRAPH = '/api/graph';
 export const PREFIX_ONTOLOGY = '/api/ontology';
@@ -90,7 +87,7 @@ export interface ResourceEntry {
 }
 
 /**
- * Registry type: keys are the 16 stable route-prefix constants; values are
+ * Registry type: keys are the 15 stable route-prefix constants; values are
  * the registered {@link ResourceEntry} descriptors.
  */
 export type ResourceRegistry = Readonly<
@@ -103,7 +100,6 @@ export type ResourceRegistry = Readonly<
     | typeof PREFIX_ADMIN_AUDIT
     | typeof PREFIX_ADMIN_CONFIG
     | typeof PREFIX_AUTH
-    | typeof PREFIX_APPLICATIONS
     | typeof PREFIX_USER
     | typeof PREFIX_GRAPH
     | typeof PREFIX_ONTOLOGY
@@ -116,7 +112,7 @@ export type ResourceRegistry = Readonly<
 >;
 
 /**
- * Concrete registry singleton. Exactly 16 entries — one per client-owned
+ * Concrete registry singleton. Exactly 15 entries — one per client-owned
  * route prefix. Keys are ordered specific → general so
  * {@code Object.keys(RESOURCE_REGISTRY)} yields a sensible longest-match
  * order that mirrors the Gateway's {@code ROUTES} array.
@@ -168,11 +164,6 @@ export const RESOURCE_REGISTRY: ResourceRegistry = {
     module: authResource,
     functions: ['login', 'refresh', 'logout', 'changePassword'] as const,
   },
-  [PREFIX_APPLICATIONS]: {
-    name: 'applications',
-    module: applicationsResource,
-    functions: ['submit'] as const,
-  },
   [PREFIX_USER]: {
     name: 'user',
     module: userResource,
@@ -223,7 +214,7 @@ export const RESOURCE_REGISTRY: ResourceRegistry = {
 } as const;
 
 /**
- * Flat list of all 16 registered prefix strings, ordered longest-match
+ * Flat list of all 15 registered prefix strings, ordered longest-match
  * first (most-specific → most-general). Tests assert this list's length.
  */
 export const PREFIXES_WITH_RESOURCE: readonly string[] = [
@@ -235,7 +226,6 @@ export const PREFIXES_WITH_RESOURCE: readonly string[] = [
   PREFIX_ADMIN_AUDIT,
   PREFIX_ADMIN_CONFIG,
   PREFIX_AUTH,
-  PREFIX_APPLICATIONS,
   PREFIX_USER,
   PREFIX_GRAPH,
   PREFIX_ONTOLOGY,

@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS system_config (
 
 INSERT OR IGNORE INTO system_config (key, value, description) VALUES
   ('global_cleanup_days', '30', 'Global default data-retention window in days.'),
-  ('max_users', '50', 'Maximum number of users allowed on this plan.'),
+  ('max_users', '20', 'Maximum number of users allowed on this plan.'),
   ('cleanup_enabled', 'true', 'Whether the daily cleanup cron is allowed to run.');
 
 -- Refresh-token registry: tracks outstanding refresh tokens so we can revoke.

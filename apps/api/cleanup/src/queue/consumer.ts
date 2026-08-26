@@ -34,7 +34,13 @@ export async function handleCleanupBatch(
             startedAt: nowIso(),
           });
         }
-        await cleanupTenant(body.tenantId, body.mode, env, body.deleteAccount ?? false);
+        await cleanupTenant(
+          body.tenantId,
+          body.mode,
+          env,
+          body.deleteAccount ?? false,
+          body.reason,
+        );
         await updateTaskProgress(env, body.taskId, body.tenantId, 'succeeded');
         message.ack();
       } catch (err) {

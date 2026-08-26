@@ -2,20 +2,23 @@
  * Cron trigger: scheduled handler invoked at 03:00 UTC daily (see
  * `wrangler.toml` `[triggers]`).
  *
- * Steps (per design doc §4.6.1):
- *   1. List tenants due for cleanup (retention exceeded).
- *   2. Create a single task record tracking the whole batch.
- *   3. Enqueue one {@link CleanupMessage} per tenant (batch size 5 per
- *      message to stay under the Worker 10ms CPU limit).
+ * Steps (per design doc §4.6.1 + inactivity extension):
+ *   1. Read `cleanup_enabled` + `inactive_days_threshold` from system_config.
+ *   2. List tenants due for cleanup (retention exceeded OR N days inactive).
+ *   3. Split into HARD (expired / both) and SOFT (inactive) groups.
+ *   4. Create one task record per mode-group tracking the batch.
+ *   5. Enqueue one {@link CleanupMessage} per tenant with the correct
+ *      mode, deleteAccount flag, and reason (for audit logging).
  */
 import { nowIso, uuid } from '@ontodecide/shared';
-import type { CleanupEnv, CleanupTaskRecord } from '../types/env.js';
+import type { CleanupEnv, CleanupReason, CleanupTaskRecord, TenantDueRow } from '../types/env.js';
 import { D1TenantCleanupRepository } from '../repository/tenant.repository.js';
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { systemConfig } from '@ontodecide/shared/db';
 
 const TASK_KEY_PREFIX = 'cleanup:task:';
+const DEFAULT_INACTIVE_DAYS = 30;
 
 /** Whether automatic cleanup is enabled (system_config flag). */
 async function isCleanupEnabled(env: CleanupEnv): Promise<boolean> {
@@ -28,47 +31,91 @@ async function isCleanupEnabled(env: CleanupEnv): Promise<boolean> {
   return (row?.value ?? 'true').toLowerCase() === 'true';
 }
 
-/** Build and enqueue the daily cleanup task. */
+/** Inactivity threshold in days. Defaults to 30 if unset or invalid. */
+async function getInactiveDaysThreshold(env: CleanupEnv): Promise<number> {
+  const orm = drizzle(env.DB);
+  const row = await orm
+    .select({ value: systemConfig.value })
+    .from(systemConfig)
+    .where(eq(systemConfig.key, 'inactive_days_threshold'))
+    .get();
+  const parsed = Number.parseInt(row?.value ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_INACTIVE_DAYS;
+  return parsed;
+}
+
+/** Resolve per-tenant mode + deleteAccount + reason flags from due_reason. */
+function resolveCleanupFlags(
+  row: TenantDueRow,
+): { mode: 'soft' | 'hard'; deleteAccount: boolean; reason: CleanupReason } {
+  switch (row.due_reason) {
+    case 'inactive':
+      // Account is still valid — just free up working space. Keep the
+      // archive snapshot (soft) and retain the user row.
+      return { mode: 'soft', deleteAccount: false, reason: 'inactive' };
+    case 'expired':
+    case 'both':
+    default:
+      // Retention expired or both conditions hit → hard cleanup with
+      // account deletion. Metadata is archived to B2 for compliance
+      // before the account row is removed.
+      return { mode: 'hard', deleteAccount: true, reason: row.due_reason };
+  }
+}
+
+/** Build and enqueue the daily cleanup task(s). */
 export async function runDailyCleanup(env: CleanupEnv): Promise<void> {
   if (!(await isCleanupEnabled(env))) {
     return;
   }
   const repo = new D1TenantCleanupRepository(env.DB);
-  const due = await repo.listDueForCleanup();
+  const inactiveDays = await getInactiveDaysThreshold(env);
+  const due = await repo.listDueForCleanup(inactiveDays);
   if (due.length === 0) {
     return;
   }
-  const taskId = uuid();
-  const progress = due.map((row) => ({
-    tenantId: row.tenant_id,
-    state: 'pending' as const,
-  }));
-  const record: CleanupTaskRecord = {
-    taskId,
-    status: 'queued',
-    // Retention-expired users get HARD mode + account deletion.
-    // Their metadata is archived to the B2 tenant-archive bucket
-    // BEFORE the account is deleted (compliance backup).
-    mode: 'hard',
-    triggeredBy: 'cron',
-    tenantIds: due.map((row) => row.tenant_id),
-    progress,
-    progressPercent: 0,
-    startedAt: nowIso(),
-  };
-  await writeTask(env, record);
 
-  // Enqueue one message per tenant; the consumer processes them in
-  // batches of `max_batch_size` (set in wrangler.toml).
-  for (const tenant of due) {
-    await env.CLEANUP_QUEUE.send({
+  // Group by resolved mode so each CleanupTaskRecord has a single mode
+  // (CleanupTaskRecord.mode is a single value, not an array).
+  const byMode = new Map<'soft' | 'hard', Array<TenantDueRow & { reason: CleanupReason; deleteAccount: boolean }>>();
+  for (const row of due) {
+    const flags = resolveCleanupFlags(row);
+    const list = byMode.get(flags.mode) ?? [];
+    list.push({ ...row, reason: flags.reason, deleteAccount: flags.deleteAccount });
+    byMode.set(flags.mode, list);
+  }
+
+  // Enqueue one task per mode-group.
+  for (const [mode, rows] of byMode) {
+    const taskId = uuid();
+    const progress = rows.map((row) => ({
+      tenantId: row.tenant_id,
+      state: 'pending' as const,
+    }));
+    const record: CleanupTaskRecord = {
       taskId,
-      tenantId: tenant.tenant_id,
-      mode: 'hard',
+      status: 'queued',
+      mode,
       triggeredBy: 'cron',
-      // User retention expired → delete account + archive metadata.
-      deleteAccount: true,
-    });
+      tenantIds: rows.map((row) => row.tenant_id),
+      progress,
+      progressPercent: 0,
+      startedAt: nowIso(),
+    };
+    await writeTask(env, record);
+
+    // One message per tenant; the consumer processes them in batches of
+    // `max_batch_size` (set in wrangler.toml).
+    for (const row of rows) {
+      await env.CLEANUP_QUEUE.send({
+        taskId,
+        tenantId: row.tenant_id,
+        mode: row.deleteAccount ? 'hard' : mode,
+        triggeredBy: 'cron',
+        reason: row.reason,
+        deleteAccount: row.deleteAccount,
+      });
+    }
   }
 }
 
@@ -104,6 +151,7 @@ export async function triggerManualCleanup(
       tenantId: tenant.tenant_id,
       mode,
       triggeredBy: 'admin',
+      reason: 'manual',
       deleteAccount: mode === 'hard' && deleteAccount,
     });
   }

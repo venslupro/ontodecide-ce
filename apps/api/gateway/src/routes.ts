@@ -16,8 +16,6 @@ import {
   refreshSchema,
   authTokensSchema,
   authTokensWithActivationSchema,
-  accountApplicationSchema,
-  applicationResultSchema,
   changePasswordSchema,
   userPublicSchema,
   createUserSchema,
@@ -63,8 +61,6 @@ export interface RouteTarget {
 export const ROUTES: readonly RouteTarget[] = [
   // Public auth routes — no JWT required, but they are rate-limited.
   { prefix: '/api/auth/', binding: (env) => env.USER_SERVICE },
-  // Public account application — no JWT required, rate-limited.
-  { prefix: '/api/applications', binding: (env) => env.USER_SERVICE },
   // Admin operations: cleanup routes belong to Cleanup service.
   { prefix: '/api/admin/cleanup', binding: (env) => env.CLEANUP_SERVICE },
   // User admin routes belong to User service.
@@ -88,7 +84,6 @@ export const ROUTES: readonly RouteTarget[] = [
 export const PUBLIC_PREFIXES: readonly string[] = [
   '/api/auth/login',
   '/api/auth/refresh',
-  '/api/applications',
 ];
 
 /** Routes that require the `admin` role. */
@@ -191,24 +186,6 @@ export function registerOpenApiSpec(registry: OpenAPIHono['openAPIRegistry']): v
       400: jsonError('Validation failed.'),
       401: jsonError('Current password incorrect.'),
       403: jsonError('Missing identity headers.'),
-    },
-  });
-
-  // --- Public account application -----------------------------------------
-  registry.registerPath({
-    method: 'post',
-    path: '/api/applications',
-    tags: ['Auth'],
-    security: [],
-    summary: 'Submit an account application',
-    request: {
-      body: { content: { 'application/json': { schema: accountApplicationSchema } } },
-    },
-    responses: {
-      201: jsonOk(applicationResultSchema, 'Account created.'),
-      400: jsonError('Validation failed.'),
-      409: jsonError('Email already registered or max users reached.'),
-      429: jsonError('Rate limit exceeded.'),
     },
   });
 

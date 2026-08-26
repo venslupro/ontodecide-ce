@@ -372,31 +372,6 @@ export const createUserSchema = z.object({
   }),
 });
 
-/** DTO for POST /api/applications (public account application). */
-export const accountApplicationSchema = z.object({
-  email: z.email().openapi({
-    description: 'Applicant email — used as login username and delivery address for credentials.',
-  }),
-  usageDays: z
-    .number()
-    .int()
-    .min(1)
-    .max(90)
-    .openapi({ description: 'Requested usage duration in days (1..90).' }),
-});
-
-/** Response for POST /api/applications. */
-export const applicationResultSchema = z.object({
-  id: z.string().openapi({ description: 'Created user id.' }),
-  username: z.string().openapi({ description: 'Login username (the email address).' }),
-  expires_at: z.string().openapi({ description: 'ISO-8601 expiration timestamp.' }),
-  email_sent: z.boolean().openapi({ description: 'Whether the credential email was delivered.' }),
-  temporary_password: z
-    .string()
-    .optional()
-    .openapi({ description: 'Temporary password (only present when email could not be sent).' }),
-});
-
 /** DTO for POST /api/auth/change-password (first-login activation). */
 export const changePasswordSchema = z.object({
   currentPassword: z.string().openapi({ description: 'Current (temporary) password.' }),
