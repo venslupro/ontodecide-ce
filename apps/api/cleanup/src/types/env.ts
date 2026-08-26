@@ -34,12 +34,18 @@ export interface CleanupEnv extends BaseEnv {
   NEO4J_DATABASE: string;
 }
 
+/** Why a cleanup was scheduled — used in audit logging and task
+ *  classification. `manual` means an admin triggered it directly. */
+export type CleanupReason = 'expired' | 'inactive' | 'both' | 'manual';
+
 /** Message published to the cleanup queue. */
 export interface CleanupMessage {
   taskId: string;
   tenantId: string;
   mode: 'soft' | 'hard';
   triggeredBy: 'cron' | 'admin';
+  /** Why this specific tenant is being cleaned up. */
+  reason: CleanupReason;
   /**
    * When true (hard mode triggered by user-expiry / admin deletion),
    * the consumer also deletes the user account from D1 after archiving
@@ -80,3 +86,9 @@ export interface TenantRow {
   data_size_estimate: number;
   expires_at: string | null;
 }
+
+/** Row from listDueForCleanup including the classification flag used by
+ *  the cron trigger to choose soft (inactive) vs hard (expired) mode. */
+export type TenantDueRow = TenantRow & {
+  due_reason: 'expired' | 'inactive' | 'both';
+};
