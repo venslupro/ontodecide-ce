@@ -8,7 +8,6 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
-import Progress from '@/components/ui/Progress';
 import Alert from '@/components/ui/Alert';
 
 /** Computes a 4-level score for a password (0..4). */
@@ -25,6 +24,51 @@ function scorePassword(pwd: string): { score: number; label: string; tone: 'dang
     case 3: return { score: 3, label: 'Good', tone: 'primary' };
     default: return { score: 4, label: 'Strong', tone: 'success' };
   }
+}
+
+/** Color palette shared by {@link StrengthSegments} and labels. */
+const SEGMENT_COLORS: Record<string, string> = {
+  danger: 'var(--color-danger)',
+  warning: 'var(--color-warning)',
+  primary: 'var(--color-primary)',
+  success: 'var(--color-success)',
+  inactive: 'var(--color-neutral-200)',
+};
+
+/** Per-segment tone lookup by 1-based position and current score. */
+function segmentTone(index: number, score: number): string {
+  if (score < index) return SEGMENT_COLORS.inactive;
+  if (index === 1) return SEGMENT_COLORS.danger;
+  if (index === 2) return SEGMENT_COLORS.warning;
+  if (index === 3) return SEGMENT_COLORS.primary;
+  return SEGMENT_COLORS.success;
+}
+
+/** Four-segment password-strength indicator (Task 3 / FR-2). */
+function StrengthSegments({ score }: { score: number }) {
+  return (
+    <div
+      role="progressbar"
+      aria-valuenow={score}
+      aria-valuemin={0}
+      aria-valuemax={4}
+      style={{ display: 'flex', gap: 6, width: '100%' }}
+    >
+      {[1, 2, 3, 4].map((i) => (
+        <div
+          key={i}
+          aria-hidden="true"
+          style={{
+            flex: 1,
+            height: 8,
+            borderRadius: 'var(--radius-md)',
+            background: segmentTone(i, score),
+            transition: 'background-color .2s ease',
+          }}
+        />
+      ))}
+    </div>
+  );
 }
 
 const Spinner = () => (
@@ -52,7 +96,7 @@ export default function ChangePasswordPage() {
   const mismatch = confirm.length > 0 && confirm !== nextPwd;
   const canSubmit = !loading && current.length > 0 && strength.score >= 2 && confirm === nextPwd;
 
-  /** Submits the password rotation form. */
+  /** Submits the password rotation form and navigates straight to dashboard. */
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
@@ -60,7 +104,10 @@ export default function ChangePasswordPage() {
     try {
       await changePassword(current, nextPwd);
       setSuccess(true);
-      setTimeout(() => navigate('/dashboard', { replace: true }), 1800);
+      // No artificial delay — the auth store has already cleared the
+      // pwd_change_required flag (see applyTokens) so AuthGuard will not
+      // bounce us back to /auth/change-password.
+      navigate('/dashboard', { replace: true });
     } catch {
       // errorMessage surfaced by store
     }
@@ -157,13 +204,17 @@ export default function ChangePasswordPage() {
                 invalid={nextPwd.length > 0 && strength.score < 2}
               />
               <div style={{ marginTop: 10 }}>
-                <Progress value={(strength.score / 4) * 100} tone={strength.tone} />
+                <StrengthSegments score={strength.score} />
                 <div style={{
                   display: 'flex', justifyContent: 'space-between',
                   marginTop: 6, fontSize: 12, color: 'var(--color-neutral-500)',
                 }}>
                   <span>Strength</span>
-                  <span style={{ fontWeight: 600, color: strengthText(strength.tone) }}>{strength.label}</span>
+                  <span
+                    style={{ fontWeight: 600, color: strengthText(strength.tone) }}
+                  >
+                    {strength.label}
+                  </span>
                 </div>
               </div>
             </div>

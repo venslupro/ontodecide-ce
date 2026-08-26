@@ -83,23 +83,29 @@ export class UserManagementService {
     if (!this.env?.EMAIL_API_KEY || !this.env?.EMAIL_FROM) {
       return false;
     }
-    const loginUrl = 'https://ontodecide.ai/#/login';
+    const loginUrl =
+      (this.env?.APP_ORIGIN ?? 'https://ontodecide.ai') + '/#/login';
+    const cell = 'padding: 8px 12px; font-weight: 600;';
+    const label = 'padding: 8px 12px; color: #666; font-size: 13px;';
     const html = [
-      '<div style="font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">',
+      '<div style="font-family: -apple-system, BlinkMacSystemFont, ' +
+        '"Segoe UI", sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">',
       '<h2 style="color: #1a1a2e;">Welcome to OntoDecide</h2>',
       '<p>Your account has been created. Please use the credentials below to sign in:</p>',
       '<table style="width: 100%; border-collapse: collapse; margin: 16px 0;">',
-      '<tr><td style="padding: 8px 12px; color: #666; font-size: 13px;">Login URL</td>',
-      `<td style="padding: 8px 12px; font-weight: 600;"><a href="${loginUrl}">${loginUrl}</a></td></tr>`,
-      '<tr><td style="padding: 8px 12px; color: #666; font-size: 13px;">Username</td>',
-      `<td style="padding: 8px 12px; font-weight: 600;">${username}</td></tr>`,
-      '<tr><td style="padding: 8px 12px; color: #666; font-size: 13px;">Password</td>',
-      `<td style="padding: 8px 12px; font-weight: 600; font-family: monospace;">${temporaryPassword}</td></tr>`,
+      `<tr><td style="${label}">Login URL</td>`,
+      `<td style="${cell}"><a href="${loginUrl}">${loginUrl}</a></td></tr>`,
+      `<tr><td style="${label}">Username</td>`,
+      `<td style="${cell}">${username}</td></tr>`,
+      `<tr><td style="${label}">Password</td>`,
+      `<td style="${cell} font-family: monospace;">${temporaryPassword}</td></tr>`,
       '</table>',
-      '<div style="padding: 12px 16px; background: #FFF8E6; border: 1px solid #F3E2A3; border-radius: 8px; margin: 16px 0;">',
+      '<div style="padding: 12px 16px; background: #FFF8E6; ' +
+        'border: 1px solid #F3E2A3; border-radius: 8px; margin: 16px 0;">',
       '<strong>Important:</strong> You will be required to change your password on first login.',
       '</div>',
-      '<p style="color: #999; font-size: 12px; margin-top: 24px;">If you did not expect this email, please ignore it.</p>',
+      '<p style="color: #999; font-size: 12px; margin-top: 24px;">' +
+        'If you did not expect this email, please ignore it.</p>',
       '</div>',
     ].join('');
 
@@ -262,9 +268,28 @@ export class UserManagementService {
     return user;
   }
 
+  /**
+   * Enforce the "admin cannot touch other admins" invariant (FR-6).
+   *
+   * @throws {@link ERROR_CODES.AUTH_FORBIDDEN} when a non-self admin target
+   *         is being modified.
+   */
+  private enforceAdminBoundary(target: User, operatorId: string): void {
+    if (target.role === 'admin' && operatorId !== target.id) {
+      throwError(
+        ERROR_CODES.AUTH_FORBIDDEN,
+        'Admins cannot operate on other administrator accounts.',
+      );
+    }
+  }
+
   /** Reset a user's password; returns the new plaintext once. */
-  public async resetPassword(userId: string, ctx: AuditContext): Promise<string> {
+  public async resetPassword(
+    userId: string,
+    ctx: AuditContext,
+  ): Promise<string> {
     const user = await this.requireUser(userId);
+    this.enforceAdminBoundary(user, ctx.operatorId);
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(temporaryPassword);
     user.setPasswordHash(passwordHash);
@@ -280,8 +305,22 @@ export class UserManagementService {
   }
 
   /** Enable or disable a user. */
-  public async setStatus(userId: string, isActive: boolean, ctx: AuditContext): Promise<User> {
+  public async setStatus(
+    userId: string,
+    isActive: boolean,
+    ctx: AuditContext,
+  ): Promise<User> {
     const user = await this.requireUser(userId);
+    // Domain invariant: the bootstrap admin (username === 'admin') must
+    // never be disabled. Check before permission boundaries so the error
+    // message is stable regardless of the caller's identity.
+    if (user.username === 'admin' && !isActive) {
+      throwError(
+        ERROR_CODES.VALIDATION_FAILED,
+        'Cannot disable the bootstrap admin.',
+      );
+    }
+    this.enforceAdminBoundary(user, ctx.operatorId);
     if (isActive) {
       user.enable();
     } else {
@@ -297,27 +336,35 @@ export class UserManagementService {
     return user;
   }
 
-  /** Soft-delete a user. */
-  public async deleteUser(userId: string, ctx: AuditContext): Promise<void> {
+  /**
+   * Delete a user (hard). Revokes tokens, records audit, then removes the
+   * D1 row. Other admins are protected by the operator boundary check and
+   * the bootstrap admin is protected by a global invariant check.
+   */
+  public async deleteUser(
+    userId: string,
+    ctx: AuditContext,
+  ): Promise<void> {
     const user = await this.requireUser(userId);
-    if (user.role === 'admin') {
-      throwError(ERROR_CODES.AUTH_FORBIDDEN, 'Cannot delete the bootstrap admin.');
+    // 1) Global invariant: the bootstrap admin cannot be deleted (FR
+    //    requirement). This check runs BEFORE any permission boundary
+    //    so the error message matches the domain invariant regardless of
+    //    the caller identity.
+    if (user.username === 'admin') {
+      throwError(
+        ERROR_CODES.VALIDATION_FAILED,
+        'Cannot delete the bootstrap admin.',
+      );
     }
+    this.enforceAdminBoundary(user, ctx.operatorId);
     await this.refresh.revokeAllForUser(user.id);
-    // NOTE: compliance archival + full account deletion is delegated to
-    // the Cleanup service (tenant-archive bucket write → DROP DATABASE →
-    // permanent D1 row removal). Here we revoke tokens, mark the user
-    // inactive so login/auth handlers can't use the account, and record
-    // the audit entry. The Cleanup worker then drops the DB row after
-    // the backup is written.
-    user.disable();
-    await this.users.save(user);
     await this.recordAudit(ctx, {
       action: 'delete_user',
       targetUserId: user.id,
       details: JSON.stringify({ username: user.username }),
       tenantId: user.tenantId,
     });
+    await this.users.delete(userId);
   }
 
   /** Get a user by id. */
