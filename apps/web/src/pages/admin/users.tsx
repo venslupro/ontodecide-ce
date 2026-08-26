@@ -18,24 +18,26 @@
  *      the displayed state always matches the source of truth.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { UserRole, UserState } from '@ontodecide/shared';
+import { useNavigate } from 'react-router-dom';
+import type { UserRole } from '@ontodecide/shared';
 import type {
   CreateUserDto,
   CredentialResult,
   UserPublic,
 } from '@/types/ontodecide-shared';
 import { adminUsersResource } from '@/services/api';
+import { useAuthStore } from '@/store/auth';
+import { useSession } from '@/hooks/useSession';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Checkbox from '@/components/ui/Checkbox';
 import { Card, CardContent } from '@/components/ui/Card';
-import Badge from '@/components/ui/Badge';
+import Badge, { BadgeTone } from '@/components/ui/Badge';
 import Table, { TableHeader, TableRow, TableCell } from '@/components/ui/Table';
 import Pagination from '@/components/ui/Pagination';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import RoleBadge from '@/components/shared/RoleBadge';
-import UserStateBadge from '@/components/shared/UserStateBadge';
 import IconButton from '@/components/ui/IconButton';
 import Modal from '@/components/ui/Modal';
 import CopyButton from '@/components/shared/CopyButton';
@@ -47,11 +49,9 @@ const ROLE_OPTIONS = [
   { label: 'User', value: 'user' },
 ];
 const STATE_OPTIONS = [
-  { label: 'All states', value: 'all' },
-  { label: 'Active', value: 'active' },
-  { label: 'Pending (needs password change)', value: 'pending' },
-  { label: 'Disabled', value: 'disabled' },
-  { label: 'Data Cleared', value: 'data_cleared' },
+  { label: 'All statuses', value: 'all' },
+  { label: 'Enabled (can log in)', value: 'enable' },
+  { label: 'Disabled (cannot log in)', value: 'disable' },
 ];
 const CREATE_ROLE_OPTIONS = [
   { label: 'User', value: 'user' },
@@ -65,11 +65,41 @@ const AVATAR_COLORS = [
 type BatchKind = 'disable' | 'enable' | 'delete';
 type SingleKind = Exclude<BatchKind, 'enable' | 'disable'> | 'reset';
 
-function deriveUserState(u: UserPublic): UserState {
-  if (u.is_data_cleared) return 'data_cleared';
-  if (!u.is_active) return 'disabled';
-  if (u.must_change_password) return 'pending';
-  return 'active';
+/** Simplified two-state status model (FR-5): enable / disable. */
+type SimpleStatus = 'enable' | 'disable';
+
+/**
+ * Derive a binary Enabled / Disabled status from the UserPublic record.
+ *
+ * Considers both the stored {@code is_active} flag and the expiration
+ * timestamp; an expired account is always reported as disabled (FR-5).
+ */
+function deriveStatus(u: UserPublic): SimpleStatus {
+  if (!u.is_active) return 'disable';
+  if (u.expires_at && new Date(u.expires_at).getTime() < Date.now()) {
+    return 'disable';
+  }
+  return 'enable';
+}
+
+const STATUS_TONE: Record<SimpleStatus, BadgeTone> = {
+  enable: 'success',
+  disable: 'default',
+};
+const STATUS_LABEL: Record<SimpleStatus, string> = {
+  enable: 'Enabled',
+  disable: 'Disabled',
+};
+
+/**
+ * Admin-permission boundary (FR-6).
+ *
+ * Admins may operate on user-role accounts plus their own account;
+ * other admin accounts are read-only.
+ */
+function canOperateOn(u: UserPublic, currentUserId: string | null): boolean {
+  if (!currentUserId) return u.role !== 'admin';
+  return u.role !== 'admin' || u.id === currentUserId;
 }
 
 function stableAvatarColor(id: string): string {
@@ -105,8 +135,20 @@ function displayName(user: UserPublic): string {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * Build the absolute login-page URL from the current window location.
+ * Works in dev (localhost), Cloudflare Pages preview, and production.
+ */
+function buildLoginUrl(): string {
+  if (typeof window === 'undefined') return '#/login';
+  return window.location.origin + window.location.pathname + '#/login';
+}
+
 export default function AdminUsersPage() {
   const toast = useToast();
+  const navigate = useNavigate();
+  const { session } = useSession();
+  const currentUserId = session?.user_id ?? null;
 
   // ---------- data loading ----------
   const [users, setUsers] = useState<UserPublic[]>([]);
@@ -144,7 +186,7 @@ export default function AdminUsersPage() {
     const hay = `${u.username} ${u.email ?? ''} ${u.id} ${u.tenant_id}`.toLowerCase();
     const matchesQ = !q || hay.includes(q);
     const matchesR = roleFilter === 'all' || u.role === roleFilter;
-    const matchesS = stateFilter === 'all' || deriveUserState(u) === stateFilter;
+    const matchesS = stateFilter === 'all' || deriveStatus(u) === stateFilter;
     return matchesQ && matchesR && matchesS;
   }), [users, query, roleFilter, stateFilter]);
 
@@ -160,8 +202,14 @@ export default function AdminUsersPage() {
     { kind: BatchKind; targetIds: string[] } | null
   >(null);
 
-  const allChecked = pageRows.length > 0 && pageRows.every((r) => selected.has(r.id));
-  const someChecked = pageRows.some((r) => selected.has(r.id));
+  /** Only rows the current admin may touch are eligible for selection. */
+  const eligibleRows = useMemo(
+    () => pageRows.filter((r) => canOperateOn(r, currentUserId)),
+    [pageRows, currentUserId],
+  );
+  const allChecked =
+    eligibleRows.length > 0 && eligibleRows.every((r) => selected.has(r.id));
+  const someChecked = eligibleRows.some((r) => selected.has(r.id));
 
   const toggleRow = (id: string) => setSelected((s) => {
     const next = new Set(s);
@@ -170,8 +218,11 @@ export default function AdminUsersPage() {
   });
   const toggleAll = () => setSelected((s) => {
     const next = new Set(s);
-    if (allChecked) pageRows.forEach((r) => next.delete(r.id));
-    else pageRows.forEach((r) => next.add(r.id));
+    if (allChecked) {
+      eligibleRows.forEach((r) => next.delete(r.id));
+    } else {
+      eligibleRows.forEach((r) => next.add(r.id));
+    }
     return next;
   });
 
@@ -181,9 +232,15 @@ export default function AdminUsersPage() {
   };
 
   const executeBatch = useCallback(async (kind: BatchKind, ids: string[]) => {
+    /** Drop targets that violate the admin-vs-admin boundary (FR-6). */
+    const safeIds = ids.filter((id) => {
+      const u = users.find((x) => x.id === id);
+      return u ? canOperateOn(u, currentUserId) : false;
+    });
+    const skipped = ids.length - safeIds.length;
     let ok = 0;
     let fail = 0;
-    const results = await Promise.allSettled(ids.map((id) => {
+    const results = await Promise.allSettled(safeIds.map((id) => {
       if (kind === 'delete') return adminUsersResource.remove(id);
       return adminUsersResource.updateStatus(id, { is_active: kind === 'enable' });
     }));
@@ -205,6 +262,14 @@ export default function AdminUsersPage() {
               : `Disabled ${ok} user${ok === 1 ? '' : 's'}.`,
       });
     }
+    if (skipped > 0) {
+      toast.show({
+        tone: 'info',
+        title: `${skipped} item${skipped === 1 ? '' : 's'} skipped`,
+        message:
+          'Cannot modify fellow administrator account(s) — they were excluded.',
+      });
+    }
     if (fail > 0) {
       toast.show({
         tone: 'warning',
@@ -213,14 +278,24 @@ export default function AdminUsersPage() {
       });
     }
     await loadUsers(true);
-  }, [loadUsers, toast]);
+  }, [loadUsers, toast, users, currentUserId]);
 
   // ---------- single-row action handlers ----------
   const [rowConfirm, setRowConfirm] = useState<{ kind: SingleKind; user: UserPublic } | null>(null);
   const [resetResult, setResetResult] = useState<CredentialResult | null>(null);
 
+  /**
+   * Toggle the persisted is_active flag against the derived status, so the
+   * admin's intent always matches what the status badge displays (FR-5).
+   *
+   * For accounts that appear Disabled purely because expires_at has passed
+   * (stored is_active still true), clicking the ✓ Enable button will flip
+   * the persisted is_active to true (no-op) which is harmless; admins can
+   * use the expiry-extend flow to re-enable such accounts if needed.
+   */
   const handleToggleActive = async (user: UserPublic) => {
-    const nextActive = !user.is_active;
+    const showingEnabled = deriveStatus(user) === 'enable';
+    const nextActive = !showingEnabled;
     try {
       await adminUsersResource.updateStatus(user.id, { is_active: nextActive });
       toast.show({
@@ -251,6 +326,12 @@ export default function AdminUsersPage() {
         tone: 'success',
         message: `User ${displayName(user)} was deleted.`,
       });
+      // If the admin deleted their own account, log out and go to login.
+      if (user.id === currentUserId) {
+        useAuthStore.getState().clear();
+        navigate('/login', { replace: true });
+        return;
+      }
       await loadUsers(true);
     } catch (e: any) {
       toast.show({
@@ -506,19 +587,21 @@ export default function AdminUsersPage() {
                   </TableCell>
                 </TableRow>
               ) : pageRows.map((u) => {
-                const state = deriveUserState(u);
+                const status = deriveStatus(u);
                 const name = displayName(u);
                 const initials = initialsOf(name);
-                const canToggle = !u.is_data_cleared;
+                const operable = canOperateOn(u, currentUserId);
+                const canToggle = operable && !u.is_data_cleared;
                 return (
                   <TableRow key={u.id}>
                     <TableCell>
                       <Checkbox
                         id={`sel-${u.id}`}
                         name={u.id}
-                        checked={selected.has(u.id)}
+                        checked={operable ? selected.has(u.id) : false}
                         onChange={() => toggleRow(u.id)}
                         aria-label={`Select ${name}`}
+                        disabled={!operable}
                       />
                     </TableCell>
                     <TableCell>
@@ -565,40 +648,63 @@ export default function AdminUsersPage() {
                       )}
                     </TableCell>
                     <TableCell><RoleBadge role={u.role} /></TableCell>
-                    <TableCell><UserStateBadge state={state} /></TableCell>
+                    <TableCell>
+                      <Badge tone={STATUS_TONE[status]}>
+                        {STATUS_LABEL[status]}
+                        {status === 'enable' && u.expires_at
+                          ? ` · Expires ${formatRelative(u.expires_at)}`
+                          : ''}
+                      </Badge>
+                    </TableCell>
                     <TableCell style={{ fontSize: 13, color: 'var(--color-neutral-600)' }}>
                       {formatRelative(u.last_login_at)}
                     </TableCell>
                     <TableCell align="right">
-                      <div style={{ display: 'inline-flex', gap: 4 }}>
-                        <IconButton
-                          variant="ghost"
-                          size="sm"
-                          aria-label="Reset password"
-                          onClick={() => setRowConfirm({ kind: 'reset', user: u })}
-                          title="Reset password"
-                        >🔑</IconButton>
-                        {canToggle ? (
+                      {operable ? (
+                        <div style={{ display: 'inline-flex', gap: 4 }}>
                           <IconButton
                             variant="ghost"
                             size="sm"
-                            aria-label={u.is_active ? 'Disable' : 'Enable'}
-                            onClick={() => handleToggleActive(u)}
-                            title={u.is_active ? 'Disable' : 'Enable'}
-                            style={u.is_active ? undefined : { color: 'var(--color-success)' }}
-                          >
-                            {u.is_active ? '⛔' : '✓'}
-                          </IconButton>
-                        ) : null}
-                        <IconButton
-                          variant="ghost"
-                          size="sm"
-                          aria-label="Delete"
-                          onClick={() => setRowConfirm({ kind: 'delete', user: u })}
-                          style={{ color: 'var(--color-danger)' }}
-                          title="Delete user"
-                        >🗑</IconButton>
-                      </div>
+                            aria-label="Reset password"
+                            onClick={() => setRowConfirm({ kind: 'reset', user: u })}
+                            title="Reset password"
+                          >🔑</IconButton>
+                          {canToggle ? (
+                            <IconButton
+                              variant="ghost"
+                              size="sm"
+                              aria-label={status === 'enable' ? 'Disable' : 'Enable'}
+                              onClick={() => handleToggleActive(u)}
+                              title={status === 'enable' ? 'Disable' : 'Enable'}
+                              style={
+                                status === 'enable'
+                                  ? undefined
+                                  : { color: 'var(--color-success)' }
+                              }
+                            >
+                              {status === 'enable' ? '⛔' : '✓'}
+                            </IconButton>
+                          ) : null}
+                          <IconButton
+                            variant="ghost"
+                            size="sm"
+                            aria-label="Delete"
+                            onClick={() => setRowConfirm({ kind: 'delete', user: u })}
+                            style={{ color: 'var(--color-danger)' }}
+                            title="Delete user"
+                          >🗑</IconButton>
+                        </div>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: 12,
+                            color: 'var(--color-neutral-400)',
+                          }}
+                          aria-label="Other administrator accounts are read-only."
+                        >
+                          —
+                        </span>
+                      )}
                     </TableCell>
                   </TableRow>
                 );
@@ -856,14 +962,47 @@ export default function AdminUsersPage() {
                 />
               </div>
             </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-neutral-500)', marginBottom: 4 }}>
+                Login page URL
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '10px 12px',
+                  background: 'var(--color-neutral-50)',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--color-neutral-200)',
+                  fontWeight: 500,
+                  color: 'var(--color-neutral-800)',
+                  fontSize: 13,
+                }}
+              >
+                <a
+                  href={buildLoginUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    flex: 1,
+                    wordBreak: 'break-all',
+                    color: 'var(--color-accent)',
+                    textDecoration: 'none',
+                  }}
+                >
+                  {buildLoginUrl()}
+                </a>
+                <CopyButton text={buildLoginUrl()} ariaLabel="Copy login URL" />
+              </div>
+            </div>
             <div style={{ fontSize: 12, color: 'var(--color-neutral-600)' }}>
               {inviteResult.email_sent
                 ? '📧 An email with the login credentials and instructions '
                     + 'has been sent to the user. You may also copy the '
-                    + 'credentials below as a backup.'
-                : '🔗 Share the login page URL ('
-                  + '#/login'
-                  + '), username and temporary password with the user via a secure channel.'}
+                    + 'credentials above as a backup.'
+                : '🔗 Share the login page URL above, username and temporary '
+                    + 'password with the user via a secure channel.'}
             </div>
           </div>
         ) : (
