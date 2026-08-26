@@ -32,7 +32,7 @@ export const CONFIG = {
   MAX_TENANTS: 10,
 
   /** Maximum number of users on the free plan. */
-  MAX_USERS: 5,
+  MAX_USERS: 20,
 
   /** Cron schedule for the daily cleanup (03:00 UTC). */
   CLEANUP_CRON: '0 3 * * *',
