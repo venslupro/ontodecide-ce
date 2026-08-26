@@ -85,4 +85,6 @@ export interface CredentialResult {
   username: string;
   /** Plaintext password, only visible at creation/reset time. */
   temporary_password: string;
+  /** Whether a credential email was sent. Only present on create, not reset. */
+  email_sent?: boolean;
 }
