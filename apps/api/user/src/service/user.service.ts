@@ -20,9 +20,6 @@ import {
   tenantId,
   nowIso,
   nowEpochSeconds,
-  sendEmail,
-  buildCredentialEmail,
-  DEFAULT_EMAIL_FROM,
 } from '@ontodecide/shared';
 import { User } from '../domain/user.entity.js';
 import type {
@@ -48,14 +45,6 @@ export interface CreateUserResult {
   temporaryPassword: string;
 }
 
-export interface ApplicationResult {
-  user: User;
-  /** Plaintext password, only visible at creation time. */
-  temporaryPassword: string;
-  /** Whether the credential email was delivered. */
-  emailSent: boolean;
-}
-
 export interface AuditContext {
   operatorId: string;
   operatorTenantId: string;
@@ -73,78 +62,11 @@ export class UserManagementService {
     private readonly refresh: IRefreshTokenRepository,
     private readonly config: IConfigRepository,
     private readonly env?: UserEnv,
-  ) {}
-
-  /**
-   * Submit a public account application.
-   *
-   * Creates a user with:
-   *   - email as the login username (what the user types to log in)
-   *   - a random temporary password
-   *   - must_change_password = true (must be changed on first login)
-   *   - expires_at = now + usageDays
-   *   - an immutable tenant_id (data anchor) generated via `tenantId()`
-   *
-   * The email ↔ tenant_id mapping is stored in the `users` table
-   * (username column = email, tenant_id column = immutable anchor).
-   * All internal systems (Neo4j DB name, KV prefixes, B2 paths) use
-   * the tenant_id, never the email — so changing the email later
-   * doesn't require migrating any data.
-   *
-   * Sends the credentials + expiration via email (from venslu.pro@gmail.com).
-   * When no EMAIL_API_KEY is configured, the email is skipped and the
-   * password is returned in the API response as a fallback.
-   */
-  public async submitApplication(
-    email: string,
-    usageDays: number,
-    ctx: AuditContext,
-  ): Promise<ApplicationResult> {
-    const maxUsers = parseInt((await this.config.get('max_users')) ?? String(CONFIG.MAX_USERS), 10);
-    const current = await this.users.countActive();
-    if (current >= maxUsers) {
-      throwError(ERROR_CODES.USER_MAX_EXCEEDED, `Maximum of ${maxUsers} users reached.`);
-    }
-    // Email is the login name; check uniqueness.
-    const existing = await this.users.findByUsername(email);
-    if (existing) {
-      throwError(ERROR_CODES.USER_ALREADY_EXISTS, `An account for '${email}' already exists.`);
-    }
-    // Generate the immutable data anchor (tenant_id). This is used for
-    // Neo4j DB naming, KV key prefixes, B2 paths — never the email.
-    const tid = tenantId();
-    const temporaryPassword = generateTemporaryPassword();
-    const passwordHash = await hashPassword(temporaryPassword);
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + usageDays * 24 * 60 * 60 * 1000).toISOString();
-    const user = User.new({
-      id: uuid(),
-      tenantId: tid,
-      username: email,
-      passwordHash,
-      email,
-      role: 'analyst',
-      dataRetentionDays: usageDays,
-      mustChangePassword: true,
-      expiresAt,
-    });
-    await this.users.save(user);
-    await this.recordAudit(ctx, {
-      action: 'create_user',
-      targetUserId: user.id,
-      details: JSON.stringify({ username: email, usageDays, expiresAt, tenantId: tid }),
-      tenantId: user.tenantId,
-    });
-
-    // Send credential email.
-    const emailConfig = {
-      apiKey: this.env?.EMAIL_API_KEY,
-      from: this.env?.EMAIL_FROM ?? DEFAULT_EMAIL_FROM,
-    };
-    const { subject, text, html } = buildCredentialEmail(email, temporaryPassword, expiresAt);
-    const emailSent = await sendEmail({ to: email, subject, text, html }, emailConfig);
-
-    return { user, temporaryPassword, emailSent };
+  ) {
+    // Optional Neo4j/email bindings retained for future use (e.g. admin
+    // credential emails). Currently unused — removed submitApplication in
+    // favour of admin-only account creation.
+    void this.env;
   }
 
   /**

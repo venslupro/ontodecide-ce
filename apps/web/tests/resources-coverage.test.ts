@@ -17,12 +17,11 @@ import {
   RESOURCE_REGISTRY,
 } from '../src/services/api/index';
 
-/** 16 expected prefix strings (order independent). */
+/** 15 expected prefix strings (order independent). */
 const EXPECTED_PREFIXES: readonly string[] = [
   '/api/auth/login',
   '/api/auth/refresh',
   '/api/auth/',
-  '/api/applications',
   '/api/user',
   '/api/admin/users',
   '/api/admin/audit',
@@ -45,7 +44,6 @@ const EXPECTED_NAMES: Readonly<Record<string, string>> = {
   '/api/auth/login': 'auth',
   '/api/auth/refresh': 'auth',
   '/api/auth/': 'auth',
-  '/api/applications': 'applications',
   '/api/user': 'user',
   '/api/admin/users': 'adminUsers',
   '/api/admin/audit': 'adminAudit',
@@ -61,9 +59,9 @@ const EXPECTED_NAMES: Readonly<Record<string, string>> = {
 };
 
 describe('resource registry coverage', () => {
-  it('registers exactly 16 prefixes', () => {
-    expect(PREFIXES_WITH_RESOURCE).toHaveLength(16);
-    expect(Object.keys(RESOURCE_REGISTRY)).toHaveLength(16);
+  it('registers exactly 15 prefixes', () => {
+    expect(PREFIXES_WITH_RESOURCE).toHaveLength(15);
+    expect(Object.keys(RESOURCE_REGISTRY)).toHaveLength(15);
   });
 
   it('contains every expected prefix (no missing / no extras)', () => {
