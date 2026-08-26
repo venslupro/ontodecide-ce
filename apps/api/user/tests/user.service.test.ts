@@ -188,7 +188,7 @@ describe('UserManagementService.createUser', () => {
     const result = await service.createUser({ username: 'alice' }, auditCtx);
 
     expect(result.user.username).toBe('alice');
-    expect(result.user.role).toBe('analyst');
+    expect(result.user.role).toBe('user');
     expect(result.temporaryPassword).toHaveLength(16);
     expect(await users.findByUsername('alice')).not.toBeNull();
   });
@@ -211,8 +211,8 @@ describe('UserManagementService.createUser', () => {
 
   it('respects the provided role override', async () => {
     const { service } = makeService();
-    const { user } = await service.createUser({ username: 'bob', role: 'viewer' }, auditCtx);
-    expect(user.role).toBe('viewer');
+    const { user } = await service.createUser({ username: 'bob', role: 'user' }, auditCtx);
+    expect(user.role).toBe('user');
   });
 
   it('writes an audit log entry on create', async () => {

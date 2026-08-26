@@ -9,7 +9,7 @@ import type { UserRole } from '../types/user.js';
 export interface CreateUserDto {
   /** Unique username (3-32 chars, alphanumeric, dot, underscore, dash). */
   username: string;
-  /** Role assigned to the new user. Defaults to 'analyst'. */
+  /** Role assigned to the new user. Defaults to 'user'. */
   role?: UserRole;
   /** Optional contact email. */
   email?: string;

@@ -103,7 +103,7 @@ function syntheticAuth(traceId: string): AuthContext {
       user_id: 'anon',
       tenant_id: 'anon',
       username: 'anon',
-      role: 'viewer',
+      role: 'user',
       exp: 0,
       iat: 0,
       jti: 'anon',

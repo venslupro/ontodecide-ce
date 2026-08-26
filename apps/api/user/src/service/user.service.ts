@@ -148,7 +148,7 @@ export class UserManagementService {
     }
     // Generate the immutable data anchor — independent of username.
     const tid = tenantId();
-    const role: UserRole = input.role ?? 'analyst';
+    const role: UserRole = input.role ?? 'user';
     const retention = input.dataRetentionDays ?? CONFIG.DEFAULT_DATA_RETENTION_DAYS;
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(temporaryPassword);
