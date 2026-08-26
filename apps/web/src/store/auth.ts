@@ -78,6 +78,11 @@ export interface AuthState {
 
 /**
  * Decode tokens, persist them and refresh the API client accessor.
+ *
+ * The {@code tokensWithFlags} object — which includes the optional
+ * {@code mustChangePassword} flag — is written to BOTH localStorage
+ * and the React state so {@link useSession} reads a consistent value
+ * across hydration and immediate redirects.
  */
 function applyTokens(
   state: {
@@ -96,8 +101,8 @@ function applyTokens(
   }
   const session = parseJwtPayload<JwtPayload>(tokens.accessToken);
   localStorage.setItem(TOKENS_KEY, JSON.stringify(tokensWithFlags));
-  setSessionAccessor(() => ({ tokens: state.getState().tokens }));
-  state.setState({ tokens, session });
+  setSessionAccessor(() => ({ tokens: tokensWithFlags }));
+  state.setState({ tokens: tokensWithFlags, session });
   return session;
 }
 
@@ -236,22 +241,23 @@ export const useAuthStore = create<AuthState>((set, get) => {
           applyTokens({ setState: set, getState: get }, data, false);
         } else {
           const existing = get().session;
-          if (existing) {
-            const nextSession: JwtPayload = {
-              ...existing,
-              pwd_change_required: false,
-            };
-            const nextTokens: AuthTokensWithFlags = {
-              ...(get().tokens as AuthTokens),
-              mustChangePassword: false,
-            };
-            localStorage.setItem(
-              TOKENS_KEY,
-              JSON.stringify(nextTokens),
+          const base = get().tokens;
+          if (!existing || !base) {
+            throw new Error(
+              'Session or auth tokens are missing. Please log in again.',
             );
-            setSessionAccessor(() => ({ tokens: get().tokens }));
-            set({ session: nextSession, tokens: nextTokens });
           }
+          const nextSession: JwtPayload = {
+            ...existing,
+            pwd_change_required: false,
+          };
+          const nextTokens: AuthTokensWithFlags = {
+            ...base,
+            mustChangePassword: false,
+          };
+          localStorage.setItem(TOKENS_KEY, JSON.stringify(nextTokens));
+          setSessionAccessor(() => ({ tokens: nextTokens }));
+          set({ session: nextSession, tokens: nextTokens });
         }
         set({ loading: false });
       } catch (err) {

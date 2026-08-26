@@ -223,9 +223,6 @@ export class User {
 
   /** Disable the account. */
   public disable(): void {
-    if (this.role === 'admin') {
-      throw new Error('The bootstrap admin cannot be disabled.');
-    }
     this.active = false;
   }
 

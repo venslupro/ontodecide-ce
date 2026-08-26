@@ -17,6 +17,12 @@ export interface UserEnv extends BaseEnv, JwtEnv {
   EMAIL_API_KEY?: string;
   /** Sender email address for credential notifications. */
   EMAIL_FROM?: string;
+  /**
+   * Public origin used for credential emails (e.g. https://ontodecide.ai).
+   * Falls back to the production domain when unset. Allows dev / preview
+   * deployments to send links that point at the correct deployment.
+   */
+  APP_ORIGIN?: string;
 }
 
 /** Role assigned to a user; determines API permissions. */
