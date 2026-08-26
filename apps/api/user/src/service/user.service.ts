@@ -43,6 +43,8 @@ export interface CreateUserResult {
   user: User;
   /** Plaintext password, only visible at creation time. */
   temporaryPassword: string;
+  /** Whether a credential email was sent. False when email is missing or sending fails. */
+  emailSent: boolean;
 }
 
 export interface AuditContext {
@@ -63,10 +65,62 @@ export class UserManagementService {
     private readonly config: IConfigRepository,
     private readonly env?: UserEnv,
   ) {
-    // Optional Neo4j/email bindings retained for future use (e.g. admin
-    // credential emails). Currently unused — removed submitApplication in
-    // favour of admin-only account creation.
     void this.env;
+  }
+
+  /**
+   * Send a credential notification email to a newly-created user via Resend API.
+   *
+   * Returns `true` on success, `false` on any failure (missing config, network
+   * error, API rejection). Never throws — email failures must not block
+   * account creation.
+   */
+  private async sendCredentialEmail(
+    toEmail: string,
+    username: string,
+    temporaryPassword: string,
+  ): Promise<boolean> {
+    if (!this.env?.EMAIL_API_KEY || !this.env?.EMAIL_FROM) {
+      return false;
+    }
+    const loginUrl = 'https://ontodecide.ai/#/login';
+    const html = [
+      '<div style="font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">',
+      '<h2 style="color: #1a1a2e;">Welcome to OntoDecide</h2>',
+      '<p>Your account has been created. Please use the credentials below to sign in:</p>',
+      '<table style="width: 100%; border-collapse: collapse; margin: 16px 0;">',
+      '<tr><td style="padding: 8px 12px; color: #666; font-size: 13px;">Login URL</td>',
+      `<td style="padding: 8px 12px; font-weight: 600;"><a href="${loginUrl}">${loginUrl}</a></td></tr>`,
+      '<tr><td style="padding: 8px 12px; color: #666; font-size: 13px;">Username</td>',
+      `<td style="padding: 8px 12px; font-weight: 600;">${username}</td></tr>`,
+      '<tr><td style="padding: 8px 12px; color: #666; font-size: 13px;">Password</td>',
+      `<td style="padding: 8px 12px; font-weight: 600; font-family: monospace;">${temporaryPassword}</td></tr>`,
+      '</table>',
+      '<div style="padding: 12px 16px; background: #FFF8E6; border: 1px solid #F3E2A3; border-radius: 8px; margin: 16px 0;">',
+      '<strong>Important:</strong> You will be required to change your password on first login.',
+      '</div>',
+      '<p style="color: #999; font-size: 12px; margin-top: 24px;">If you did not expect this email, please ignore it.</p>',
+      '</div>',
+    ].join('');
+
+    try {
+      const resp = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.env.EMAIL_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: this.env.EMAIL_FROM,
+          to: toEmail,
+          subject: 'Your OntoDecide account is ready',
+          html,
+        }),
+      });
+      return resp.ok;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -118,7 +172,13 @@ export class UserManagementService {
       details: JSON.stringify({ username, role, tenantId: tid }),
       tenantId: user.tenantId,
     });
-    return { user, temporaryPassword };
+    let emailSent = false;
+    if (input.email) {
+      emailSent = await this.sendCredentialEmail(
+        input.email, username!, temporaryPassword,
+      );
+    }
+    return { user, temporaryPassword, emailSent };
   }
 
   /**
