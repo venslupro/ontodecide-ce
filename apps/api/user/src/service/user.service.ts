@@ -286,11 +286,10 @@ export class UserManagementService {
   /** Reset a user's password; returns the new plaintext once. */
   public async resetPassword(
     userId: string,
-    operatorId: string,
     ctx: AuditContext,
   ): Promise<string> {
     const user = await this.requireUser(userId);
-    this.enforceAdminBoundary(user, operatorId);
+    this.enforceAdminBoundary(user, ctx.operatorId);
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(temporaryPassword);
     user.setPasswordHash(passwordHash);
@@ -309,11 +308,19 @@ export class UserManagementService {
   public async setStatus(
     userId: string,
     isActive: boolean,
-    operatorId: string,
     ctx: AuditContext,
   ): Promise<User> {
     const user = await this.requireUser(userId);
-    this.enforceAdminBoundary(user, operatorId);
+    // Domain invariant: the bootstrap admin (username === 'admin') must
+    // never be disabled. Check before permission boundaries so the error
+    // message is stable regardless of the caller's identity.
+    if (user.username === 'admin' && !isActive) {
+      throwError(
+        ERROR_CODES.VALIDATION_FAILED,
+        'Cannot disable the bootstrap admin.',
+      );
+    }
+    this.enforceAdminBoundary(user, ctx.operatorId);
     if (isActive) {
       user.enable();
     } else {
@@ -331,15 +338,25 @@ export class UserManagementService {
 
   /**
    * Delete a user (hard). Revokes tokens, records audit, then removes the
-   * D1 row. Other admins are protected by the operator boundary check.
+   * D1 row. Other admins are protected by the operator boundary check and
+   * the bootstrap admin is protected by a global invariant check.
    */
   public async deleteUser(
     userId: string,
-    operatorId: string,
     ctx: AuditContext,
   ): Promise<void> {
     const user = await this.requireUser(userId);
-    this.enforceAdminBoundary(user, operatorId);
+    // 1) Global invariant: the bootstrap admin cannot be deleted (FR
+    //    requirement). This check runs BEFORE any permission boundary
+    //    so the error message matches the domain invariant regardless of
+    //    the caller identity.
+    if (user.username === 'admin') {
+      throwError(
+        ERROR_CODES.VALIDATION_FAILED,
+        'Cannot delete the bootstrap admin.',
+      );
+    }
+    this.enforceAdminBoundary(user, ctx.operatorId);
     await this.refresh.revokeAllForUser(user.id);
     await this.recordAudit(ctx, {
       action: 'delete_user',

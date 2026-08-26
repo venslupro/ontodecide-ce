@@ -88,14 +88,14 @@ export async function updateStatusHandler(c: Context, id: string, service: UserM
     return c.json(fail(ERROR_CODES.VALIDATION_FAILED, 'is_active is required.'), 400);
   }
   const ctx = auditContext(c);
-  const user = await service.setStatus(id, body.is_active, ctx.operatorId, ctx);
+  const user = await service.setStatus(id, body.is_active, ctx);
   return c.json(ok(user.toPublic(), c.req.header(HEADERS.TRACE_ID)), 200);
 }
 
 /** POST /admin/users/:id/reset */
 export async function resetPasswordHandler(c: Context, id: string, service: UserManagementService) {
   const ctx = auditContext(c);
-  const temporaryPassword = await service.resetPassword(id, ctx.operatorId, ctx);
+  const temporaryPassword = await service.resetPassword(id, ctx);
   const user = await service.getUser(id);
   return c.json(ok({
     id: user.id,
@@ -108,7 +108,7 @@ export async function resetPasswordHandler(c: Context, id: string, service: User
 /** DELETE /admin/users/:id */
 export async function deleteUserHandler(c: Context, id: string, service: UserManagementService) {
   const ctx = auditContext(c);
-  await service.deleteUser(id, ctx.operatorId, ctx);
+  await service.deleteUser(id, ctx);
   return c.json(ok({ success: true }, c.req.header(HEADERS.TRACE_ID)), 200);
 }
 
