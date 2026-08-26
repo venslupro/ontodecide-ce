@@ -21,14 +21,17 @@ export async function listUsersHandler(c: Context, service: UserManagementServic
   const size = parseInt(c.req.query('size') ?? '50', 10);
   const role = c.req.query('role') ?? undefined;
   const { total, items } = await service.listUsers({ page, size, role });
-  // items are UserSnapshot (camelCase) — map to UserPublicRecord (snake_case) for the API.
+  // items are UserSnapshot (camelCase) — map to UserPublicRecord (snake_case)
+  // for the API. Expired accounts are surfaced as is_active=false on the
+  // wire (FR-5) without touching the persisted row.
+  const nowMs = Date.now();
   const list = items.map((item) => ({
     id: item.id,
     tenant_id: item.tenantId,
     username: item.username,
     email: item.email,
     role: item.role,
-    is_active: item.isActive,
+    is_active: coerceIsActive(item.isActive, item.expiresAt, nowMs),
     is_data_cleared: item.isDataCleared,
     must_change_password: item.mustChangePassword,
     expires_at: item.expiresAt,
@@ -39,6 +42,23 @@ export async function listUsersHandler(c: Context, service: UserManagementServic
     data_size_estimate: item.dataSizeEstimate,
   }));
   return c.json(ok({ total, page, size, list }, c.req.header(HEADERS.TRACE_ID)), 200);
+}
+
+/**
+ * Derive the effective `is_active` flag for an API response.
+ *
+ * Accounts whose {@code expiresAt} timestamp has already passed are
+ * reported as disabled regardless of the stored is_active column, so
+ * the UI can consistently render a "Disabled" badge (FR-5).
+ */
+function coerceIsActive(
+  storedIsActive: boolean,
+  expiresAt: string | null | undefined,
+  nowMs: number,
+): boolean {
+  if (!storedIsActive) return false;
+  if (expiresAt && new Date(expiresAt).getTime() < nowMs) return false;
+  return true;
 }
 
 /** POST /admin/users */
@@ -67,13 +87,15 @@ export async function updateStatusHandler(c: Context, id: string, service: UserM
   if (body?.is_active === undefined) {
     return c.json(fail(ERROR_CODES.VALIDATION_FAILED, 'is_active is required.'), 400);
   }
-  const user = await service.setStatus(id, body.is_active, auditContext(c));
+  const ctx = auditContext(c);
+  const user = await service.setStatus(id, body.is_active, ctx.operatorId, ctx);
   return c.json(ok(user.toPublic(), c.req.header(HEADERS.TRACE_ID)), 200);
 }
 
 /** POST /admin/users/:id/reset */
 export async function resetPasswordHandler(c: Context, id: string, service: UserManagementService) {
-  const temporaryPassword = await service.resetPassword(id, auditContext(c));
+  const ctx = auditContext(c);
+  const temporaryPassword = await service.resetPassword(id, ctx.operatorId, ctx);
   const user = await service.getUser(id);
   return c.json(ok({
     id: user.id,
@@ -85,7 +107,8 @@ export async function resetPasswordHandler(c: Context, id: string, service: User
 
 /** DELETE /admin/users/:id */
 export async function deleteUserHandler(c: Context, id: string, service: UserManagementService) {
-  await service.deleteUser(id, auditContext(c));
+  const ctx = auditContext(c);
+  await service.deleteUser(id, ctx.operatorId, ctx);
   return c.json(ok({ success: true }, c.req.header(HEADERS.TRACE_ID)), 200);
 }
 
