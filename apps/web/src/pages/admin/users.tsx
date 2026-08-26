@@ -277,6 +277,13 @@ export default function AdminUsersPage() {
         message: 'Some items could not be updated. Try them individually for details.',
       });
     }
+    // If the batch delete removed the currently signed-in admin, log out
+    // and redirect so the UI does not keep operating on stale tokens.
+    if (kind === 'delete' && currentUserId && ids.includes(currentUserId)) {
+      useAuthStore.getState().clear();
+      navigate('/login', { replace: true });
+      return;
+    }
     await loadUsers(true);
   }, [loadUsers, toast, users, currentUserId]);
 
@@ -560,6 +567,7 @@ export default function AdminUsersPage() {
               <TableCell header>Email</TableCell>
               <TableCell header>Role</TableCell>
               <TableCell header>Status</TableCell>
+              <TableCell header>Expires</TableCell>
               <TableCell header>Last login</TableCell>
               <TableCell header align="right">Actions</TableCell>
             </TableHeader>
@@ -648,13 +656,15 @@ export default function AdminUsersPage() {
                       )}
                     </TableCell>
                     <TableCell><RoleBadge role={u.role} /></TableCell>
-                    <TableCell>
-                      <Badge tone={STATUS_TONE[status]}>
-                        {STATUS_LABEL[status]}
-                        {status === 'enable' && u.expires_at
-                          ? ` · Expires ${formatRelative(u.expires_at)}`
-                          : ''}
-                      </Badge>
+                    <TableCell><Badge tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Badge></TableCell>
+                    <TableCell style={{ fontSize: 13, color: 'var(--color-neutral-600)' }}>
+                      {u.expires_at
+                        ? new Date(u.expires_at).toLocaleDateString()
+                        : (
+                          <span style={{ color: 'var(--color-neutral-400)' }}>
+                            Never
+                          </span>
+                        )}
                     </TableCell>
                     <TableCell style={{ fontSize: 13, color: 'var(--color-neutral-600)' }}>
                       {formatRelative(u.last_login_at)}
