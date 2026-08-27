@@ -208,7 +208,10 @@ export class UserManagementService {
         details: JSON.stringify({ reason: 'user_not_found', username }),
         tenantId: ctx.operatorTenantId,
       });
-      throwError(ERROR_CODES.AUTH_INVALID_CREDENTIALS, 'Invalid credentials.');
+      throwError(
+        ERROR_CODES.AUTH_INVALID_CREDENTIALS,
+        '账户不存在或者已被清除。',
+      );
     }
     const valid = await user!.verifyPassword(password);
     if (!valid) {

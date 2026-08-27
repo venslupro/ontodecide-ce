@@ -173,7 +173,7 @@ export default function LoginPage() {
             </div>
 
             {(submitError || errorMessage) && (
-              <Alert tone="danger" title="Sign in failed" onClose={() => setSubmitError(null)} style={{ marginBottom: 'var(--space-3)' }}>
+              <Alert tone="danger" onClose={() => setSubmitError(null)} style={{ marginBottom: 'var(--space-3)' }}>
                 {submitError || errorMessage}
               </Alert>
             )}

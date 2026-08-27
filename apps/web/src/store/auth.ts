@@ -185,6 +185,12 @@ export const useAuthStore = create<AuthState>((set, get) => {
       set({ loading: true, errorMessage: null });
       try {
         const response = await authResource.login(input);
+        if (!response.success) {
+          const msg =
+            response.error?.message ??
+            'Login failed. Please check your credentials.';
+          throw new Error(msg);
+        }
         const data = (response as { data?: AuthTokensWithFlags } | undefined)
           ?.data as AuthTokensWithFlags | undefined;
         if (!data) {
@@ -214,6 +220,13 @@ export const useAuthStore = create<AuthState>((set, get) => {
       try {
         const payload: RefreshDto = { refreshToken: current.refreshToken };
         const response = await authResource.refresh(payload);
+        if (!response.success) {
+          get().clear();
+          throw new Error(
+            response.error?.message ??
+            'Refresh failed. Please sign in again.',
+          );
+        }
         const data = (response as { data?: AuthTokens } | undefined)
           ?.data as AuthTokens | undefined;
         if (!data) {
@@ -235,6 +248,12 @@ export const useAuthStore = create<AuthState>((set, get) => {
           currentPassword: current,
           newPassword: nextPwd,
         });
+        if (!response.success) {
+          const msg =
+            response.error?.message ??
+            'Could not update the password. Please try again.';
+          throw new Error(msg);
+        }
         const data = (response as { data?: AuthTokens } | undefined)
           ?.data as AuthTokens | undefined;
         if (data) {
