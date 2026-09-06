@@ -66,7 +66,8 @@ env:
   TF_VAR_project_name:     'ontodecide'
   # environment from workflow_dispatch.inputs (default production -> prd).
   # Staging not yet deployed; extension entry kept for future use.
-  TF_VAR_environment:      ${{ github.event.inputs.environment || 'production' }}
+  # Guard with github.event_name so push/pr events (no .inputs) short-circuit.
+  TF_VAR_environment:      ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
 
 jobs:
   # ── Phase 1: fmt + validate ────────────────────────────────────────────
