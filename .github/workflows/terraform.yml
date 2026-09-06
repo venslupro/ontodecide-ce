@@ -8,9 +8,6 @@
 #   workflow_dispatch  → fmt · validate · plan; apply runs on main branch
 #                        (manual trigger only) and requires production
 #                        Environment approval.
-#                        Optional input `environment` overrides the target
-#                        environment (production→prd, staging→stg).
-#                        Default: production.
 #
 # REQUIRED SECRETS (Settings → Secrets and variables → Actions):
 #   CF_API_TOKEN      Cloudflare admin token (shared with deploy-service.yml)
@@ -64,10 +61,11 @@ env:
   TF_VAR_account_id:       ${{ secrets.CF_ACCOUNT_ID }}
   TF_VAR_zone_id:          ${{ vars.TF_ZONE_ID }}
   TF_VAR_project_name:     'ontodecide'
-  # environment from workflow_dispatch.inputs (default production -> prd).
-  # Staging not yet deployed; extension entry kept for future use.
-  # Guard with github.event_name so push/pr events (no .inputs) short-circuit.
-  TF_VAR_environment:      ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+  # Single-environment system: production only (→ prd).
+  # To add staging: declare workflow_dispatch.inputs.environment and
+  # reference it here; terraform main.tf env_short already derives
+  # staging→stg.
+  TF_VAR_environment:      'production'
 
 jobs:
   # ── Phase 1: fmt + validate ────────────────────────────────────────────

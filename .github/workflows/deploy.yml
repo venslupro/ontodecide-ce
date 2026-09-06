@@ -13,9 +13,6 @@
 # TRIGGERS:
 #   • push (any branch): detect-changes always; deploy all services on main.
 #   • workflow_dispatch: same as push; D1 migration still requires approval.
-#                        Optional input `environment` overrides the target
-#                        environment (production→prd, staging→stg).
-#                        Default: production.
 #
 # DEPENDENCY ORDER (4-layer):
 #   L1 (parallel) → user · graph · ai · cleanup · web (Pages)
@@ -178,20 +175,22 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           PROJECT_NAME: 'ontodecide'
-          # environment from workflow_dispatch.inputs (default production -> prd).
-          # Staging not yet deployed; extension entry kept for future use.
-          # Guard with github.event_name so push events (no .inputs) short-circuit.
-          ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+          # Single-environment system: production only (→ prd).
+          # To add staging: declare workflow_dispatch.inputs.environment and
+          # reference it here; terraform main.tf env_short already derives
+          # staging→stg.
+          ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/user
       - name: Resolve D1 database IDs
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           PROJECT_NAME: 'ontodecide'
-          # environment from workflow_dispatch.inputs (default production -> prd).
-          # Staging not yet deployed; extension entry kept for future use.
-          # Guard with github.event_name so push events (no .inputs) short-circuit.
-          ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+          # Single-environment system: production only (→ prd).
+          # To add staging: declare workflow_dispatch.inputs.environment and
+          # reference it here; terraform main.tf env_short already derives
+          # staging→stg.
+          ENVIRONMENT: production
         run: ./scripts/resolve-d1-ids.sh apps/api/user
       - name: Deploy user worker
         uses: cloudflare/wrangler-action@v4
@@ -229,10 +228,11 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           PROJECT_NAME: 'ontodecide'
-          # environment from workflow_dispatch.inputs (default production -> prd).
-          # Staging not yet deployed; extension entry kept for future use.
-          # Guard with github.event_name so push events (no .inputs) short-circuit.
-          ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+          # Single-environment system: production only (→ prd).
+          # To add staging: declare workflow_dispatch.inputs.environment and
+          # reference it here; terraform main.tf env_short already derives
+          # staging→stg.
+          ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/graph
       - name: Deploy graph worker
         uses: cloudflare/wrangler-action@v4
@@ -268,10 +268,11 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           PROJECT_NAME: 'ontodecide'
-          # environment from workflow_dispatch.inputs (default production -> prd).
-          # Staging not yet deployed; extension entry kept for future use.
-          # Guard with github.event_name so push events (no .inputs) short-circuit.
-          ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+          # Single-environment system: production only (→ prd).
+          # To add staging: declare workflow_dispatch.inputs.environment and
+          # reference it here; terraform main.tf env_short already derives
+          # staging→stg.
+          ENVIRONMENT: production
         run: ./scripts/resolve-d1-ids.sh apps/api/ai
       - name: Deploy ai worker
         # GOOGLE_API_KEY / GROQ_API_KEY are optional — configured directly
@@ -305,20 +306,22 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           PROJECT_NAME: 'ontodecide'
-          # environment from workflow_dispatch.inputs (default production -> prd).
-          # Staging not yet deployed; extension entry kept for future use.
-          # Guard with github.event_name so push events (no .inputs) short-circuit.
-          ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+          # Single-environment system: production only (→ prd).
+          # To add staging: declare workflow_dispatch.inputs.environment and
+          # reference it here; terraform main.tf env_short already derives
+          # staging→stg.
+          ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/cleanup
       - name: Resolve D1 database IDs
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           PROJECT_NAME: 'ontodecide'
-          # environment from workflow_dispatch.inputs (default production -> prd).
-          # Staging not yet deployed; extension entry kept for future use.
-          # Guard with github.event_name so push events (no .inputs) short-circuit.
-          ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+          # Single-environment system: production only (→ prd).
+          # To add staging: declare workflow_dispatch.inputs.environment and
+          # reference it here; terraform main.tf env_short already derives
+          # staging→stg.
+          ENVIRONMENT: production
         run: ./scripts/resolve-d1-ids.sh apps/api/cleanup
       - name: Deploy cleanup worker
         uses: cloudflare/wrangler-action@v4
@@ -441,10 +444,11 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           PROJECT_NAME: 'ontodecide'
-          # environment from workflow_dispatch.inputs (default production -> prd).
-          # Staging not yet deployed; extension entry kept for future use.
-          # Guard with github.event_name so push events (no .inputs) short-circuit.
-          ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+          # Single-environment system: production only (→ prd).
+          # To add staging: declare workflow_dispatch.inputs.environment and
+          # reference it here; terraform main.tf env_short already derives
+          # staging→stg.
+          ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/ingestion
       - name: Deploy ingestion worker
         uses: cloudflare/wrangler-action@v4
@@ -489,10 +493,11 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           PROJECT_NAME: 'ontodecide'
-          # environment from workflow_dispatch.inputs (default production -> prd).
-          # Staging not yet deployed; extension entry kept for future use.
-          # Guard with github.event_name so push events (no .inputs) short-circuit.
-          ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+          # Single-environment system: production only (→ prd).
+          # To add staging: declare workflow_dispatch.inputs.environment and
+          # reference it here; terraform main.tf env_short already derives
+          # staging→stg.
+          ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/gateway
       - name: Deploy gateway worker
         uses: cloudflare/wrangler-action@v4
