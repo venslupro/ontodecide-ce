@@ -376,7 +376,7 @@ jobs:
           GATEWAY_URL="https://${PROJECT_NAME}-${ENV_SHORT}-gateway.${SUBDOMAIN}.workers.dev"
           echo "url=$GATEWAY_URL" >> "$GITHUB_OUTPUT"
           echo "Resolved Gateway URL: $GATEWAY_URL"
-      - run: pnpm --filter @ontodecide/web build
+      - run: pnpm -r build
         env:
           VITE_API_BASE: ${{ steps.gateway-url.outputs.url }}
       # wrangler pages CLI reads CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
