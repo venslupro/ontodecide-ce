@@ -23,13 +23,13 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Environment suffix. Single-environment system: production only (no preview/staging)."
+  description = "Environment name. production→prd, staging→stg. Staging not yet in use; only production is deployed today."
   type        = string
   default     = "production"
 
   validation {
-    condition     = var.environment == "production"
-    error_message = "environment must be production (single-environment system; no preview/staging)."
+    condition     = contains(["production", "staging"], var.environment)
+    error_message = "environment must be one of: production, staging."
   }
 }
 

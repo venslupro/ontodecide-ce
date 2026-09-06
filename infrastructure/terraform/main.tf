@@ -35,8 +35,10 @@
 
 # -------- Unified naming locals --------
 locals {
-  # Env short form: production→prd (single-environment system; no staging/preview)
-  env_short = "prd"
+  # Env short form: production→prd, staging→stg.
+  # Derived from var.environment (injected by terraform.yml via TF_VAR_environment).
+  # Staging not yet in use; only production is deployed today.
+  env_short = var.environment == "production" ? "prd" : (var.environment == "staging" ? "stg" : var.environment)
 
   # Unified resource name prefix: ontodecide-prd
   res_prefix = "${var.project_name}-${local.env_short}"

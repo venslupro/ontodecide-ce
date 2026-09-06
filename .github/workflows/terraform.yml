@@ -35,6 +35,12 @@ on:
       - '.github/workflows/terraform.yml'
       - 'infrastructure/terraform/.terraform.lock.hcl'
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (production→prd, staging→stg)'
+        type: choice
+        options: [production, staging]
+        default: production
 
 concurrency:
   group: terraform-${{ github.ref }}
@@ -54,7 +60,11 @@ env:
   # Terraform input variables (TF_VAR_* convention)
   TF_VAR_account_id:       ${{ secrets.CF_ACCOUNT_ID }}
   TF_VAR_zone_id:          ${{ vars.TF_ZONE_ID }}
-  TF_VAR_project_name:     ${{ github.event.repository.name }}
+  TF_VAR_project_name:     'ontodecide'
+  # Single-environment system: production only (→ prd).
+  # To add staging: declare workflow_dispatch.inputs.environment and
+  # reference it here; terraform main.tf env_short already derives
+  # staging→stg.
   TF_VAR_environment:      'production'
 
 jobs:
