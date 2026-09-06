@@ -13,6 +13,9 @@
 # TRIGGERS:
 #   • push (any branch): detect-changes always; deploy all services on main.
 #   • workflow_dispatch: same as push; D1 migration still requires approval.
+#                        Optional input `environment` overrides the target
+#                        environment (production→prd, staging→stg).
+#                        Default: production.
 #
 # DEPENDENCY ORDER (4-layer):
 #   L1 (parallel) → user · graph · ai · cleanup · web (Pages)
@@ -174,15 +177,19 @@ jobs:
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: ${{ github.event.repository.name }}
-          ENVIRONMENT: production
+          PROJECT_NAME: 'ontodecide'
+          # environment from workflow_dispatch.inputs (default production -> prd).
+          # Staging not yet deployed; extension entry kept for future use.
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
         run: ./scripts/resolve-kv-ids.sh apps/api/user
       - name: Resolve D1 database IDs
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: ${{ github.event.repository.name }}
-          ENVIRONMENT: production
+          PROJECT_NAME: 'ontodecide'
+          # environment from workflow_dispatch.inputs (default production -> prd).
+          # Staging not yet deployed; extension entry kept for future use.
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
         run: ./scripts/resolve-d1-ids.sh apps/api/user
       - name: Deploy user worker
         uses: cloudflare/wrangler-action@v4
@@ -219,8 +226,10 @@ jobs:
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: ${{ github.event.repository.name }}
-          ENVIRONMENT: production
+          PROJECT_NAME: 'ontodecide'
+          # environment from workflow_dispatch.inputs (default production -> prd).
+          # Staging not yet deployed; extension entry kept for future use.
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
         run: ./scripts/resolve-kv-ids.sh apps/api/graph
       - name: Deploy graph worker
         uses: cloudflare/wrangler-action@v4
@@ -255,8 +264,10 @@ jobs:
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: ${{ github.event.repository.name }}
-          ENVIRONMENT: production
+          PROJECT_NAME: 'ontodecide'
+          # environment from workflow_dispatch.inputs (default production -> prd).
+          # Staging not yet deployed; extension entry kept for future use.
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
         run: ./scripts/resolve-d1-ids.sh apps/api/ai
       - name: Deploy ai worker
         # GOOGLE_API_KEY / GROQ_API_KEY are optional — configured directly
@@ -289,15 +300,19 @@ jobs:
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: ${{ github.event.repository.name }}
-          ENVIRONMENT: production
+          PROJECT_NAME: 'ontodecide'
+          # environment from workflow_dispatch.inputs (default production -> prd).
+          # Staging not yet deployed; extension entry kept for future use.
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
         run: ./scripts/resolve-kv-ids.sh apps/api/cleanup
       - name: Resolve D1 database IDs
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: ${{ github.event.repository.name }}
-          ENVIRONMENT: production
+          PROJECT_NAME: 'ontodecide'
+          # environment from workflow_dispatch.inputs (default production -> prd).
+          # Staging not yet deployed; extension entry kept for future use.
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
         run: ./scripts/resolve-d1-ids.sh apps/api/cleanup
       - name: Deploy cleanup worker
         uses: cloudflare/wrangler-action@v4
@@ -339,7 +354,7 @@ jobs:
         env:
           CF_API_TOKEN:   ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID:  ${{ secrets.CF_ACCOUNT_ID }}
-          PROJECT_NAME:   ${{ github.event.repository.name }}
+          PROJECT_NAME:   'ontodecide'
         run: |
           SUBDOMAIN=$(curl -s \
             "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/subdomain" \
@@ -367,7 +382,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          PROJECT_NAME:          ${{ github.event.repository.name }}
+          PROJECT_NAME:          'ontodecide'
           ENVIRONMENT:           production
         run: |
           ENV_SHORT="$([[ "$ENVIRONMENT" == "production" ]] && echo "prd" || echo "$ENVIRONMENT")"
@@ -385,7 +400,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          PROJECT_NAME:          ${{ github.event.repository.name }}
+          PROJECT_NAME:          'ontodecide'
           ENVIRONMENT:           production
         run: |
           ENV_SHORT="$([[ "$ENVIRONMENT" == "production" ]] && echo "prd" || echo "$ENVIRONMENT")"
@@ -419,8 +434,10 @@ jobs:
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: ${{ github.event.repository.name }}
-          ENVIRONMENT: production
+          PROJECT_NAME: 'ontodecide'
+          # environment from workflow_dispatch.inputs (default production -> prd).
+          # Staging not yet deployed; extension entry kept for future use.
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
         run: ./scripts/resolve-kv-ids.sh apps/api/ingestion
       - name: Deploy ingestion worker
         uses: cloudflare/wrangler-action@v4
@@ -464,8 +481,10 @@ jobs:
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: ${{ github.event.repository.name }}
-          ENVIRONMENT: production
+          PROJECT_NAME: 'ontodecide'
+          # environment from workflow_dispatch.inputs (default production -> prd).
+          # Staging not yet deployed; extension entry kept for future use.
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
         run: ./scripts/resolve-kv-ids.sh apps/api/gateway
       - name: Deploy gateway worker
         uses: cloudflare/wrangler-action@v4
@@ -502,7 +521,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CF_ACCOUNT_ID }}
       CF_API_TOKEN:           ${{ secrets.CF_API_TOKEN }}
       CF_ACCOUNT_ID:          ${{ secrets.CF_ACCOUNT_ID }}
-      PROJECT_NAME:           ${{ github.event.repository.name }}
+      PROJECT_NAME:           'ontodecide'
       ENVIRONMENT:            'production'
     steps:
       - uses: actions/checkout@v5

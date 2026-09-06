@@ -10,7 +10,7 @@
  * The Gateway keeps no business state — it is intentionally stateless and
  * relies on KV only for the JWT blacklist and rate-limit counters.
  */
-import { ERROR_CODES, validateAndLogConfig, configKey, validators } from '@ontodecide/shared';
+import { CONFIG, ERROR_CODES, validateAndLogConfig, configKey, validators } from '@ontodecide/shared';
 import {
   OpenAPIHono,
   jsonOkResponse,
@@ -94,10 +94,10 @@ app.onError(honoErrorHandler);
 app.notFound((c) => jsonFailResponse(c, ERROR_CODES.NOT_FOUND, 'Route not found.', 404));
 
 // Health check.
-app.get('/healthz', (c) => jsonOkResponse(c, { service: 'ontodecide-gateway', version: '0.1.0' }));
+app.get('/healthz', (c) => jsonOkResponse(c, { service: `${CONFIG.PROJECT_NAME}-${CONFIG.ENV_SHORT}-gateway`, version: '0.1.0' }));
 
 // Root info (non-/api/ root).
-app.get('/', (c) => jsonOkResponse(c, { service: 'ontodecide-gateway', version: '0.1.0' }));
+app.get('/', (c) => jsonOkResponse(c, { service: `${CONFIG.PROJECT_NAME}-${CONFIG.ENV_SHORT}-gateway`, version: '0.1.0' }));
 
 // Config validation middleware — runs once per Worker instance.
 app.use('*', async (c, next) => {

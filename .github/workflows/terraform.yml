@@ -8,6 +8,9 @@
 #   workflow_dispatch  → fmt · validate · plan; apply runs on main branch
 #                        (manual trigger only) and requires production
 #                        Environment approval.
+#                        Optional input `environment` overrides the target
+#                        environment (production→prd, staging→stg).
+#                        Default: production.
 #
 # REQUIRED SECRETS (Settings → Secrets and variables → Actions):
 #   CF_API_TOKEN      Cloudflare admin token (shared with deploy-service.yml)
@@ -35,6 +38,12 @@ on:
       - '.github/workflows/terraform.yml'
       - 'infrastructure/terraform/.terraform.lock.hcl'
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (production→prd, staging→stg)'
+        type: choice
+        options: [production, staging]
+        default: production
 
 concurrency:
   group: terraform-${{ github.ref }}
@@ -54,8 +63,10 @@ env:
   # Terraform input variables (TF_VAR_* convention)
   TF_VAR_account_id:       ${{ secrets.CF_ACCOUNT_ID }}
   TF_VAR_zone_id:          ${{ vars.TF_ZONE_ID }}
-  TF_VAR_project_name:     ${{ github.event.repository.name }}
-  TF_VAR_environment:      'production'
+  TF_VAR_project_name:     'ontodecide'
+  # environment from workflow_dispatch.inputs (default production -> prd).
+  # Staging not yet deployed; extension entry kept for future use.
+  TF_VAR_environment:      ${{ github.event.inputs.environment || 'production' }}
 
 jobs:
   # ── Phase 1: fmt + validate ────────────────────────────────────────────
