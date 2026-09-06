@@ -11,6 +11,7 @@ import type { UserSnapshot } from '../domain/user.entity.js';
 export interface IUserRepository {
   findById(id: string): Promise<User | null>;
   findByUsername(username: string): Promise<User | null>;
+  findByEmail(email: string): Promise<User | null>;
   findByTenant(tenantId: string): Promise<User | null>;
   list(opts?: { role?: string; offset?: number; limit?: number }): Promise<{
     total: number;
@@ -22,6 +23,8 @@ export interface IUserRepository {
   count(): Promise<number>;
   /** Count active, non-cleared users (excluding the bootstrap admin). */
   countActive(): Promise<number>;
+  /** Count users whose metadata contains the given key with a truthy value. */
+  countByMetadataKey(key: string): Promise<number>;
 }
 
 /** Audit-log repository (write-mostly). */
@@ -46,7 +49,8 @@ export interface AuditEntry {
     | 'cleanup_data'
     | 'login'
     | 'logout'
-    | 'delete_user';
+    | 'delete_user'
+    | 'apply_account';
   targetUserId: string | null;
   details: string | null;
   ip: string | null;

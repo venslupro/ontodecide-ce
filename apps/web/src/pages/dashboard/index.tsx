@@ -61,7 +61,13 @@ export default function DashboardPage() {
       label: 'Total Entities', value: '1,284',
       delta: { value: '+12.4%', tone: 'positive' as const, label: 'vs last month' },
       sparkline: spark(11),
-      iconImage: 'https://www.google.com/images/branding/googleg/1x/googleg_standard_color_128dp.png',
+      iconNode: (
+        <svg width={22} height={22} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <ellipse cx="12" cy="5" rx="7" ry="3" stroke="var(--color-primary)" strokeWidth="1.8" />
+          <path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5" stroke="var(--color-primary)" strokeWidth="1.8" />
+          <path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" stroke="var(--color-primary)" strokeWidth="1.8" />
+        </svg>
+      ),
       iconAlt: 'Entities icon',
       iconTileBg: 'var(--color-primary-50)',
     },
@@ -69,7 +75,14 @@ export default function DashboardPage() {
       label: 'Ontology Types', value: '18',
       delta: { value: '+2', tone: 'positive' as const, label: 'new this week' },
       sparkline: spark(22),
-      iconImage: 'https://www.google.com/images/branding/googleg/1x/googleg_standard_color_128dp.png',
+      iconNode: (
+        <svg width={22} height={22} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="5" r="2.5" fill="var(--color-accent)" />
+          <circle cx="6" cy="18" r="2.5" fill="var(--color-accent)" />
+          <circle cx="18" cy="18" r="2.5" fill="var(--color-accent)" />
+          <path d="M12 7.5L7 15.5M12 7.5L17 15.5" stroke="var(--color-accent)" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      ),
       iconAlt: 'Ontology icon',
       iconTileBg: 'var(--color-accent-50)',
     },
@@ -77,7 +90,12 @@ export default function DashboardPage() {
       label: 'Decisions Run', value: '342',
       delta: { value: '+8.1%', tone: 'positive' as const, label: 'vs last week' },
       sparkline: spark(33),
-      iconImage: 'https://www.google.com/images/branding/googleg/1x/googleg_standard_color_128dp.png',
+      iconNode: (
+        <svg width={22} height={22} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" stroke="var(--color-success)" strokeWidth="1.8" strokeLinejoin="round" />
+          <path d="M9 12l2 2 4-4" stroke="var(--color-success)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ),
       iconAlt: 'Decision icon',
       iconTileBg: 'var(--color-success-50)',
     },
@@ -85,7 +103,12 @@ export default function DashboardPage() {
       label: 'Acceptance Rate', value: '76%',
       delta: { value: '-2.3%', tone: 'negative' as const, label: 'vs last period' },
       sparkline: spark(44),
-      iconImage: 'https://www.google.com/images/branding/googleg/1x/googleg_standard_color_128dp.png',
+      iconNode: (
+        <svg width={22} height={22} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" stroke="var(--color-warning)" strokeWidth="1.8" />
+          <path d="M12 7v5l3 2" stroke="var(--color-warning)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ),
       iconAlt: 'Acceptance icon',
       iconTileBg: 'var(--color-warning-50)',
     },

@@ -74,6 +74,8 @@ export class User {
   public lastCleanupAt: string | null;
   public dataRetentionDays: number;
   public dataSizeEstimate: number;
+  /** Free-form JSON metadata (e.g. `{"trial": true}`). */
+  private metadata: Record<string, unknown> | null;
 
   private constructor(row: UserDbRow) {
     this.id = row.id;
@@ -91,6 +93,7 @@ export class User {
     this.lastCleanupAt = row.last_cleanup_at;
     this.dataRetentionDays = row.data_retention_days;
     this.dataSizeEstimate = row.data_size_estimate;
+    this.metadata = parseMetadata(row.metadata);
   }
 
   /** Rehydrate from a D1 row. */
@@ -109,6 +112,7 @@ export class User {
     dataRetentionDays: number;
     mustChangePassword?: boolean;
     expiresAt?: string | null;
+    metadata?: Record<string, unknown> | null;
   }): User {
     const now = new Date().toISOString();
     return new User({
@@ -128,7 +132,7 @@ export class User {
       last_cleanup_at: null,
       data_retention_days: params.dataRetentionDays,
       data_size_estimate: 0,
-      metadata: null,
+      metadata: params.metadata ? JSON.stringify(params.metadata) : null,
     });
   }
 
@@ -246,6 +250,16 @@ export class User {
     }
   }
 
+  /** Merge a metadata patch into the user's metadata object. */
+  public updateMetadata(patch: Record<string, unknown>): void {
+    this.metadata = { ...(this.metadata ?? {}), ...patch };
+  }
+
+  /** Read a single metadata value by key. */
+  public getMetadata<T = unknown>(key: string): T | undefined {
+    return this.metadata?.[key] as T | undefined;
+  }
+
   /** Get the row representation for persistence. */
   public toRow(): UserDbRow {
     return {
@@ -265,7 +279,20 @@ export class User {
       last_cleanup_at: this.lastCleanupAt,
       data_retention_days: this.dataRetentionDays,
       data_size_estimate: this.dataSizeEstimate,
-      metadata: null,
+      metadata: this.metadata ? JSON.stringify(this.metadata) : null,
     };
+  }
+}
+
+/** Safely parse a metadata JSON string; returns null on empty/invalid. */
+function parseMetadata(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
   }
 }

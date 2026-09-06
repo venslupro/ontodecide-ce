@@ -6,10 +6,13 @@
 import { useState, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth';
+import { applyTrial } from '@/services/api/authResource';
+import Logo from '@/components/shared/Logo';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Checkbox from '@/components/ui/Checkbox';
 import Alert from '@/components/ui/Alert';
+import Modal from '@/components/ui/Modal';
 
 /** Loading spinner overlayed on the submit button. */
 const Spinner = () => (
@@ -32,6 +35,54 @@ export default function LoginPage() {
   const [remember, setRemember] = useState(true);
   const [showPwd, setShowPwd] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // --- Trial account application modal state ---
+  const [showApply, setShowApply] = useState(false);
+  const [applyEmail, setApplyEmail] = useState('');
+  const [applyLoading, setApplyLoading] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [applyResult, setApplyResult] = useState<{
+    username: string;
+    temporary_password: string;
+    expires_at: string | null;
+  } | null>(null);
+
+  /** Submit handler for the trial application form. */
+  const onApply = async (e: FormEvent) => {
+    e.preventDefault();
+    setApplyError(null);
+    setApplyResult(null);
+    if (!applyEmail.trim()) {
+      setApplyError('请输入邮箱地址。');
+      return;
+    }
+    setApplyLoading(true);
+    try {
+      const res = await applyTrial({ email: applyEmail.trim() });
+      if (res.success && res.data) {
+        setApplyResult({
+          username: res.data.username,
+          temporary_password: res.data.temporary_password,
+          expires_at: res.data.expires_at,
+        });
+      } else {
+        setApplyError(res.error?.message ?? '申请失败，请稍后重试。');
+      }
+    } catch {
+      setApplyError('网络错误，请稍后重试。');
+    } finally {
+      setApplyLoading(false);
+    }
+  };
+
+  /** Close the apply modal and reset its state. */
+  const closeApply = () => {
+    setShowApply(false);
+    setApplyEmail('');
+    setApplyError(null);
+    setApplyResult(null);
+    setApplyLoading(false);
+  };
 
   /** Submit handler — calls auth store and routes by needsPasswordChange. */
   const onSubmit = async (e: FormEvent) => {
@@ -88,18 +139,19 @@ export default function LoginPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div
               style={{
-                width: 40, height: 40, borderRadius: 10,
-                background: 'rgba(255,255,255,0.2)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 20, fontWeight: 700, color: '#fff',
+                background: 'rgba(255,255,255,0.18)',
+                borderRadius: 12, padding: 6,
                 boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                backdropFilter: 'blur(4px)',
               }}
             >
-              OD
+              <Logo size={36} markOnly tone="light" color="#fff" />
             </div>
             <div>
               <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.01em' }}>OntoDecide</div>
-              <div style={{ fontSize: 13, opacity: 0.9 }}>AI-Driven Intelligent Decision System</div>
+              <div style={{ fontSize: 13, opacity: 0.9 }}>
+                AI-Driven Intelligent Decision System
+              </div>
             </div>
           </div>
 
@@ -258,9 +310,102 @@ export default function LoginPage() {
               <span aria-hidden="true">🔐</span>
               <span>Secured by JWT · End-to-end encrypted</span>
             </div>
+
+            <div style={{ textAlign: 'center', marginTop: 'var(--space-3)' }}>
+              <button
+                type="button"
+                onClick={() => setShowApply(true)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--color-primary-600)', fontSize: 13, fontWeight: 600,
+                  padding: 0,
+                }}
+              >
+                没有账号？申请体验账号 →
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* --- Trial account application modal --- */}
+      <Modal
+        open={showApply}
+        title="申请体验账号"
+        onClose={closeApply}
+        footer={
+          applyResult ? (
+            <Button onClick={closeApply}>我知道了</Button>
+          ) : (
+            <Button type="submit" form="apply-form" disabled={applyLoading}>
+              {applyLoading ? '提交中…' : '立即申请'}
+            </Button>
+          )
+        }
+      >
+        {applyResult ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            <Alert tone="success">
+              体验账号已创建成功！请使用以下凭据登录，并在首次登录后修改密码。
+            </Alert>
+            <div
+              style={{
+                background: 'var(--color-neutral-50)',
+                border: '1px solid var(--color-neutral-200)',
+                borderRadius: 'var(--radius-md)',
+                padding: 'var(--space-3)',
+                display: 'flex', flexDirection: 'column', gap: 10,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
+                <span style={{ color: 'var(--color-neutral-500)' }}>用户名</span>
+                <span style={{ fontWeight: 600, fontFamily: 'monospace' }}>{applyResult.username}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
+                <span style={{ color: 'var(--color-neutral-500)' }}>临时密码</span>
+                <span style={{ fontWeight: 600, fontFamily: 'monospace', color: 'var(--color-primary-700)' }}>
+                  {applyResult.temporary_password}
+                </span>
+              </div>
+              {applyResult.expires_at && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
+                  <span style={{ color: 'var(--color-neutral-500)' }}>有效期至</span>
+                  <span>{new Date(applyResult.expires_at).toLocaleString()}</span>
+                </div>
+              )}
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--color-neutral-500)', margin: 0 }}>
+              ⚠️ 临时密码仅显示一次，请妥善保管。账号到期后数据将自动清除。
+            </p>
+          </div>
+        ) : (
+          <form id="apply-form" onSubmit={onApply} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            <p style={{ fontSize: 13, color: 'var(--color-neutral-600)', margin: 0 }}>
+              输入邮箱即可免费申请 14 天体验账号，提交后即时获取登录凭据。
+            </p>
+            {applyError && (
+              <Alert tone="danger" onClose={() => setApplyError(null)}>{applyError}</Alert>
+            )}
+            <div>
+              <label htmlFor="apply-email" style={{
+                display: 'block', fontSize: 13, fontWeight: 600,
+                color: 'var(--color-neutral-700)', marginBottom: 6,
+              }}>
+                邮箱
+              </label>
+              <Input
+                id="apply-email"
+                type="email"
+                required
+                autoComplete="email"
+                placeholder="you@example.com"
+                value={applyEmail}
+                onChange={(e) => setApplyEmail(e.target.value)}
+              />
+            </div>
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }
