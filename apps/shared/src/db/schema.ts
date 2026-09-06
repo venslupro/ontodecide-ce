@@ -72,7 +72,7 @@ export const auditLogs = sqliteTable(
     check(
       'audit_logs_action_check',
       // eslint-disable-next-line max-len
-      sql`action IN ('create_user', 'disable_user', 'enable_user', 'reset_password', 'change_password', 'cleanup_data', 'login', 'logout', 'delete_user')`,
+      sql`action IN ('create_user', 'disable_user', 'enable_user', 'reset_password', 'change_password', 'cleanup_data', 'login', 'logout', 'delete_user', 'apply_account')`,
     ),
   ],
 );

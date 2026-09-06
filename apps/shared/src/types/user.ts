@@ -76,7 +76,8 @@ export type AuditAction =
   | 'cleanup_data'
   | 'login'
   | 'logout'
-  | 'delete_user';
+  | 'delete_user'
+  | 'apply_account';
 
 /** Result returned when an admin creates or resets a user. */
 export interface CredentialResult {

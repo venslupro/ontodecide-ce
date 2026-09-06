@@ -44,3 +44,22 @@ export async function changePassword(body: {
 }): Promise<ApiResponse<AuthTokens>> {
   return httpPost<AuthTokens>('/api/auth/change-password', body);
 }
+
+/**
+ * {@code POST /api/auth/apply} — public.
+ *
+ * Self-service trial account application. Submits an email and receives
+ * back a username + temporary password. The caller must change the
+ * password on first login.
+ */
+export async function applyTrial(body: {
+  email: string;
+  username?: string;
+}): Promise<ApiResponse<{
+  username: string;
+  temporary_password: string;
+  expires_at: string | null;
+  must_change_password: boolean;
+}>> {
+  return httpPost('/api/auth/apply', body);
+}

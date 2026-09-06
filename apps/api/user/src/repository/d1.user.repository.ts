@@ -42,6 +42,16 @@ export class D1UserRepository implements IUserRepository {
     return rows[0] ? User.fromRow(rows[0] as unknown as UserDbRow) : null;
   }
 
+  public async findByEmail(email: string): Promise<User | null> {
+    const rows = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1)
+      .all();
+    return rows[0] ? User.fromRow(rows[0] as unknown as UserDbRow) : null;
+  }
+
   public async findByTenant(tenantId: string): Promise<User | null> {
     const rows = await this.db
       .select()
@@ -144,6 +154,25 @@ export class D1UserRepository implements IUserRepository {
       .from(users)
       .where(
         and(sql`${users.role} != 'admin'`, eq(users.is_active, 1), eq(users.is_data_cleared, 0)),
+      )
+      .get();
+    return row?.total ?? 0;
+  }
+
+  public async countByMetadataKey(key: string): Promise<number> {
+    // JSON_EXTRACT(metadata, '$.key') returns the value; we count rows where
+    // it is truthy. Falls back to 0 when metadata is null.
+    const row = await this.db
+      .select({ total: count() })
+      .from(users)
+      .where(
+        and(
+          sql`${users.role} != 'admin'`,
+          sql`json_extract(${users.metadata}, ${`$.${key}`}) IS NOT NULL`,
+          sql`json_extract(${users.metadata}, ${`$.${key}`}) != 0`,
+          sql`json_extract(${users.metadata}, ${`$.${key}`}) != ''`,
+          sql`json_extract(${users.metadata}, ${`$.${key}`}) != 'false'`,
+        ),
       )
       .get();
     return row?.total ?? 0;

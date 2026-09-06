@@ -1,6 +1,7 @@
 /**
  * KpiCard — metric tile with label, value, delta, sparkline SVG and an icon tile.
- * Icon tile uses an external image URL by default.
+ * The icon tile accepts either a React node (`iconNode`, preferred for inline
+ * SVGs) or an external image URL (`iconImage`).
  */
 import { HTMLAttributes, ReactNode } from 'react';
 
@@ -11,14 +12,27 @@ export interface KpiCardProps extends HTMLAttributes<HTMLDivElement> {
   value: ReactNode;
   delta?: { value: ReactNode; tone?: DeltaTone; label?: ReactNode };
   sparkline?: number[];       /** Numeric series; normalized to 64x24 SVG. */
+  iconNode?: ReactNode;       /** Inline icon (preferred over iconImage). */
   iconImage?: string;         /** External image URL for the icon tile. */
   iconAlt?: string;
   iconTileBg?: string;
 }
 
+/** Default icon — a generic bar-chart glyph rendered as inline SVG. */
+function DefaultKpiIcon() {
+  return (
+    <svg width={22} height={22} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4" y="13" width="4" height="7" rx="1" fill="var(--color-primary)" />
+      <rect x="10" y="9" width="4" height="11" rx="1" fill="var(--color-primary)" />
+      <rect x="16" y="5" width="4" height="15" rx="1" fill="var(--color-primary)" />
+    </svg>
+  );
+}
+
 export default function KpiCard({
   label, value, delta, sparkline,
-  iconImage = 'https://www.google.com/images/branding/googleg/1x/googleg_standard_color_128dp.png',
+  iconNode,
+  iconImage,
   iconAlt = 'KPI icon',
   iconTileBg = 'var(--color-primary-50)',
   className = '', style, ...rest
@@ -51,11 +65,13 @@ export default function KpiCard({
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           overflow: 'hidden', flexShrink: 0,
         }}>
-          <img
-            src={iconImage}
-            alt={iconAlt}
-            style={{ width: 22, height: 22, objectFit: 'contain' }}
-          />
+          {iconNode ? iconNode : iconImage ? (
+            <img
+              src={iconImage}
+              alt={iconAlt}
+              style={{ width: 22, height: 22, objectFit: 'contain' }}
+            />
+          ) : <DefaultKpiIcon />}
         </div>
       </div>
       <div style={{

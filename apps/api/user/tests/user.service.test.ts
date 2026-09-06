@@ -39,6 +39,13 @@ class InMemoryUserRepo implements IUserRepository {
     return null;
   }
 
+  async findByEmail(email: string): Promise<User | null> {
+    for (const u of this.users.values()) {
+      if (u.email === email) return u;
+    }
+    return null;
+  }
+
   async findByTenant(tenantId: string): Promise<User | null> {
     for (const u of this.users.values()) {
       if (u.tenantId === tenantId) return u;
@@ -87,6 +94,17 @@ class InMemoryUserRepo implements IUserRepository {
       }
     }
     return active;
+  }
+
+  async countByMetadataKey(key: string): Promise<number> {
+    let count = 0;
+    for (const u of this.users.values()) {
+      const value = u.getMetadata(key);
+      if (u.role !== 'admin' && value !== undefined && value !== null && value !== false && value !== 0 && value !== '') {
+        count++;
+      }
+    }
+    return count;
   }
 }
 
