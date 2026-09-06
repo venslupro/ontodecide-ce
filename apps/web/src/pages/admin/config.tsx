@@ -11,6 +11,7 @@ import Switch from '@/components/ui/Switch';
 import { Card, CardHeader, CardContent } from '@/components/ui/Card';
 import Alert from '@/components/ui/Alert';
 import Badge from '@/components/ui/Badge';
+import { CONFIG } from '@ontodecide/shared';
 
 const PROVIDER_OPTS = [
   { label: 'OntoDecide AI (default)', value: 'ontodecide' },
@@ -53,7 +54,7 @@ export default function AdminConfigPage() {
   const [pwdMin, setPwdMin] = useState('12');
   const [mfa, setMfa] = useState(false);
 
-  const [bucket, setBucket] = useState('ontodecide-storage-prod');
+  const [bucket, setBucket] = useState(`${CONFIG.PROJECT_NAME}-${CONFIG.ENV_SHORT}-storage`);
   const [region, setRegion] = useState('us-central-1');
   const [lifecycle, setLifecycle] = useState('90');
 

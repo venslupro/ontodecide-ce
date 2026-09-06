@@ -5,6 +5,22 @@
  * traceable to a single source of truth.
  */
 export const CONFIG = {
+  /**
+   * Project name prefix used in all Cloudflare / B2 resource naming.
+   * MUST match infrastructure/terraform/variables.tf var.project_name
+   * and the GitHub Actions PROJECT_NAME env (deploy.yml / terraform.yml).
+   * Source of truth for runtime code that needs to reference the
+   * convention ontodecide-{env}-{resource} without hardcoding literals.
+   */
+  PROJECT_NAME: 'ontodecide',
+
+  /**
+   * Environment short form (production→prd, staging→stg).
+   * MUST match local.env_short in infrastructure/terraform/main.tf and
+   * the ENV_SHORT derivation in scripts/resolve-d1-ids.sh / resolve-kv-ids.sh.
+   */
+  ENV_SHORT: 'prd',
+
   /** JWT access-token lifetime in seconds (7 days). */
   ACCESS_TOKEN_TTL_SECONDS: 7 * 24 * 60 * 60,
   /** Refresh-token lifetime in seconds (30 days). */
