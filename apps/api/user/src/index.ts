@@ -45,6 +45,7 @@ import {
   logoutHandler,
   refreshHandler,
   changePasswordHandler,
+  applyHandler,
 } from './handlers/auth.js';
 import { profileHandler } from './handlers/user.js';
 import {
@@ -244,6 +245,51 @@ const changePasswordRoute = createRoute({
 app.openapi(changePasswordRoute, async (c) => {
   const service = c.get('service');
   return changePasswordHandler(c, c.env.JWT_SECRET, service);
+});
+
+const applyRoute = createRoute({
+  method: 'post',
+  path: '/auth/apply',
+  tags: ['Auth'],
+  summary: '申请体验账号（公开）',
+  description:
+    '自助申请体验账号。提交邮箱后即时创建账号并返回临时密码，' +
+    '首次登录需修改密码。含邮箱去重、冷却时间和名额限制防刷。',
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            email: z.string().email().openapi({ description: '申请邮箱，同时作为登录用户名。' }),
+            username: z
+              .string()
+              .min(3)
+              .max(254)
+              .optional()
+              .openapi({ description: '可选登录名，省略时使用邮箱。' }),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: jsonOk(
+      z.object({
+        username: z.string(),
+        temporary_password: z.string(),
+        expires_at: z.string().nullable(),
+        must_change_password: z.boolean(),
+      }),
+      '体验账号已创建，临时密码请妥善保管。',
+    ),
+    400: jsonError('邮箱格式无效。'),
+    409: jsonError('邮箱已注册或体验名额已满。'),
+    429: jsonError('操作过于频繁，请稍后重试。'),
+  },
+});
+app.openapi(applyRoute, async (c) => {
+  const service = c.get('service');
+  return applyHandler(c, service);
 });
 
 // Self-service routes.

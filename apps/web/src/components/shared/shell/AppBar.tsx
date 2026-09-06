@@ -6,6 +6,7 @@
 import IconButton from '@/components/ui/IconButton';
 import BreadcrumbsShell from './Breadcrumbs';
 import UserMenu from './UserMenu';
+import Logo from '@/components/shared/Logo';
 
 export default function AppBar({ onToggleSidebar, className, style }: {
   onToggleSidebar?: () => void;
@@ -55,19 +56,7 @@ export default function AppBar({ onToggleSidebar, className, style }: {
           </IconButton>
         </span>
         <MobileHamburger onToggleSidebar={onToggleSidebar} />
-        <img
-          src="https://www.google.com/images/branding/googleg/1x/googleg_standard_color_128dp.png"
-          alt="OntoDecide logo"
-          width={28}
-          height={28}
-          style={{ flexShrink: 0 }}
-        />
-        <span style={{
-          fontWeight: 700, fontSize: 17, letterSpacing: '-0.01em',
-          color: 'var(--color-neutral-900)',
-        }}>
-          OntoDecide
-        </span>
+        <Logo size={30} color="var(--color-neutral-900)" />
       </div>
       <div style={{
         flex: 1, minWidth: 0,

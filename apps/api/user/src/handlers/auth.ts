@@ -218,3 +218,43 @@ export async function changePasswordHandler(
 }
 
 export { throwError };
+
+/**
+ * POST /auth/apply — self-service trial account application.
+ *
+ * Public (no JWT required). Accepts an email and an optional username,
+ * creates a trial account, and returns the temporary password directly
+ * in the response (the current deployment has no free email channel).
+ *
+ * Anti-abuse is enforced in the service layer: per-email cooldown,
+ * email uniqueness, and a trial-quota cap. The Gateway also enforces
+ * a per-IP rate limit on all public routes.
+ */
+export async function applyHandler(c: Context, service: UserManagementService) {
+  const body = await c.req.json();
+  const email = typeof body?.email === 'string' ? body.email.trim() : '';
+  if (!email) {
+    return c.json(fail(ERROR_CODES.VALIDATION_FAILED, '邮箱不能为空。'), 400);
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return c.json(fail(ERROR_CODES.VALIDATION_FAILED, '请输入有效的邮箱地址。'), 400);
+  }
+  const username =
+    typeof body?.username === 'string' && body.username.trim().length > 0
+      ? body.username.trim()
+      : undefined;
+  const ctx = auditFromContext(c);
+  const { user, temporaryPassword } = await service.applyTrialAccount(email, ctx, username);
+  return c.json(
+    ok(
+      {
+        username: user.username,
+        temporary_password: temporaryPassword,
+        expires_at: user.expiresAt,
+        must_change_password: true,
+      },
+      c.req.header(HEADERS.TRACE_ID),
+    ),
+    201,
+  );
+}

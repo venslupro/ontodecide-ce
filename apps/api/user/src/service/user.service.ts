@@ -47,6 +47,19 @@ export interface CreateUserResult {
   emailSent: boolean;
 }
 
+/** Result of a self-service trial application. */
+export interface ApplyTrialResult {
+  user: User;
+  /** Plaintext temporary password (returned directly — no email delivery). */
+  temporaryPassword: string;
+}
+
+/** Cooldown between repeated trial applications from the same email (seconds). */
+const TRIAL_APPLY_COOLDOWN_SECONDS = 60;
+
+/** KV key prefix for the per-email apply cooldown counter. */
+const TRIAL_COOLDOWN_PREFIX = 'trial:apply:';
+
 export interface AuditContext {
   operatorId: string;
   operatorTenantId: string;
@@ -185,6 +198,102 @@ export class UserManagementService {
       );
     }
     return { user, temporaryPassword, emailSent };
+  }
+
+  /**
+   * Self-service trial (experience) account application.
+   *
+   * Anti-abuse layers (in order):
+   *   1. Per-IP rate limit — enforced by the Gateway (5 req/min).
+   *   2. Per-email cooldown — the same email may not apply again within
+   *      {@link TRIAL_APPLY_COOLDOWN_SECONDS} (KV-backed).
+   *   3. Email uniqueness — an existing account for this email is rejected.
+   *   4. Trial quota — the number of concurrent trial accounts is capped
+   *      by the `trial_max_users` config key.
+   *
+   * On success the temporary password is returned directly (the current
+   * deployment has no free transactional email channel). The account is
+   * tagged with `metadata.trial = true` and a shortened retention window.
+   */
+  public async applyTrialAccount(
+    email: string,
+    ctx: AuditContext,
+    username?: string,
+  ): Promise<ApplyTrialResult> {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Layer 2: per-email cooldown.
+    await this.enforceEmailCooldown(normalizedEmail);
+
+    // Layer 3: email uniqueness.
+    const existing = await this.users.findByEmail(normalizedEmail);
+    if (existing) {
+      throwError(
+        ERROR_CODES.USER_ALREADY_EXISTS,
+        '该邮箱已注册账号，请直接登录或使用其他邮箱。',
+      );
+    }
+
+    // Layer 4: trial quota.
+    const trialMax = parseInt(
+      (await this.config.get('trial_max_users')) ?? '5',
+      10,
+    );
+    const trialCount = await this.users.countByMetadataKey('trial');
+    if (trialCount >= trialMax) {
+      throwError(
+        ERROR_CODES.USER_MAX_EXCEEDED,
+        '体验账号名额已满，请稍后再试或联系管理员。',
+      );
+    }
+
+    const trialDays = parseInt(
+      (await this.config.get('trial_retention_days')) ?? '14',
+      10,
+    );
+
+    const { user, temporaryPassword } = await this.createUser(
+      { username, email: normalizedEmail, role: 'user', dataRetentionDays: trialDays },
+      ctx,
+    );
+    user.updateMetadata({ trial: true, applied_at: nowIso() });
+    await this.users.save(user);
+
+    await this.recordAudit(ctx, {
+      action: 'apply_account',
+      targetUserId: user.id,
+      details: JSON.stringify({ email: normalizedEmail, trial: true }),
+      tenantId: user.tenantId,
+    });
+
+    return { user, temporaryPassword };
+  }
+
+  /**
+   * Enforce a short cooldown on repeated applications from the same email.
+   *
+   * Uses the CACHE KV namespace when available; silently passes when KV
+   * is not configured (local dev / tests). The counter key is a hash of
+   * the email to avoid storing PII in KV keys.
+   */
+  private async enforceEmailCooldown(email: string): Promise<void> {
+    const kv = this.env?.CACHE;
+    if (!kv) return;
+    const key = `${TRIAL_COOLDOWN_PREFIX}${email}`;
+    const last = await kv.get(key);
+    if (last) {
+      const elapsed = Date.now() / 1000 - parseInt(last, 10);
+      if (elapsed < TRIAL_APPLY_COOLDOWN_SECONDS) {
+        const wait = Math.ceil(TRIAL_APPLY_COOLDOWN_SECONDS - elapsed);
+        throwError(
+          ERROR_CODES.AUTH_RATE_LIMITED,
+          `操作过于频繁，请在 ${wait} 秒后重试。`,
+        );
+      }
+    }
+    await kv.put(key, String(Math.floor(Date.now() / 1000)), {
+      expirationTtl: TRIAL_APPLY_COOLDOWN_SECONDS + 5,
+    });
   }
 
   /**

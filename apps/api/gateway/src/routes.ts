@@ -84,6 +84,7 @@ export const ROUTES: readonly RouteTarget[] = [
 export const PUBLIC_PREFIXES: readonly string[] = [
   '/api/auth/login',
   '/api/auth/refresh',
+  '/api/auth/apply',
 ];
 
 /** Routes that require the `admin` role. */
@@ -186,6 +187,50 @@ export function registerOpenApiSpec(registry: OpenAPIHono['openAPIRegistry']): v
       400: jsonError('Validation failed.'),
       401: jsonError('Current password incorrect.'),
       403: jsonError('Missing identity headers.'),
+    },
+  });
+
+  registry.registerPath({
+    method: 'post',
+    path: '/api/auth/apply',
+    tags: ['Auth'],
+    security: [],
+    summary: 'Apply for a trial (experience) account',
+    description:
+      'Self-service public endpoint. Submits an email to instantly ' +
+      'provision a trial account. The temporary password is returned in ' +
+      'the response and must be changed on first login. Rate-limited per ' +
+      'IP and per email to prevent abuse.',
+    request: {
+      body: {
+        content: {
+          'application/json': {
+            schema: z.object({
+              email: z.string().email().openapi({ description: 'Contact email (used as login name).' }),
+              username: z
+                .string()
+                .min(3)
+                .max(254)
+                .optional()
+                .openapi({ description: 'Optional login name; defaults to email.' }),
+            }),
+          },
+        },
+      },
+    },
+    responses: {
+      201: jsonOk(
+        z.object({
+          username: z.string(),
+          temporary_password: z.string(),
+          expires_at: z.string().nullable(),
+          must_change_password: z.boolean(),
+        }),
+        'Trial account created. Keep the temporary password secure.',
+      ),
+      400: jsonError('Invalid email format.'),
+      409: jsonError('Email already registered or trial quota exceeded.'),
+      429: jsonError('Too many requests. Please try again later.'),
     },
   });
 

@@ -395,6 +395,32 @@ export const authTokensWithActivationSchema = z.object({
   }),
 });
 
+/** DTO for POST /api/auth/apply — self-service trial account application. */
+export const applyTrialSchema = z.object({
+  email: z.string().email().openapi({ description: 'Contact email (also used as login name).' }),
+  username: z
+    .string()
+    .min(3)
+    .max(254)
+    .optional()
+    .openapi({ description: 'Optional login name; defaults to email when omitted.' }),
+});
+
+/** Response for POST /api/auth/apply. */
+export const applyTrialResultSchema = z.object({
+  username: z.string().openapi({ description: 'Login username for the trial account.' }),
+  temporary_password: z.string().openapi({
+    description: 'Temporary password; must be changed on first login.',
+  }),
+  expires_at: z
+    .string()
+    .nullable()
+    .openapi({ description: 'Account expiry timestamp (ISO-8601).' }),
+  must_change_password: z
+    .boolean()
+    .openapi({ description: 'Always true for trial accounts.' }),
+});
+
 // ---------------------------------------------------------------------------
 // Ingestion DTOs (dto/ingest-request.dto.ts)
 // ---------------------------------------------------------------------------
