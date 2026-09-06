@@ -27,7 +27,7 @@
 #   Future: migrate /api/* to Pages Functions with a Service Binding to
 #   the Gateway worker for zero-cost in-account routing and no CORS.
 
-name = "ontodecide-prd-web"
+name = "ontodecide-ce"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
 
