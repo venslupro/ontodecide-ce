@@ -60,8 +60,9 @@ export default function GraphOntologyPage() {
     return matchesQ && matchesCat;
   }), [all, query, category]);
 
-  const totalPages = Math.max(2, Math.ceil(12 / size)); // 2 pages as per spec
-  const pageItems = filtered.slice((page - 1) * size, page * size);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / size));
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = filtered.slice((currentPage - 1) * size, currentPage * size);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -120,9 +121,9 @@ export default function GraphOntologyPage() {
                 </div>
 
                 <Pagination
-                  page={page}
+                  page={currentPage}
                   size={size}
-                  total={totalPages * size}
+                  total={filtered.length}
                   onChange={({ page: p }) => setPage(p)}
                 />
               </div>

@@ -160,7 +160,11 @@ export default function AdminUsersPage() {
     setLoadError(null);
     try {
       const res = await adminUsersResource.list({ page: 1, size: 100 });
-      setUsers(res.data!.list);
+      const list = res.data?.list;
+      if (!list) {
+        throw new Error(res.error?.message ?? 'No user data returned by the server.');
+      }
+      setUsers(list);
     } catch (e: any) {
       const msg = e?.message ?? 'Failed to load users. Please try again.';
       setLoadError(msg);
@@ -557,10 +561,9 @@ export default function AdminUsersPage() {
                   id="sel-all"
                   name="sel-all"
                   checked={allChecked}
-                  ref={undefined as any}
+                  indeterminate={!allChecked && someChecked}
                   onChange={toggleAll}
                   aria-label="Select all rows"
-                  {...({ indeterminate: !allChecked && someChecked } as any)}
                 />
               </TableCell>
               <TableCell header>User</TableCell>

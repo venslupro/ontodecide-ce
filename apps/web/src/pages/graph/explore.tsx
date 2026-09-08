@@ -78,7 +78,24 @@ export default function GraphExplorePage() {
   const [hoverId, setHoverId] = useState<string | null>(null);
 
   const graph = useMemo(() => buildGraph(42), []);
-  const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]));
+
+  // Apply search and type filters to the visible node set.
+  const visibleNodes = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return graph.nodes.filter((n) => {
+      const matchesQ = !q || n.label.toLowerCase().includes(q) || n.id.toLowerCase().includes(q);
+      const matchesType = nodeType === 'all' || n.type === nodeType;
+      return matchesQ && matchesType;
+    });
+  }, [graph.nodes, search, nodeType]);
+
+  const visibleIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes]);
+  const visibleEdges = useMemo(
+    () => graph.edges.filter((e) => visibleIds.has(e.from) && visibleIds.has(e.to)),
+    [graph.edges, visibleIds],
+  );
+
+  const byId = useMemo(() => Object.fromEntries(graph.nodes.map((n) => [n.id, n])), [graph.nodes]);
   const selected = byId[selectedId] ?? graph.nodes[0];
 
   // Derived neighbouring relations for the selected node.
@@ -199,7 +216,7 @@ export default function GraphExplorePage() {
                   </marker>
                 </defs>
                 {/* Edges */}
-                {graph.edges.map((e, i) => {
+                {visibleEdges.map((e, i) => {
                   const f = byId[e.from]; const t = byId[e.to];
                   const highlighted = e.from === selectedId || e.to === selectedId;
                   const faded = hoverId && e.from !== hoverId && e.to !== hoverId;
@@ -221,7 +238,7 @@ export default function GraphExplorePage() {
                   );
                 })}
                 {/* Nodes */}
-                {graph.nodes.map((n) => {
+                {visibleNodes.map((n) => {
                   const isSel = n.id === selectedId;
                   const isHov = n.id === hoverId;
                   const c = TYPE_COLORS[n.type] ?? 'var(--color-neutral-400)';
