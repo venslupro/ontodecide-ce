@@ -188,7 +188,12 @@ function FileUploadTab() {
           multiple
           accept=".csv,.json,.jsonl,.parquet,.pq,.xml"
           style={{ display: 'none' }}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => addFiles(e.target.files)}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => {
+            addFiles(e.target.files);
+            // Reset the input value so selecting the same file again
+            // still triggers onChange.
+            e.target.value = '';
+          }}
         />
       </div>
 

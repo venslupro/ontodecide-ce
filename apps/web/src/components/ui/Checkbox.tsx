@@ -6,10 +6,12 @@ import { InputHTMLAttributes, ReactNode } from 'react';
 export interface CheckboxProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
   label?: ReactNode;
+  /** Tri-state indeterminate flag; set imperatively on the DOM node. */
+  indeterminate?: boolean;
 }
 
 export default function Checkbox({
-  id, className = '', style, label, ...rest
+  id, className = '', style, label, indeterminate, ...rest
 }: CheckboxProps) {
   const inputId = id ?? rest.name ?? 'cb';
   return (
@@ -23,6 +25,9 @@ export default function Checkbox({
       }}
     >
       <input
+        ref={(el) => {
+          if (el) el.indeterminate = !!indeterminate;
+        }}
         id={inputId}
         type="checkbox"
         style={{ width: 16, height: 16, accentColor: 'var(--color-primary)' }}

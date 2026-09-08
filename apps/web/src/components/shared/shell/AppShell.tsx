@@ -95,9 +95,6 @@ export default function AppShell({ children, className, style }: {
           maxWidth: 1440, margin: '0 auto',
           display: 'flex', flexDirection: 'column', gap: 'var(--space-3)',
         }}>
-          <div style={{ display: 'block', '@media(min-width:768px)': 'none' } as any}>
-            <MobileBreadcrumbs />
-          </div>
           <style dangerouslySetInnerHTML={{ __html: `
             .shell-breadcrumb-mobile{display:block}
             @media(min-width:768px){.shell-breadcrumb-mobile{display:none!important}}
@@ -112,8 +109,4 @@ export default function AppShell({ children, className, style }: {
       </main>
     </div>
   );
-}
-
-function MobileBreadcrumbs() {
-  return <BreadcrumbsShell />;
 }

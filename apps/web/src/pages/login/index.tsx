@@ -93,8 +93,15 @@ export default function LoginPage() {
       const { needsPasswordChange } = await login({ username: email, password });
       if (needsPasswordChange) navigate('/auth/change-password', { replace: true });
       else navigate('/dashboard', { replace: true });
-    } catch {
-      setSubmitError(errorMessage ?? 'Login failed. Please check your credentials.');
+    } catch (err) {
+      // Read the live error from the store (the closure-captured errorMessage
+      // would still be null because clear() wiped it before login() ran).
+      const liveError = useAuthStore.getState().errorMessage;
+      setSubmitError(
+        liveError ??
+        (err instanceof Error ? err.message : null) ??
+        'Login failed. Please check your credentials.',
+      );
     }
   };
 

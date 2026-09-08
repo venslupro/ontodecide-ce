@@ -57,13 +57,13 @@ export default function GraphEntitiesPage() {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(10);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
-  const total = 150; // 15 pages of 10
 
   const toggleTag = (t: string) => setActiveTags((arr) =>
     arr.includes(t) ? arr.filter((x) => x !== t) : [...arr, t],
   );
 
-  const rows = useMemo(() => mockList(
+  // Generate the full dataset once (150 rows matching `total`).
+  const allRows = useMemo(() => mockList(
     (i, r) => {
       const entType = ENTITY_TYPES[i % ENTITY_TYPES.length];
       const name = ENTITY_NAMES[i % ENTITY_NAMES.length] + (i >= ENTITY_NAMES.length ? ` ${Math.floor(i / ENTITY_NAMES.length) + 1}` : '');
@@ -84,10 +84,44 @@ export default function GraphEntitiesPage() {
         type: entType,
         tags,
         updated: d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
+        updatedDate: d,
       };
     },
-    10, 33 + page,
-  ), [page]);
+    150, 33,
+  ), []);
+
+  // Apply filters + sorting.
+  const filteredRows = useMemo(() => {
+    let result = allRows.filter((row) => {
+      const q = query.trim().toLowerCase();
+      const matchesQ = !q || row.name.toLowerCase().includes(q) || row.id.toLowerCase().includes(q);
+      const matchesType = type === 'all' || row.type === type;
+      const matchesTags = activeTags.length === 0 || activeTags.every((t) => row.tags.includes(t));
+      return matchesQ && matchesType && matchesTags;
+    });
+    result = [...result];
+    switch (sort) {
+      case 'updated_desc':
+        result.sort((a, b) => b.updatedDate.getTime() - a.updatedDate.getTime());
+        break;
+      case 'updated_asc':
+        result.sort((a, b) => a.updatedDate.getTime() - b.updatedDate.getTime());
+        break;
+      case 'name_asc':
+        result.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case 'name_desc':
+        result.sort((a, b) => b.name.localeCompare(a.name));
+        break;
+    }
+    return result;
+  }, [allRows, query, type, activeTags, sort]);
+
+  const filteredTotal = filteredRows.length;
+  const rows = useMemo(() => {
+    const start = (page - 1) * size;
+    return filteredRows.slice(start, start + size);
+  }, [filteredRows, page, size]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -164,7 +198,7 @@ export default function GraphEntitiesPage() {
           </div>
 
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <Badge tone="info">{total} total entities</Badge>
+            <Badge tone="info">{filteredTotal} total entities</Badge>
             {type !== 'all' && <Tag tone="primary" onClose={() => setType('all')}>Type: {type}</Tag>}
             {activeTags.map((t) => <Tag key={t} tone="primary" onClose={() => toggleTag(t)}>{t}</Tag>)}
             {query && <Tag tone="primary" onClose={() => setQuery('')}>“{query}”</Tag>}
@@ -238,7 +272,7 @@ export default function GraphEntitiesPage() {
             <Pagination
               page={page}
               size={size}
-              total={total}
+              total={filteredTotal}
               onChange={({ page: p, size: s }) => { setPage(p); setSize(s); }}
             />
           </div>
