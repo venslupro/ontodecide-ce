@@ -5,7 +5,7 @@
  * clickable rows expand a detail panel with request params, response code,
  * user agent. Pagination + Export CSV CTA.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import { mockList } from '@/lib/mock';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -81,9 +81,9 @@ export default function AdminAuditPage() {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(10);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const total = 268;
 
-  const rows: AuditRow[] = useMemo(() => mockList(
+  // Generate the full audit dataset once (268 rows matching the spec total).
+  const allRows: AuditRow[] = useMemo(() => mockList(
     (i, r) => {
       const sevByNum: Severity[] = ['info', 'info', 'info', 'success', 'success', 'warning', 'danger'];
       const s = sevByNum[Math.floor(r * sevByNum.length)];
@@ -105,8 +105,25 @@ export default function AdminAuditPage() {
         params: `page=${Math.floor(r * 10)}&size=50&filters=${encodeURIComponent(resWord + ',active')}`,
         userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/537.36 Chrome/128.0 Safari/537.36',
       } as AuditRow;
-    }, size, 404 + page,
-  ), [page, size]);
+    }, 268, 404,
+  ), []);
+
+  // Apply toolbar filters.
+  const filteredRows = useMemo(() => {
+    return allRows.filter((row) => {
+      const matchesUser = !user.trim() || row.user.toLowerCase().includes(user.trim().toLowerCase());
+      const matchesAction = action === 'all' || row.action.startsWith(action);
+      const matchesResource = resource === 'all' || row.resourceType === resource;
+      const matchesSeverity = severity === 'all' || row.severity === severity;
+      return matchesUser && matchesAction && matchesResource && matchesSeverity;
+    });
+  }, [allRows, user, action, resource, severity]);
+
+  const total = filteredRows.length;
+  const rows = useMemo(() => {
+    const start = (page - 1) * size;
+    return filteredRows.slice(start, start + size);
+  }, [filteredRows, page, size]);
 
   const toggle = (id: string) => setExpanded((s) => {
     const n = new Set(s);
@@ -161,7 +178,7 @@ export default function AdminAuditPage() {
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button variant="outline" size="sm" onClick={() => {
-              setUser(''); setAction('all'); setResource('all'); setSeverity('all');
+              setUser(''); setAction('all'); setResource('all'); setSeverity('all'); setPage(1);
             }}>Clear filters</Button>
             <Button variant="primary" size="sm">🔍 Apply filters</Button>
           </div>
@@ -188,9 +205,8 @@ export default function AdminAuditPage() {
               {rows.map((r) => {
                 const open = expanded.has(r.id);
                 return (
-                  <>
+                  <Fragment key={r.id}>
                     <TableRow
-                      key={r.id}
                       onClick={() => toggle(r.id)}
                       style={{
                         cursor: 'pointer',
@@ -273,7 +289,7 @@ export default function AdminAuditPage() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>
