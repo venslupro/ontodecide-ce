@@ -1,7 +1,7 @@
 /**
  * Scenario-simulation service.
  *
- * Implements the design doc §4.5.4 "情景推演" feature:
+ * Implements the design doc §4.5.4 "Scenario Simulation" feature:
  *   - high temperature (0.8) for creative breadth;
  *   - optimistic / pessimistic / neutral tone set.
  *
