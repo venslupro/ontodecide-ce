@@ -21,15 +21,21 @@
 #        (wrangler.toml's `name` is the default; CLI flag overrides it)
 #
 # API routing:
-#   The SPA ships with build-time VITE_API_BASE injected during the CI build.
-#   This points to the Gateway worker's public workers.dev domain
-#   (e.g. https://ontodecide-prd-gateway.<subdomain>.workers.dev).
-#   Future: migrate /api/* to Pages Functions with a Service Binding to
-#   the Gateway worker for zero-cost in-account routing and no CORS.
+#   The SPA uses relative {@code /api/*} URLs (same-origin). A Pages
+#   Function ({@code functions/api/[[path]].ts}) intercepts these and
+#   forwards them to the Gateway worker via the {@code GATEWAY_SERVICE}
+#   Service Binding — zero-cost in-account routing, no CORS, no
+#   workers.dev DNS dependency.
 
 name = "ontodecide-ce"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
+
+# ----- Service Binding ------------------------------------------------------
+# Pages Function proxy forwards /api/* to the Gateway worker.
+[[services]]
+binding = "GATEWAY_SERVICE"
+service = "ontodecide-prd-gateway"
 
 # ----- Pages Observability --------------------------------------------------
 # Pages observability (analogous to Worker [observability]).
