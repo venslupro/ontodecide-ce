@@ -60,7 +60,7 @@ export default function AdminCleanupPage() {
       return {
         taskId: `CLN-${String(2026000 + i)}`,
         triggeredBy: TRIGGER_POOL[Math.floor(r * TRIGGER_POOL.length)],
-        startedAt: d.toLocaleString(undefined, { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        startedAt: d.toLocaleString('en-US', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
         duration: dur,
         deleted,
         status: s,
@@ -156,7 +156,7 @@ export default function AdminCleanupPage() {
                     <TableCell style={{ fontWeight: 500 }}>{h.triggeredBy}</TableCell>
                     <TableCell>{h.startedAt}</TableCell>
                     <TableCell style={{ color: 'var(--color-neutral-600)', fontSize: 13 }}>{h.duration}</TableCell>
-                    <TableCell align="right" style={{ fontWeight: 600 }}>{h.deleted.toLocaleString()}</TableCell>
+                    <TableCell align="right" style={{ fontWeight: 600 }}>{h.deleted.toLocaleString('en-US')}</TableCell>
                     <TableCell>
                       <Badge tone={STATUS_TO_BADGE[h.status]}>
                         {h.status.charAt(0).toUpperCase() + h.status.slice(1)}
