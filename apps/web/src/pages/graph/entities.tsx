@@ -83,7 +83,7 @@ export default function GraphEntitiesPage() {
         name,
         type: entType,
         tags,
-        updated: d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
+        updated: d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
         updatedDate: d,
       };
     },

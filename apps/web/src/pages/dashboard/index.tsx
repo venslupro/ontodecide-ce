@@ -51,7 +51,7 @@ export default function DashboardPage() {
   const { session } = useSession();
   const userName = session?.username ?? session?.user_id ?? 'Alex';
   const tenantId = session?.tenant_id ?? 'tenant-acme-001';
-  const today = new Date().toLocaleDateString(undefined, {
+  const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 
@@ -159,7 +159,7 @@ export default function DashboardPage() {
         type: types[i % types.length],
         confidence,
         status: st,
-        created: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        created: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       };
     },
     10, 13,

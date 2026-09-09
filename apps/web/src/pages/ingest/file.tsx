@@ -359,7 +359,7 @@ function WebhookTab() {
                         {e}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--color-neutral-500)' }}>
-                        Fired whenever an {e.split('.')[0]} undergoes a {e.split('.')[1]} event.
+                        Fires when {e} occurs.
                       </div>
                     </div>
                     <Switch

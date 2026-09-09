@@ -102,7 +102,7 @@ export default function GraphOntologyPage() {
                       options={CAT_OPTIONS}
                     />
                   </div>
-                  <Badge tone="info">{all.length} types</Badge>
+                  <Badge tone="info">{filtered.length} of {all.length} types</Badge>
                 </div>
 
                 {/* Grid */}

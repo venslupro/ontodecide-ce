@@ -120,7 +120,7 @@ function initialsOf(label: string): string {
 function formatRelative(iso: string | null | undefined): string {
   if (!iso) return 'Never';
   const ms = Date.now() - new Date(iso).getTime();
-  if (Number.isNaN(ms) || ms < 0) return new Date(iso).toLocaleDateString();
+  if (Number.isNaN(ms) || ms < 0) return new Date(iso).toLocaleDateString('en-US');
   const s = Math.floor(ms / 1000);
   if (s < 60) return 'just now';
   const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
@@ -662,7 +662,7 @@ export default function AdminUsersPage() {
                     <TableCell><Badge tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Badge></TableCell>
                     <TableCell style={{ fontSize: 13, color: 'var(--color-neutral-600)' }}>
                       {u.expires_at
-                        ? new Date(u.expires_at).toLocaleDateString()
+                        ? new Date(u.expires_at).toLocaleDateString('en-US')
                         : (
                           <span style={{ color: 'var(--color-neutral-400)' }}>
                             Never
