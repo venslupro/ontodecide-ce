@@ -338,10 +338,12 @@ jobs:
           B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
           B2_KEY: ${{ secrets.B2_KEY }}
 
-  # web — L1, Cloudflare Pages SPA (parallel with leaves)
+  # web — Cloudflare Pages SPA. Deployed AFTER the Gateway so the
+  # GATEWAY_SERVICE Service Binding (used by the /api/* proxy Function)
+  # resolves to a real worker at invocation time.
   deploy-web:
     name: Deploy · web
-    needs: detect-changes
+    needs: [detect-changes, deploy-gateway]
     environment:
       name: production
     if: github.ref == 'refs/heads/main'
@@ -356,29 +358,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Resolve the Gateway worker's public workers.dev URL so the SPA
-      # knows where to send API requests at runtime.
-      - name: Resolve Gateway URL
-        id: gateway-url
-        env:
-          CF_API_TOKEN:   ${{ secrets.CF_API_TOKEN }}
-          CF_ACCOUNT_ID:  ${{ secrets.CF_ACCOUNT_ID }}
-          PROJECT_NAME:   'ontodecide'
-        run: |
-          SUBDOMAIN=$(curl -s \
-            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/subdomain" \
-            -H "Authorization: Bearer $CF_API_TOKEN" | jq -r '.result.subdomain')
-          if [ -z "$SUBDOMAIN" ] || [ "$SUBDOMAIN" = "null" ]; then
-            echo "::error::Could not resolve workers.dev subdomain"
-            exit 1
-          fi
-          ENV_SHORT="prd"
-          GATEWAY_URL="https://${PROJECT_NAME}-${ENV_SHORT}-gateway.${SUBDOMAIN}.workers.dev"
-          echo "url=$GATEWAY_URL" >> "$GITHUB_OUTPUT"
-          echo "Resolved Gateway URL: $GATEWAY_URL"
+      # Build with NO VITE_API_BASE — the SPA uses relative /api/* URLs.
+      # A Pages Function (functions/api/[[path]].ts) proxies them to the
+      # Gateway worker via the GATEWAY_SERVICE Service Binding declared in
+      # apps/web/wrangler.toml. This avoids workers.dev DNS + CORS issues.
       - run: pnpm -r build
-        env:
-          VITE_API_BASE: ${{ steps.gateway-url.outputs.url }}
       # wrangler pages CLI reads CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
       # (not the CF_* aliases used by wrangler-action).
       #
