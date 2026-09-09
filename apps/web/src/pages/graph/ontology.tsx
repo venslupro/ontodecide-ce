@@ -13,6 +13,7 @@ import Pagination from '@/components/ui/Pagination';
 import Badge from '@/components/ui/Badge';
 import OntologyTypeCard from '@/components/shared/OntologyTypeCard';
 import { Card, CardHeader, CardContent } from '@/components/ui/Card';
+import Modal from '@/components/ui/Modal';
 
 const ONTO_COLORS = [
   'var(--color-primary)', 'var(--color-accent)',
@@ -41,6 +42,18 @@ export default function GraphOntologyPage() {
   const [category, setCategory] = useState('all');
   const [page, setPage] = useState(1);
   const size = 8;
+
+  const [newOpen, setNewOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newCategory, setNewCategory] = useState('biz');
+
+  const resetNew = () => {
+    setNewName(''); setNewCategory('biz'); setNewOpen(false);
+  };
+  const submitNew = () => {
+    if (!newName.trim()) return;
+    resetNew();
+  };
 
   const all = useMemo(() => mockList(
     (i, r) => ({
@@ -77,7 +90,7 @@ export default function GraphOntologyPage() {
             relationships. Browse the list or inspect the graph schema view.
           </p>
         </div>
-        <Button variant="primary" size="md">+ New ontology type</Button>
+        <Button variant="primary" size="md" onClick={() => setNewOpen(true)}>+ New ontology type</Button>
       </div>
 
       <Card>
@@ -135,9 +148,49 @@ export default function GraphOntologyPage() {
         </CardHeader>
         <CardContent style={{ padding: 0 }} />
       </Card>
+
+      <Modal
+        open={newOpen}
+        title="Create new ontology type"
+        onClose={resetNew}
+        footer={
+          <>
+            <Button variant="outline" onClick={resetNew}>Cancel</Button>
+            <Button variant="primary" onClick={submitNew} disabled={!newName.trim()}>
+              Create type
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <div>
+            <label style={fieldLbl}>Type name</label>
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="e.g. Vendor"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label style={fieldLbl}>Category</label>
+            <Select
+              value={newCategory}
+              onChange={(e) => setNewCategory(e.target.value)}
+              options={CAT_OPTIONS.filter((o) => o.value !== 'all')}
+            />
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
+
+const fieldLbl: React.CSSProperties = {
+  display: 'block', fontSize: 12, fontWeight: 600,
+  color: 'var(--color-neutral-700)', marginBottom: 6,
+  textTransform: 'uppercase', letterSpacing: '0.04em',
+};
 
 /** SVG node-edge schema diagram (illustrative). */
 function SchemaView() {

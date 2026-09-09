@@ -124,6 +124,6 @@ describe('api client transport', () => {
     );
     expect(result.success).toBe(false);
     expect(result.error?.code).toBe('NETWORK');
-    expect(result.error?.message).toMatch(/Failed to fetch/);
+    expect(result.error?.message).toMatch(/Unable to reach the server/);
   });
 });

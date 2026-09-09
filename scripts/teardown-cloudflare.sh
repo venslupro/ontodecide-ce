@@ -512,20 +512,21 @@ fi
 
 # ============================================================================
 # Step 8 — Pages project (after Workers — per user request)
+#    The Pages project is named 'ontodecide-ce' (NOT ${RES_PREFIX}-*)
+#    to use the default domain ontodecide-ce.pages.dev, so it does NOT
+#    match the RES_PREFIX filter used for other resources. We hardcode it.
 # ============================================================================
+PAGES_PROJECT_NAME="${PROJECT_NAME}-ce"
 banner "Step 8/8: Pages Projects"
-pages_rows="$(cf_list_all "pages/projects" \
-  '.[] | [.name, .id, .canonical_deployment.url // ""]')"
-if [[ -z "${pages_rows}" ]]; then
-  info "  (no pages projects found with prefix ${RES_PREFIX})"
+info "  Targeting Pages project: ${PAGES_PROJECT_NAME}"
+pages_resp="$(cf_api GET "pages/projects/${PAGES_PROJECT_NAME}" 2>/dev/null || true)"
+if [[ -z "${pages_resp}" ]]; then
+  info "  (Pages project '${PAGES_PROJECT_NAME}' not found — skipping)"
 else
-  while IFS=$'\t' read -r pname pid purl; do
-    [[ -z "${pname:-}" ]] && continue
-    display="[${pid}]"
-    cf_delete "pages project ${pname}" "pages/projects/${pname}" "${display}"
-  done <<EOF_PAGES
-${pages_rows}
-EOF_PAGES
+  pages_id="$(printf '%s' "${pages_resp}" | jq -r '.result.id // ""')"
+  pages_url="$(printf '%s' "${pages_resp}" | jq -r '.result.canonical_deployment.url // ""')"
+  display="[${pages_id}] ${pages_url}"
+  cf_delete "pages project ${PAGES_PROJECT_NAME}" "pages/projects/${PAGES_PROJECT_NAME}" "${display}"
 fi
 
 # ============================================================================
