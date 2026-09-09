@@ -315,8 +315,13 @@ function normalizeError<T>(
  * Translates a thrown network failure into an {@link ApiResponse}.
  */
 function networkError<T>(err: unknown): ApiResponse<T> {
-  const message =
+  const rawMessage =
     err instanceof Error ? err.message : 'Network error occurred.';
+  // The browser's fetch throws "Failed to fetch" for every CORS/DNS/HTTP
+  // reachability failure — we surface a friendlier, actionable message.
+  const message = rawMessage === 'Failed to fetch'
+    ? 'Unable to reach the server. Please check your network connection and try again.'
+    : rawMessage;
   return {
     success: false,
     error: { code: 'NETWORK', message },
