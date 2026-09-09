@@ -171,7 +171,7 @@ export default function IngestJobPage() {
             display: 'flex', justifyContent: 'space-between',
             fontSize: 12, color: 'var(--color-neutral-500)',
           }}>
-            <span>Rows processed: <strong style={{ color: 'var(--color-neutral-900)' }}>{stages[3].rows.toLocaleString()}</strong></span>
+            <span>Rows processed: <strong style={{ color: 'var(--color-neutral-900)' }}>{stages[3].rows.toLocaleString('en-US')}</strong></span>
             <span>Estimated remaining: <strong style={{ color: 'var(--color-neutral-900)' }}>{status === 'success' ? '—' : '~ 6s'}</strong></span>
           </div>
         </CardContent>
@@ -216,7 +216,7 @@ export default function IngestJobPage() {
                 )}
               </div>
               <div style={{ fontSize: 12, color: 'var(--color-neutral-600)' }}>
-                {s.status === 'pending' ? '—' : <><strong>{s.rows.toLocaleString()}</strong> rows</>}
+                {s.status === 'pending' ? '—' : <><strong>{s.rows.toLocaleString('en-US')}</strong> rows</>}
               </div>
               <Badge tone={
                 s.status === 'success' ? 'success' :

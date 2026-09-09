@@ -94,7 +94,7 @@ export default function AdminAuditPage() {
       const d = new Date(Date.now() - mins * 37 * 60 * 1000);
       return {
         id: `AUD-${String(900000 + i)}`,
-        time: d.toLocaleString(undefined, { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        time: d.toLocaleString('en-US', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
         user,
         action: `${actionWord}.${resWord}`,
         resource: `${resWord.slice(0, 3).toUpperCase()}-${1000 + Math.floor(r * 8000)}`,

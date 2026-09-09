@@ -377,7 +377,7 @@ export default function LoginPage() {
               {applyResult.expires_at && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
                   <span style={{ color: 'var(--color-neutral-500)' }}>Expires At</span>
-                  <span>{new Date(applyResult.expires_at).toLocaleString()}</span>
+                  <span>{new Date(applyResult.expires_at).toLocaleString('en-US')}</span>
                 </div>
               )}
             </div>
