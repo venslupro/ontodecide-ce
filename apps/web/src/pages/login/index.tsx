@@ -23,6 +23,12 @@ const Spinner = () => (
   </svg>
 );
 
+/** Strict email format validator — mirrors the backend regex. */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function isValidEmail(v: string): boolean {
+  return EMAIL_RE.test(v.trim());
+}
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const loading = useAuthStore((s) => s.loading);
@@ -52,13 +58,18 @@ export default function LoginPage() {
     e.preventDefault();
     setApplyError(null);
     setApplyResult(null);
-    if (!applyEmail.trim()) {
+    const trimmedEmail = applyEmail.trim();
+    if (!trimmedEmail) {
       setApplyError('Please enter an email address.');
+      return;
+    }
+    if (!isValidEmail(trimmedEmail)) {
+      setApplyError('Please enter a valid email address (e.g. you@company.com).');
       return;
     }
     setApplyLoading(true);
     try {
-      const res = await applyTrial({ email: applyEmail.trim() });
+      const res = await applyTrial({ email: trimmedEmail });
       if (res.success && res.data) {
         setApplyResult({
           username: res.data.username,
@@ -69,7 +80,7 @@ export default function LoginPage() {
         setApplyError(res.error?.message ?? 'Application failed. Please try again later.');
       }
     } catch {
-      setApplyError('Network error. Please try again later.');
+      setApplyError('Unable to reach the server. Please check your network connection and try again.');
     } finally {
       setApplyLoading(false);
     }
@@ -344,7 +355,12 @@ export default function LoginPage() {
           applyResult ? (
             <Button onClick={closeApply}>Got it</Button>
           ) : (
-            <Button type="submit" form="apply-form" disabled={applyLoading}>
+            <Button
+              type="submit"
+              form="apply-form"
+              disabled={applyLoading || !isValidEmail(applyEmail)}
+            >
+              {applyLoading ? <Spinner /> : null}
               {applyLoading ? 'Submitting…' : 'Apply Now'}
             </Button>
           )
@@ -407,8 +423,16 @@ export default function LoginPage() {
                 autoComplete="email"
                 placeholder="you@example.com"
                 value={applyEmail}
+                invalid={applyEmail.length > 0 && !isValidEmail(applyEmail)}
                 onChange={(e) => setApplyEmail(e.target.value)}
               />
+              {applyEmail.length > 0 && !isValidEmail(applyEmail) && (
+                <p style={{
+                  fontSize: 12, color: 'var(--color-danger)', margin: '4px 0 0',
+                }}>
+                  Please enter a valid email address.
+                </p>
+              )}
             </div>
           </form>
         )}

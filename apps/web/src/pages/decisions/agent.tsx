@@ -100,6 +100,13 @@ export default function DecisionAgentPage() {
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const startNewChat = () => {
+    setTasks(INITIAL_TASKS);
+    setMessages([]);
+    setInput('');
+    setSending(false);
+  };
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages.length]);
@@ -137,7 +144,7 @@ export default function DecisionAgentPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          <Button variant="outline" size="md">🆕 New chat</Button>
+          <Button variant="outline" size="md" onClick={startNewChat}>🆕 New chat</Button>
           <Button variant="outline" size="md">📜 History</Button>
           <Button variant="secondary" size="md">⬇ Export</Button>
         </div>

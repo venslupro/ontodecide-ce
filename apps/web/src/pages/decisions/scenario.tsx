@@ -85,6 +85,13 @@ export default function DecisionScenarioPage() {
     }, 1200);
   };
 
+  const newScenario = () => {
+    setTopic('');
+    setDescription('');
+    setVars([{ key: '', value: '' }]);
+    setRan(false);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
@@ -97,7 +104,7 @@ export default function DecisionScenarioPage() {
             plausible futures. Scenarios are ranked by probability and compared side-by-side.
           </p>
         </div>
-        <Button variant="primary">+ New scenario</Button>
+        <Button variant="primary" onClick={newScenario}>+ New scenario</Button>
       </div>
 
       {/* Input card */}

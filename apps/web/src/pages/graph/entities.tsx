@@ -16,6 +16,7 @@ import Pagination from '@/components/ui/Pagination';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import IconButton from '@/components/ui/IconButton';
 import { Card, CardContent } from '@/components/ui/Card';
+import Modal from '@/components/ui/Modal';
 
 const TYPE_OPTS = [
   { label: 'All types', value: 'all' },
@@ -57,6 +58,18 @@ export default function GraphEntitiesPage() {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(10);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newType, setNewType] = useState('Organization');
+  const [newTags, setNewTags] = useState('');
+
+  const resetNew = () => {
+    setNewName(''); setNewType('Organization'); setNewTags(''); setNewOpen(false);
+  };
+  const submitNew = () => {
+    if (!newName.trim()) return;
+    resetNew();
+  };
 
   const toggleTag = (t: string) => setActiveTags((arr) =>
     arr.includes(t) ? arr.filter((x) => x !== t) : [...arr, t],
@@ -135,7 +148,7 @@ export default function GraphEntitiesPage() {
             keyword filters for precise lookups.
           </p>
         </div>
-        <Button variant="primary">+ New entity</Button>
+        <Button variant="primary" onClick={() => setNewOpen(true)}>+ New entity</Button>
       </div>
 
       <Card>
@@ -292,6 +305,54 @@ export default function GraphEntitiesPage() {
           This action cannot be undone and will also remove relationships connected to this entity.
         </p>
       </ConfirmDialog>
+
+      <Modal
+        open={newOpen}
+        title="Create new entity"
+        onClose={resetNew}
+        footer={
+          <>
+            <Button variant="outline" onClick={resetNew}>Cancel</Button>
+            <Button variant="primary" onClick={submitNew} disabled={!newName.trim()}>
+              Create entity
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <div>
+            <label style={fieldLbl}>Name</label>
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="e.g. Acme Corp"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label style={fieldLbl}>Entity type</label>
+            <Select
+              value={newType}
+              onChange={(e) => setNewType(e.target.value)}
+              options={TYPE_OPTS.filter((o) => o.value !== 'all')}
+            />
+          </div>
+          <div>
+            <label style={fieldLbl}>Tags (comma-separated, optional)</label>
+            <Input
+              value={newTags}
+              onChange={(e) => setNewTags(e.target.value)}
+              placeholder="enterprise, vip, eu"
+            />
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
+
+const fieldLbl: React.CSSProperties = {
+  display: 'block', fontSize: 12, fontWeight: 600,
+  color: 'var(--color-neutral-700)', marginBottom: 6,
+  textTransform: 'uppercase', letterSpacing: '0.04em',
+};
