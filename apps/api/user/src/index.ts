@@ -251,22 +251,22 @@ const applyRoute = createRoute({
   method: 'post',
   path: '/auth/apply',
   tags: ['Auth'],
-  summary: '申请体验账号（公开）',
+  summary: 'Apply for trial account (public)',
   description:
-    '自助申请体验账号。提交邮箱后即时创建账号并返回临时密码，' +
-    '首次登录需修改密码。含邮箱去重、冷却时间和名额限制防刷。',
+    'Self-service trial account application. Submit your email to instantly create an account and receive a temporary password. ' +
+    'Password must be changed on first login. Includes email deduplication, cooldown, and quota limits to prevent abuse.',
   request: {
     body: {
       content: {
         'application/json': {
           schema: z.object({
-            email: z.string().email().openapi({ description: '申请邮箱，同时作为登录用户名。' }),
+            email: z.string().email().openapi({ description: 'Application email, also used as the login username.' }),
             username: z
               .string()
               .min(3)
               .max(254)
               .optional()
-              .openapi({ description: '可选登录名，省略时使用邮箱。' }),
+              .openapi({ description: 'Optional login name. Defaults to email if omitted.' }),
           }),
         },
       },
@@ -280,11 +280,11 @@ const applyRoute = createRoute({
         expires_at: z.string().nullable(),
         must_change_password: z.boolean(),
       }),
-      '体验账号已创建，临时密码请妥善保管。',
+      'Trial account created. Please keep your temporary password safe.',
     ),
-    400: jsonError('邮箱格式无效。'),
-    409: jsonError('邮箱已注册或体验名额已满。'),
-    429: jsonError('操作过于频繁，请稍后重试。'),
+    400: jsonError('Invalid email format.'),
+    409: jsonError('Email already registered or trial quota is full.'),
+    429: jsonError('Too many requests. Please try again later.'),
   },
 });
 app.openapi(applyRoute, async (c) => {

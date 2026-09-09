@@ -230,7 +230,7 @@ export class UserManagementService {
     if (existing) {
       throwError(
         ERROR_CODES.USER_ALREADY_EXISTS,
-        '该邮箱已注册账号，请直接登录或使用其他邮箱。',
+        'This email is already registered. Please log in directly or use a different email.',
       );
     }
 
@@ -243,7 +243,7 @@ export class UserManagementService {
     if (trialCount >= trialMax) {
       throwError(
         ERROR_CODES.USER_MAX_EXCEEDED,
-        '体验账号名额已满，请稍后再试或联系管理员。',
+        'Trial account quota is full. Please try again later or contact the administrator.',
       );
     }
 
@@ -287,7 +287,7 @@ export class UserManagementService {
         const wait = Math.ceil(TRIAL_APPLY_COOLDOWN_SECONDS - elapsed);
         throwError(
           ERROR_CODES.AUTH_RATE_LIMITED,
-          `操作过于频繁，请在 ${wait} 秒后重试。`,
+          `Too many requests. Please try again in ${wait} seconds.`,
         );
       }
     }
@@ -319,7 +319,7 @@ export class UserManagementService {
       });
       throwError(
         ERROR_CODES.AUTH_INVALID_CREDENTIALS,
-        '账户不存在或者已被清除。',
+        'Account does not exist or has been cleared.',
       );
     }
     const valid = await user!.verifyPassword(password);

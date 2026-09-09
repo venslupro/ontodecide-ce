@@ -260,7 +260,7 @@ describe('UserManagementService.login', () => {
 
   it('throws on a non-existent user', async () => {
     const { service } = makeService();
-    await expect(service.login('ghost', 'pw', auditCtx)).rejects.toThrow('账户不存在或者已被清除。');
+    await expect(service.login('ghost', 'pw', auditCtx)).rejects.toThrow('Account does not exist or has been cleared.');
   });
 });
 

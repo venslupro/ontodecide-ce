@@ -1,7 +1,7 @@
 /**
  * Recommendation service: low-temperature, history-aware suggestions.
  *
- * Mirrors the design doc §4.5.4 "决策建议" feature:
+ * Mirrors the design doc §4.5.4 "Decision Recommendation" feature:
  *   - low temperature (0.3) for deterministic output;
  *   - history reference (last 10 decisions for the tenant);
  *   - structured output with priority / confidence / steps.
