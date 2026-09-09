@@ -53,7 +53,7 @@ export default function LoginPage() {
     setApplyError(null);
     setApplyResult(null);
     if (!applyEmail.trim()) {
-      setApplyError('请输入邮箱地址。');
+      setApplyError('Please enter an email address.');
       return;
     }
     setApplyLoading(true);
@@ -66,10 +66,10 @@ export default function LoginPage() {
           expires_at: res.data.expires_at,
         });
       } else {
-        setApplyError(res.error?.message ?? '申请失败，请稍后重试。');
+        setApplyError(res.error?.message ?? 'Application failed. Please try again later.');
       }
     } catch {
-      setApplyError('网络错误，请稍后重试。');
+      setApplyError('Network error. Please try again later.');
     } finally {
       setApplyLoading(false);
     }
@@ -328,7 +328,7 @@ export default function LoginPage() {
                   padding: 0,
                 }}
               >
-                没有账号？申请体验账号 →
+                No account? Apply for a trial account →
               </button>
             </div>
           </div>
@@ -338,14 +338,14 @@ export default function LoginPage() {
       {/* --- Trial account application modal --- */}
       <Modal
         open={showApply}
-        title="申请体验账号"
+        title="Apply for Trial Account"
         onClose={closeApply}
         footer={
           applyResult ? (
-            <Button onClick={closeApply}>我知道了</Button>
+            <Button onClick={closeApply}>Got it</Button>
           ) : (
             <Button type="submit" form="apply-form" disabled={applyLoading}>
-              {applyLoading ? '提交中…' : '立即申请'}
+              {applyLoading ? 'Submitting…' : 'Apply Now'}
             </Button>
           )
         }
@@ -353,7 +353,7 @@ export default function LoginPage() {
         {applyResult ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             <Alert tone="success">
-              体验账号已创建成功！请使用以下凭据登录，并在首次登录后修改密码。
+              Trial account created successfully! Please log in with the credentials below and change your password after first login.
             </Alert>
             <div
               style={{
@@ -365,30 +365,30 @@ export default function LoginPage() {
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
-                <span style={{ color: 'var(--color-neutral-500)' }}>用户名</span>
+                <span style={{ color: 'var(--color-neutral-500)' }}>Username</span>
                 <span style={{ fontWeight: 600, fontFamily: 'monospace' }}>{applyResult.username}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
-                <span style={{ color: 'var(--color-neutral-500)' }}>临时密码</span>
+                <span style={{ color: 'var(--color-neutral-500)' }}>Temporary Password</span>
                 <span style={{ fontWeight: 600, fontFamily: 'monospace', color: 'var(--color-primary-700)' }}>
                   {applyResult.temporary_password}
                 </span>
               </div>
               {applyResult.expires_at && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
-                  <span style={{ color: 'var(--color-neutral-500)' }}>有效期至</span>
+                  <span style={{ color: 'var(--color-neutral-500)' }}>Expires At</span>
                   <span>{new Date(applyResult.expires_at).toLocaleString()}</span>
                 </div>
               )}
             </div>
             <p style={{ fontSize: 12, color: 'var(--color-neutral-500)', margin: 0 }}>
-              ⚠️ 临时密码仅显示一次，请妥善保管。账号到期后数据将自动清除。
+              ⚠️ The temporary password is shown only once. Please keep it safe. Account data will be automatically cleared after expiration.
             </p>
           </div>
         ) : (
           <form id="apply-form" onSubmit={onApply} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             <p style={{ fontSize: 13, color: 'var(--color-neutral-600)', margin: 0 }}>
-              输入邮箱即可免费申请 14 天体验账号，提交后即时获取登录凭据。
+              Enter your email to apply for a free 14-day trial account. You'll receive login credentials immediately after submission.
             </p>
             {applyError && (
               <Alert tone="danger" onClose={() => setApplyError(null)}>{applyError}</Alert>
@@ -398,7 +398,7 @@ export default function LoginPage() {
                 display: 'block', fontSize: 13, fontWeight: 600,
                 color: 'var(--color-neutral-700)', marginBottom: 6,
               }}>
-                邮箱
+                Email
               </label>
               <Input
                 id="apply-email"

@@ -234,10 +234,10 @@ export async function applyHandler(c: Context, service: UserManagementService) {
   const body = await c.req.json();
   const email = typeof body?.email === 'string' ? body.email.trim() : '';
   if (!email) {
-    return c.json(fail(ERROR_CODES.VALIDATION_FAILED, '邮箱不能为空。'), 400);
+    return c.json(fail(ERROR_CODES.VALIDATION_FAILED, 'Email cannot be empty.'), 400);
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return c.json(fail(ERROR_CODES.VALIDATION_FAILED, '请输入有效的邮箱地址。'), 400);
+    return c.json(fail(ERROR_CODES.VALIDATION_FAILED, 'Please enter a valid email address.'), 400);
   }
   const username =
     typeof body?.username === 'string' && body.username.trim().length > 0
