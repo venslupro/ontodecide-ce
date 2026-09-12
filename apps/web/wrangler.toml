@@ -2,58 +2,48 @@
 #
 # ============================================================
 # ARCHITECTURE OWNERSHIP (Terraform ↔ Wrangler split):
-#   • Terraform: NOT involved in Pages project (code-coupled).
-#   • Wrangler: OWNS EVERYTHING Pages-related.
+#   • Terraform: NOT involved in the Pages project (code-coupled).
+#   • Wrangler: OWNS EVERYTHING Pages-related:
 #       - Pages project itself (created on first `wrangler pages project create`;
-#         updated by `wrangler pages deploy` / wrangler-action).
-#       - [assets] directory: points to Vite build output (dist/).
+#         updated by `wrangler pages deploy`).
+#       - pages_build_output_dir: Vite build output (dist/).
 #       - Static asset deployments (every CI deploy re-uploads dist/).
-#       - Pages Functions (functions/ directory) — reserved for future use:
-#         e.g. proxying /api/* → Gateway worker via Service Binding to
-#         avoid build-time hardcoding of VITE_API_BASE.
-# ============================================================
+#       - Pages Functions (functions/ directory) — proxy /api/* → Gateway
+#         worker via Service Binding.
 #
-# Deploy path:
-#   CI (deploy.yml deploy-web job):
-#     1. pnpm --filter @ontodecide/web build   → Vite emits apps/web/dist/
-#     2. wrangler pages project create <name>  (idempotent; || true on exists)
-#     3. wrangler pages deploy dist --project-name <name> --branch main
-#        (wrangler.toml's `name` is the default; CLI flag overrides it)
+# IMPORTANT (Pages config semantics — wrangler 4.x):
+#   • `pages_build_output_dir` MUST be present. Without it Wrangler treats
+#     this file as LOCAL-DEV-ONLY and silently ignores every binding on
+#     `wrangler pages deploy` (regression verified on the live project).
+#   • Once deployed with this file, it becomes the deployment source of
+#     truth: the same fields can no longer be edited in the dashboard.
+#   • Pages config supports only a subset of Workers keys: `assets` and
+#     `observability` are NOT supported here and fail validation. Asset
+#     serving is driven by pages_build_output_dir; Pages observability is
+#     managed via the dashboard / API.
+#
+# Deploy path (CI deploy.yml deploy-web job):
+#   1. pnpm -r build                    → Vite emits apps/web/dist/
+#   2. wrangler pages project create    (idempotent; || true on exists)
+#   3. wrangler pages deploy dist --project-name ontodecide-ce --branch main
+#      (run from apps/web so ./wrangler.toml is auto-loaded)
 #
 # API routing:
-#   The SPA uses relative {@code /api/*} URLs (same-origin). A Pages
-#   Function ({@code functions/api/[[path]].ts}) intercepts these and
-#   forwards them to the Gateway worker via the {@code GATEWAY_SERVICE}
-#   Service Binding — zero-cost in-account routing, no CORS, no
-#   workers.dev DNS dependency.
+#   The SPA uses relative /api/* URLs (same-origin). A Pages Function
+#   (functions/api/[[path]].ts) forwards them to the Gateway worker via
+#   the GATEWAY_SERVICE binding below — zero-cost in-account routing,
+#   no CORS, no workers.dev DNS dependency.
 
 name = "ontodecide-ce"
 compatibility_date = "2024-10-01"
 compatibility_flags = ["nodejs_compat"]
+
+# ----- Static assets (Vite build output) ------------------------------------
+# Relative to this wrangler.toml → apps/web/dist.
+pages_build_output_dir = "./dist"
 
 # ----- Service Binding ------------------------------------------------------
 # Pages Function proxy forwards /api/* to the Gateway worker.
 [[services]]
 binding = "GATEWAY_SERVICE"
 service = "ontodecide-prd-gateway"
-
-# ----- Pages Observability --------------------------------------------------
-# Pages observability (analogous to Worker [observability]).
-# Pages has its own analytics dashboard; explicit observability block
-# mirrors Worker config for parity and enables invocation log persistence.
-[observability]
-enabled = true
-head_sampling_rate = 1
-
-[observability.logs]
-enabled = true
-invocation_logs = true
-destinations = ["cloudflare"]
-head_sampling_rate = 1
-persist = true
-
-# ----- Static assets (Vite build output) ------------------------------------
-# `directory` is relative to this wrangler.toml → apps/web/dist.
-# Used by `wrangler pages deploy` and wrangler types.
-[assets]
-directory = "dist"
