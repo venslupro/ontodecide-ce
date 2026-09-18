@@ -4,8 +4,11 @@
  * tag filter chips, sort selector. Table has view/edit/delete with
  * ConfirmDialog on delete. Pagination Page 1 of 15.
  */
-import { useState, useMemo } from 'react';
-import { mockList } from '@/lib/mock';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { entitiesResource } from '@/services/api';
+import { useSession } from '@/hooks/useSession';
+import { useToast } from '@/components/ui/Toast';
+import type { EntityNode, IngestPayload } from '@ontodecide/shared';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
@@ -34,13 +37,6 @@ const SORT_OPTS = [
   { label: 'Name: Z→A', value: 'name_desc' },
 ];
 const TAG_POOL = ['enterprise', 'smb', 'strategic', 'high-risk', 'regulated', 'vip', 'eu', 'us', 'tier-1', 'tier-2'];
-const ENTITY_TYPES = ['Organization', 'Product', 'Customer', 'Supplier', 'Market', 'Order'];
-const ENTITY_NAMES = [
-  'Acme Corp', 'GizmoPro X1', 'Jenna Walsh', 'SupplyChain Inc', 'EU-West', 'Order-4921',
-  'Globex', 'NanoBlade 3000', 'Raj Patel', 'PrimeSource LLC', 'APAC-SG', 'Order-4935',
-  'Initech', 'HelioX Pod', 'Maria Santos', 'BlueFox Logistics', 'NAM-Central', 'Order-4958',
-  'Umbrella Co', 'QuantumV2', 'Tom Becker', 'Evergreen Goods', 'LATAM-BR', 'Order-4977',
-];
 const TYPE_COLORS: Record<string, string> = {
   Organization: 'var(--color-primary)',
   Product: 'var(--color-accent)',
@@ -51,6 +47,10 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export default function GraphEntitiesPage() {
+  const toast = useToast();
+  const { session } = useSession();
+  const tenantId = session?.tenant_id ?? '';
+
   const [query, setQuery] = useState('');
   const [type, setType] = useState('all');
   const [sort, setSort] = useState('updated_desc');
@@ -63,45 +63,95 @@ export default function GraphEntitiesPage() {
   const [newType, setNewType] = useState('Organization');
   const [newTags, setNewTags] = useState('');
 
+  const [entities, setEntities] = useState<EntityNode[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadEntities = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await entitiesResource.find();
+      if (!res.success || !res.data) {
+        throw new Error(res.error?.message ?? 'No entity data returned by the server.');
+      }
+      setEntities(res.data);
+    } catch (e: any) {
+      const msg = e?.message ?? 'Failed to load entities. Please try again.';
+      setLoadError(msg);
+      toast.show({ tone: 'danger', title: 'Could not load entities', message: msg });
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => { void loadEntities(); }, [loadEntities]);
+
   const resetNew = () => {
     setNewName(''); setNewType('Organization'); setNewTags(''); setNewOpen(false);
   };
-  const submitNew = () => {
-    if (!newName.trim()) return;
-    resetNew();
+  const submitNew = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    if (!tenantId) {
+      toast.show({ tone: 'danger', title: 'Create failed', message: 'Session tenant is not available. Please re-login.' });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const tags = newTags.split(',').map((t) => t.trim()).filter(Boolean);
+      const entity: EntityNode = {
+        id: `ent_${crypto.randomUUID()}`,
+        tenant_id: tenantId,
+        type: newType,
+        attributes: { name, tags },
+        source: 'web-ui',
+        confidence: 1,
+        timestamp: new Date().toISOString(),
+      };
+      const payload: IngestPayload = {
+        tenant_id: tenantId,
+        entities: [entity],
+        relations: [],
+        source: 'web-ui',
+      };
+      const res = await entitiesResource.upsert(payload);
+      if (!res.success) {
+        throw new Error(res.error?.message ?? 'Could not create the entity.');
+      }
+      toast.show({ tone: 'success', message: `Entity "${name}" created.` });
+      resetNew();
+      await loadEntities(true);
+    } catch (e: any) {
+      toast.show({ tone: 'danger', title: 'Create failed', message: e?.message ?? 'An unexpected error occurred.' });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const toggleTag = (t: string) => setActiveTags((arr) =>
     arr.includes(t) ? arr.filter((x) => x !== t) : [...arr, t],
   );
 
-  // Generate the full dataset once (150 rows matching `total`).
-  const allRows = useMemo(() => mockList(
-    (i, r) => {
-      const entType = ENTITY_TYPES[i % ENTITY_TYPES.length];
-      const name = ENTITY_NAMES[i % ENTITY_NAMES.length] + (i >= ENTITY_NAMES.length ? ` ${Math.floor(i / ENTITY_NAMES.length) + 1}` : '');
-      const tagCount = 1 + Math.floor(r * 3);
-      const tags: string[] = [];
-      let seed = Math.floor(r * 1000);
-      while (tags.length < tagCount) {
-        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-        const t = TAG_POOL[seed % TAG_POOL.length];
-        if (!tags.includes(t)) tags.push(t);
-      }
-      const daysAgo = Math.floor(r * 60);
-      const d = new Date();
-      d.setDate(d.getDate() - daysAgo);
-      return {
-        id: `ENT-${String(10000 + i)}`,
-        name,
-        type: entType,
-        tags,
-        updated: d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
-        updatedDate: d,
-      };
-    },
-    150, 33,
-  ), []);
+  // Map backend EntityNode[] into the row view model used by the table.
+  const allRows = useMemo(() => entities.map((e) => {
+    const attrs = (e.attributes ?? {}) as Record<string, unknown>;
+    const name = typeof attrs.name === 'string' && attrs.name.length > 0 ? attrs.name : e.id;
+    const tags = Array.isArray(attrs.tags)
+      ? attrs.tags.filter((t): t is string => typeof t === 'string')
+      : [];
+    const parsed = new Date(e.timestamp);
+    const updatedDate = Number.isNaN(parsed.getTime()) ? new Date(0) : parsed;
+    return {
+      id: e.id,
+      name,
+      type: e.type,
+      tags,
+      updated: updatedDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
+      updatedDate,
+    };
+  }), [entities]);
 
   // Apply filters + sorting.
   const filteredRows = useMemo(() => {
@@ -231,7 +281,27 @@ export default function GraphEntitiesPage() {
               <TableCell header align="right">Actions</TableCell>
             </TableHeader>
             <tbody>
-              {rows.map((r) => (
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={6} align="center" style={{ padding: 40, color: 'var(--color-neutral-500)' }}>
+                    Loading entities…
+                  </TableCell>
+                </TableRow>
+              ) : loadError ? (
+                <TableRow>
+                  <TableCell colSpan={6} align="center" style={{ padding: 40, color: 'var(--color-danger)' }}>
+                    {loadError}
+                  </TableCell>
+                </TableRow>
+              ) : rows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} align="center" style={{ padding: 40, color: 'var(--color-neutral-500)' }}>
+                    {allRows.length === 0
+                      ? 'No entities yet — click “+ New entity” to create the first one.'
+                      : 'No entities match the current filters.'}
+                  </TableCell>
+                </TableRow>
+              ) : rows.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell>
                     <code style={{
@@ -312,9 +382,9 @@ export default function GraphEntitiesPage() {
         onClose={resetNew}
         footer={
           <>
-            <Button variant="outline" onClick={resetNew}>Cancel</Button>
-            <Button variant="primary" onClick={submitNew} disabled={!newName.trim()}>
-              Create entity
+            <Button variant="outline" onClick={resetNew} disabled={submitting}>Cancel</Button>
+            <Button variant="primary" onClick={submitNew} disabled={!newName.trim() || submitting}>
+              {submitting ? 'Creating…' : 'Create entity'}
             </Button>
           </>
         }

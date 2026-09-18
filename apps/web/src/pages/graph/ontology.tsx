@@ -1,13 +1,14 @@
 /**
  * GraphOntologyPage — ontology schema browser.
- * Tabs: List View (search + category filter + paginated card grid)
+ * Tabs: List View (search + paginated card grid)
  *       Schema View (simple SVG node-edge graph with colored nodes).
  */
-import { useState, useMemo } from 'react';
-import { mockList } from '@/lib/mock';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ontologyResource } from '@/services/api';
+import { useToast } from '@/components/ui/Toast';
+import type { OntologyType } from '@ontodecide/shared';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
-import Select from '@/components/ui/Select';
 import Tabs, { Tab } from '@/components/ui/Tabs';
 import Pagination from '@/components/ui/Pagination';
 import Badge from '@/components/ui/Badge';
@@ -20,58 +21,95 @@ const ONTO_COLORS = [
   'var(--color-success)', 'var(--color-warning)',
   'var(--color-danger)', '#8B5CF6', '#EC4899', '#14B8A6',
 ];
-const CAT_OPTIONS = [
-  { label: 'All categories', value: 'all' },
-  { label: 'Business', value: 'biz' },
-  { label: 'Market', value: 'mkt' },
-  { label: 'People', value: 'ppl' },
-  { label: 'Product', value: 'prod' },
-  { label: 'Legal', value: 'legal' },
-  { label: 'Operations', value: 'ops' },
-];
-const CATEGORIES = ['biz', 'mkt', 'ppl', 'prod', 'legal', 'ops'];
-const BASE_NAMES = [
-  'Organization', 'Product', 'Customer', 'Market', 'Supplier', 'Regulation',
-  'Contract', 'Employee', 'Order', 'Invoice', 'Warehouse', 'Shipment',
-  'Competitor', 'RiskEvent', 'Campaign', 'Asset',
-];
+
+/**
+ * Derive a stable ontology id from a display name.
+ *
+ * The backend {@code Ontology.fromInput} validator requires ids matching
+ * {@code ^[a-zA-Z][a-zA-Z0-9_]{1,62}$}; MERGE semantics make the id the
+ * upsert key, so re-submitting the same name updates the same node.
+ */
+function toOntologyId(name: string): string {
+  let slug = name.trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!slug) slug = 'type';
+  if (!/^[a-z]/.test(slug)) slug = `t_${slug}`;
+  if (slug.length > 63) slug = slug.slice(0, 63).replace(/_+$/, '');
+  while (slug.length < 2) slug += '_';
+  return slug;
+}
 
 export default function GraphOntologyPage() {
+  const toast = useToast();
   const [tab, setTab] = useState('list');
   const [query, setQuery] = useState('');
-  const [category, setCategory] = useState('all');
   const [page, setPage] = useState(1);
   const size = 8;
 
+  const [types, setTypes] = useState<OntologyType[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadTypes = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await ontologyResource.list();
+      if (!res.success || !res.data) {
+        throw new Error(res.error?.message ?? 'No ontology data returned by the server.');
+      }
+      setTypes(res.data);
+    } catch (e: any) {
+      const msg = e?.message ?? 'Failed to load ontology types. Please try again.';
+      setLoadError(msg);
+      toast.show({ tone: 'danger', title: 'Could not load ontology types', message: msg });
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => { void loadTypes(); }, [loadTypes]);
+
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState('');
-  const [newCategory, setNewCategory] = useState('biz');
 
   const resetNew = () => {
-    setNewName(''); setNewCategory('biz'); setNewOpen(false);
+    setNewName(''); setNewOpen(false);
   };
-  const submitNew = () => {
-    if (!newName.trim()) return;
-    resetNew();
+  const submitNew = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setSubmitting(true);
+    try {
+      const id = toOntologyId(name);
+      const res = await ontologyResource.upsert({ id, name, properties: [], relations: [] });
+      if (!res.success) {
+        throw new Error(res.error?.message ?? 'Could not create the ontology type.');
+      }
+      toast.show({ tone: 'success', message: `Ontology type "${name}" created.` });
+      resetNew();
+      await loadTypes(true);
+    } catch (e: any) {
+      toast.show({ tone: 'danger', title: 'Create failed', message: e?.message ?? 'An unexpected error occurred.' });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const all = useMemo(() => mockList(
-    (i, r) => ({
-      name: BASE_NAMES[i % BASE_NAMES.length] + (i >= BASE_NAMES.length ? ` ${Math.floor(i / BASE_NAMES.length) + 1}` : ''),
-      id: `ont:${BASE_NAMES[i % BASE_NAMES.length].toLowerCase()}_${i + 1}`,
-      propertyCount: 3 + Math.floor(r * 18),
-      relationCount: 2 + Math.floor(r * 12),
-      color: ONTO_COLORS[i % ONTO_COLORS.length],
-      category: CATEGORIES[i % CATEGORIES.length],
-    }),
-    12, 21,
-  ), []);
+  const all = useMemo(() => types.map((t, i) => ({
+    name: t.name,
+    id: t.id,
+    propertyCount: t.properties?.length ?? 0,
+    relationCount: t.relations?.length ?? 0,
+    color: ONTO_COLORS[i % ONTO_COLORS.length],
+  })), [types]);
 
   const filtered = useMemo(() => all.filter((o) => {
     const matchesQ = !query || o.name.toLowerCase().includes(query.toLowerCase());
-    const matchesCat = category === 'all' || o.category === category;
-    return matchesQ && matchesCat;
-  }), [all, query, category]);
+    return matchesQ;
+  }), [all, query]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / size));
   const currentPage = Math.min(page, totalPages);
@@ -108,20 +146,27 @@ export default function GraphOntologyPage() {
                       leftIcon={<span style={{ color: 'var(--color-neutral-500)' }}>🔍</span>}
                     />
                   </div>
-                  <div style={{ width: 220 }}>
-                    <Select
-                      value={category}
-                      onChange={(e) => { setCategory(e.target.value); setPage(1); }}
-                      options={CAT_OPTIONS}
-                    />
-                  </div>
                   <Badge tone="info">{filtered.length} of {all.length} types</Badge>
                 </div>
 
                 {/* Grid */}
                 <div className="g12">
-                  {pageItems.map((o, i) => (
-                    <div key={i} style={{ gridColumn: 'span 4' }}>
+                  {loading ? (
+                    <div style={{ gridColumn: 'span 12', padding: 40, textAlign: 'center', color: 'var(--color-neutral-500)' }}>
+                      Loading ontology types…
+                    </div>
+                  ) : loadError ? (
+                    <div style={{ gridColumn: 'span 12', padding: 40, textAlign: 'center', color: 'var(--color-danger)' }}>
+                      {loadError}
+                    </div>
+                  ) : pageItems.length === 0 ? (
+                    <div style={{ gridColumn: 'span 12', padding: 40, textAlign: 'center', color: 'var(--color-neutral-500)' }}>
+                      {all.length === 0
+                        ? 'No ontology types yet — click “+ New ontology type” to define the first one.'
+                        : 'No ontology types match the current filters.'}
+                    </div>
+                  ) : pageItems.map((o) => (
+                    <div key={o.id} style={{ gridColumn: 'span 4' }}>
                       <OntologyTypeCard
                         name={o.name}
                         id={o.id}
@@ -155,9 +200,9 @@ export default function GraphOntologyPage() {
         onClose={resetNew}
         footer={
           <>
-            <Button variant="outline" onClick={resetNew}>Cancel</Button>
-            <Button variant="primary" onClick={submitNew} disabled={!newName.trim()}>
-              Create type
+            <Button variant="outline" onClick={resetNew} disabled={submitting}>Cancel</Button>
+            <Button variant="primary" onClick={submitNew} disabled={!newName.trim() || submitting}>
+              {submitting ? 'Creating…' : 'Create type'}
             </Button>
           </>
         }
@@ -170,14 +215,6 @@ export default function GraphOntologyPage() {
               onChange={(e) => setNewName(e.target.value)}
               placeholder="e.g. Vendor"
               autoFocus
-            />
-          </div>
-          <div>
-            <label style={fieldLbl}>Category</label>
-            <Select
-              value={newCategory}
-              onChange={(e) => setNewCategory(e.target.value)}
-              options={CAT_OPTIONS.filter((o) => o.value !== 'all')}
             />
           </div>
         </div>
