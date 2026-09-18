@@ -62,8 +62,8 @@ const app = new OpenAPIHono<{ Bindings: GraphEnv; Variables: GraphVars }>({
 let configValidated = false;
 
 const REQUIRED_KEYS = [
-  configKey('NEO4J_URL', 'Neo4j AuraDB connection URL', validators.neo4jUrl),
-  configKey('NEO4J_USER', 'Neo4j username (usually "neo4j")', validators.nonEmpty),
+  configKey('NEO4J_URI', 'Neo4j AuraDB connection URI (e.g. neo4j+s://...)', validators.neo4jUrl),
+  configKey('NEO4J_USERNAME', 'Neo4j username (Aura instance id)', validators.nonEmpty),
   configKey('NEO4J_PASSWORD', 'Neo4j password', validators.minLength(1)),
   configKey('NEO4J_DATABASE', 'Neo4j database name', validators.nonEmpty),
 ];
@@ -88,7 +88,7 @@ app.use('*', internalOnlyMiddleware(['/docs', '/openapi.json']));
 
 // Build per-request service bindings from the Cloudflare env.
 // Skip for documentation/health routes so OpenAPI spec generation works
-// without a fully-configured env (e.g. NEO4J_URL may be absent).
+// without a fully-configured env (e.g. NEO4J_URI may be absent).
 const DOC_AND_HEALTH_PATHS = ['/docs', '/openapi.json', '/healthz'];
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;

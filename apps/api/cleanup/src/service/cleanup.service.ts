@@ -5,7 +5,7 @@
  *   0. Audit log: record that cleanup is starting (reason + mode).
  *   1. Archive user metadata to B2 tenant-archive bucket (backup).
  *      Includes: user record, audit logs, decisions, config snapshots.
- *   2. Neo4j:   `MATCH (n {tenant_id: $tid}) DETACH DELETE n` on the
+ *   2. Neo4j:   `MATCH (n {organization: $organization}) DETACH DELETE n` on the
  *      shared database (property isolation — no per-tenant DB to drop).
  *   3. D1:      delete decisions / audit_logs / refresh_tokens rows
  *   4. KV:      delete all `tenant:{tid}:*` keys across every namespace
@@ -31,8 +31,8 @@ import {
   createArchiveB2Client,
   createIngestionB2Client,
 } from '@ontodecide/shared';
-import type { CleanupEnv } from '../types/env.js';
-import type { CleanupReason } from '../types/env.js';
+import type { CleanupEnv, CleanupReason } from '../types/env.js';
+import { neo4jHttpBaseUrl } from '../types/env.js';
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { auditLogs, decisions, refreshTokens, users, systemConfig } from '@ontodecide/shared/db';
@@ -207,25 +207,21 @@ async function archiveUserMetadata(
 /**
  * Delete all tenant-owned nodes and relationships via property isolation.
  *
- * Uses `MATCH (n {tenant_id: $tenantId}) DETACH DELETE n` on the shared
+ * Uses `MATCH (n {organization: $organization}) DETACH DELETE n` on the shared
  * Neo4j database. This removes every node (and its relationships) that
  * belongs to the tenant in a single atomic Cypher operation — no
  * per-tenant database creation/deletion needed.
  */
 async function deleteNeo4jTenant(tenantId: string, env: CleanupEnv): Promise<number> {
-  const endpoint = `${env.NEO4J_URL.replace(/\/$/, '')}/db/${env.NEO4J_DATABASE}/tx/commit`;
-  const auth = 'Basic ' + btoa(`${env.NEO4J_USER}:${env.NEO4J_PASSWORD}`);
+  const endpoint = `${neo4jHttpBaseUrl(env.NEO4J_URI)}/db/${env.NEO4J_DATABASE}/query/v2`;
+  const auth = 'Basic ' + btoa(`${env.NEO4J_USERNAME}:${env.NEO4J_PASSWORD}`);
   const body = JSON.stringify({
-    statements: [
-      {
-        statement: `
-        MATCH (n {tenant_id: $tenantId})
-        DETACH DELETE n
-        RETURN count(n) as deleted
-      `,
-        parameters: { tenantId },
-      },
-    ],
+    statement: `
+      MATCH (n {organization: $organization})
+      DETACH DELETE n
+      RETURN count(n) as deleted
+    `,
+    parameters: { organization: tenantId },
   });
   try {
     const response = await fetch(endpoint, {
@@ -233,11 +229,14 @@ async function deleteNeo4jTenant(tenantId: string, env: CleanupEnv): Promise<num
       headers: {
         Authorization: auth,
         'Content-Type': 'application/json',
-        Accept: 'application/json;charset=UTF-8',
+        Accept: 'application/json',
       },
       body,
     });
-    if (!response.ok) {
+    if (response.status === 401) {
+      throwError(ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE, 'Neo4j authentication failed.');
+    }
+    if (response.status !== 202 && !response.ok) {
       throwError(
         ERROR_CODES.GRAPH_NEO4J_UNAVAILABLE,
         `Neo4j DETACH DELETE HTTP ${response.status}: ${await response.text()}`,
@@ -245,7 +244,7 @@ async function deleteNeo4jTenant(tenantId: string, env: CleanupEnv): Promise<num
     }
     const data = (await response.json()) as {
       errors?: Array<{ code: string; message: string }>;
-      results?: Array<{ data: Array<{ row: unknown[] }> }>;
+      data?: { values: unknown[][] };
     };
     if (data.errors && data.errors.length > 0) {
       throwError(
@@ -253,7 +252,7 @@ async function deleteNeo4jTenant(tenantId: string, env: CleanupEnv): Promise<num
         `Neo4j DETACH DELETE errors: ${JSON.stringify(data.errors)}`,
       );
     }
-    const deleted = data.results?.[0]?.data?.[0]?.row?.[0];
+    const deleted = data.data?.values?.[0]?.[0];
     return Number(deleted ?? 0);
   } catch (err) {
     // Neo4j unreachable — propagate; the consumer will mark this

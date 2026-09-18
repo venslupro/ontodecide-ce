@@ -230,7 +230,7 @@ locked at the reviewed-plan stage.
 **Deploy order required by the hybrid model:**
 1. `terraform apply` (human-reviewed, ONCE per infra change)
 2. Fill in wrangler.toml `[[kv_namespaces]].id` placeholders + any
-   `[vars]` Dashboard overrides (Neo4j URL, B2 bucket names)
+   `[vars]` Dashboard overrides (Neo4j URI, B2 bucket names)
 3. Push code → `deploy-service.yml` runs (change-aware · parallel
    matrix · 5 quality gates incl. `wrangler types`)
 4. Post-deploy `migrate-d1` job runs `scripts/migrate.sh --remote`

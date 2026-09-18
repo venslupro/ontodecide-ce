@@ -33,7 +33,7 @@ variable "environment" {
   }
 }
 
-# ---- B2 / Neo4j external dependency variables (Terraform does not create them; documented + audited only) ----
+# ---- B2 external dependency variables (Terraform does not create them; documented + audited only) ----
 # B2 bucket naming convention: ${project_name}-${env_short}-{purpose}
 # (buckets are created externally; this only documents/audits to keep naming consistent)
 variable "b2_region" {
@@ -57,21 +57,3 @@ variable "b2_archive_bucket" {
 # ---- Terraform remote state backend (B2 S3-compatible) ----
 # B2 bucket name is hardcoded statically in versions.tf backend "s3" block
 # (ontodecide-prd-terraform-state); credentials are injected via env vars.
-
-variable "neo4j_url_placeholder" {
-  description = "Neo4j AuraDB connection URL placeholder. Real value injected via wrangler.toml [vars] + Dashboard variable overrides."
-  type        = string
-  default     = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
-}
-
-variable "neo4j_user" {
-  description = "Neo4j username (documentation only)."
-  type        = string
-  default     = "neo4j"
-}
-
-variable "neo4j_database" {
-  description = "Neo4j shared DB name (property isolation + tenant_id)."
-  type        = string
-  default     = "neo4j"
-}
