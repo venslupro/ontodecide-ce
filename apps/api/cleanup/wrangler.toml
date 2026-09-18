@@ -104,16 +104,16 @@ binding = "CLEANUP_JOBS"
 id = "REPLACE_WITH_TERRAFORM_CREATED_KV_CLEANUP_JOBS_CLEANUP_ID"
 
 [vars]
-NEO4J_URL  = "https://REPLACE_WITH_AURADB_HOST.databases.neo4j.io"
-NEO4J_USER = "neo4j"
-NEO4J_DATABASE = "neo4j"
+NEO4J_URI  = "neo4j+s://c757868d.databases.neo4j.io"
+NEO4J_USERNAME = "c757868d"
+NEO4J_DATABASE = "c757868d"
 
 B2_REGION           = "us-west-004"
 B2_INGESTION_BUCKET = "ontodecide-prd-ingestion-staging"
 B2_ARCHIVE_BUCKET   = "ontodecide-prd-tenant-archive"
 
 # Secrets (Dashboard → Secrets, CI, or `wrangler secret put`):
-#   NEO4J_PASSWORD   — Password for NEO4J_USER on the shared database.
+#   NEO4J_PASSWORD   — Password for NEO4J_USERNAME on the shared database.
 #                      Used for DETACH DELETE tenant cleanup queries.
 #   B2_KEY_ID        — B2 Application Key keyID with R/W on BOTH the
 #                      ingestion staging + tenant archive buckets.

@@ -5,6 +5,7 @@
  * ConfirmDialog on delete. Pagination Page 1 of 15.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { entitiesResource } from '@/services/api';
 import { useSession } from '@/hooks/useSession';
 import { useToast } from '@/components/ui/Toast';
@@ -48,6 +49,7 @@ const TYPE_COLORS: Record<string, string> = {
 
 export default function GraphEntitiesPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const { session } = useSession();
   const tenantId = session?.tenant_id ?? '';
 
@@ -129,6 +131,22 @@ export default function GraphEntitiesPage() {
       setSubmitting(false);
     }
   };
+
+  const handleDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    try {
+      const res = await entitiesResource.remove(target.id);
+      if (!res.success) {
+        throw new Error(res.error?.message ?? 'Could not delete the entity.');
+      }
+      toast.show({ tone: 'success', message: `Entity "${target.name}" deleted.` });
+      await loadEntities(true);
+    } catch (e: any) {
+      toast.show({ tone: 'danger', title: 'Delete failed', message: e?.message ?? 'An unexpected error occurred.' });
+    }
+  }, [deleteTarget, loadEntities, toast]);
 
   const toggleTag = (t: string) => setActiveTags((arr) =>
     arr.includes(t) ? arr.filter((x) => x !== t) : [...arr, t],
@@ -333,8 +351,8 @@ export default function GraphEntitiesPage() {
                   <TableCell>{r.updated}</TableCell>
                   <TableCell align="right">
                     <div style={{ display: 'inline-flex', gap: 4 }}>
-                      <IconButton variant="ghost" size="sm" aria-label="View" title="View">👁</IconButton>
-                      <IconButton variant="ghost" size="sm" aria-label="Edit" title="Edit">✏️</IconButton>
+                      <IconButton variant="ghost" size="sm" aria-label="View" title="View" onClick={() => navigate(`/graph/situation/${encodeURIComponent(r.id)}`)}>👁</IconButton>
+                      <IconButton variant="ghost" size="sm" aria-label="Edit" title="Edit" onClick={() => navigate(`/graph/situation/${encodeURIComponent(r.id)}`)}>✏️</IconButton>
                       <IconButton
                         variant="ghost"
                         size="sm"
@@ -368,7 +386,7 @@ export default function GraphEntitiesPage() {
         confirmTone="danger"
         confirmLabel="Delete entity"
         onCancel={() => setDeleteTarget(null)}
-        onConfirm={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
       >
         <p>
           Are you sure you want to permanently delete <strong>{deleteTarget?.name}</strong>?

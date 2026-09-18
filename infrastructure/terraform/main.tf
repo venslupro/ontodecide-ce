@@ -22,7 +22,7 @@
 #   • Durable Object class upload — handled by wrangler.toml [[migrations]] tag=v1
 #   • Queue consumer / DLQ binding — wrangler.toml [[queues.consumers]] dead_letter_queue
 #   • D1 migration SQL — scripts/migrate.sh --remote runs after all deploys succeed
-#   • Backblaze B2 buckets / Neo4j AuraDB — external IaC / console-managed (summarized in outputs)
+#   • Backblaze B2 buckets / Neo4j AuraDB — external IaC / console-managed (B2 summarized in outputs; Neo4j configured in wrangler.json [vars])
 #
 # Naming convention (unified):
 #   ${project_name}-${env_short}-${service}[-${suffix}]
