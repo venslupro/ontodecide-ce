@@ -130,7 +130,7 @@ app.use('*', async (c, next) => {
     new D1AuditRepository(c.env.DB),
     new D1RefreshTokenRepository(c.env.DB),
     new D1ConfigRepository(c.env.DB),
-    c.env, // NEO4J_URL / NEO4J_USER / NEO4J_PASSWORD bindings
+    c.env, // EMAIL_API_KEY / EMAIL_FROM bindings
   );
   c.set('service', service);
   await next();

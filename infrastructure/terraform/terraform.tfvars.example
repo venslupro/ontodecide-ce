@@ -6,7 +6,7 @@ zone_id      = ""                                     # Leave empty to skip cust
 project_name = "ontodecide"
 environment  = "production"
 
-# External dependency defaults (aligned with wrangler.toml; real B2 buckets / Neo4j managed by external IaC)
+# External dependency defaults (aligned with wrangler config; real B2 buckets / Neo4j managed by external IaC)
 # B2 bucket naming convention: ontodecide-prd-{purpose}
 b2_region           = "us-west-004"
 b2_ingestion_bucket = "ontodecide-prd-ingestion-staging"

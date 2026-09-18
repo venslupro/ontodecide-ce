@@ -24,14 +24,28 @@ export interface CleanupEnv extends BaseEnv {
   AI_CACHE: KVNamespace;
   /** KV namespace for Cleanup Service job records (read/write here). */
   CLEANUP_JOBS: KVNamespace;
-  /** Neo4j AuraDB base URL. */
-  NEO4J_URL: string;
-  /** Neo4j username. */
-  NEO4J_USER: string;
+  /** Neo4j connection URI, e.g. `neo4j+s://c757868d.databases.neo4j.io`. */
+  NEO4J_URI: string;
+  /** Neo4j username (for Aura, this is the instance id). */
+  NEO4J_USERNAME: string;
   /** Neo4j password (secret). */
   NEO4J_PASSWORD: string;
   /** Neo4j database name (single shared DB for all tenants). */
   NEO4J_DATABASE: string;
+}
+
+/**
+ * Derive the HTTPS transactional-API base URL from a Neo4j connection URI.
+ *
+ * Cloudflare Workers cannot open raw TCP sockets (Bolt), so we translate
+ * the Bolt URI into the equivalent HTTPS endpoint.
+ */
+export function neo4jHttpBaseUrl(uri: string): string {
+  const parsed = new URL(uri);
+  const proto = parsed.protocol.replace(/:$/, '');
+  const httpProto = proto === 'neo4j+s' || proto === 'neo4j+ssc' || proto === 'https' ? 'https' : 'http';
+  const port = parsed.port ? `:${parsed.port}` : '';
+  return `${httpProto}://${parsed.hostname}${port}`;
 }
 
 /** Why a cleanup was scheduled — used in audit logging and task

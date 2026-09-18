@@ -98,12 +98,3 @@ output "external_backblaze_b2" {
     }
   }
 }
-
-output "external_neo4j_auradb" {
-  description = "Neo4j AuraDB external dependency metadata (instance is managed externally; for wrangler.toml cross-check)."
-  value = {
-    url_placeholder = var.neo4j_url_placeholder
-    user            = var.neo4j_user
-    database        = var.neo4j_database
-  }
-}
