@@ -192,7 +192,11 @@ export const RESOURCE_REGISTRY: ResourceRegistry = {
   [PREFIX_INGEST]: {
     name: 'ingestion',
     module: ingestionResource,
-    functions: ['sync', 'file', 'webhook', 'getJob'] as const,
+    functions: [
+      'sync', 'file', 'webhook', 'getJob',
+      'listSources', 'createSource', 'deleteSource',
+      'testSource', 'updateSchedule',
+    ] as const,
   },
   [PREFIX_AI]: {
     name: 'ai',

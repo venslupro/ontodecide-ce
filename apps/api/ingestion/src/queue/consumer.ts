@@ -12,7 +12,6 @@
  * that the message is routed to the dead-letter queue.
  */
 import {
-  ERROR_CODES,
   nowIso,
   type IngestPayload,
   createIngestionB2Client,
@@ -125,6 +124,3 @@ export async function markQueued(env: IngestionEnv, record: IngestJobRecord): Pr
     expirationTtl: JOB_TTL_SECONDS,
   });
 }
-
-/** Suppress unused-import warning for ERROR_CODES (kept for future retry logic). */
-void ERROR_CODES;
