@@ -6,6 +6,14 @@ terraform {
       source  = "cloudflare/cloudflare"
       version = "~> 5.19"
     }
+    b2 = {
+      source  = "Backblaze/b2"
+      version = "~> 0.14"
+    }
+    neo4jaura = {
+      source  = "neo4j-labs/neo4jaura"
+      version = "~> 1.1"
+    }
   }
 
   # ──────────────────────────────────────────────────────────

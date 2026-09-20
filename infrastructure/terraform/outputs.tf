@@ -6,6 +6,11 @@
 # created/owned by wrangler deploy, not by Terraform — their metadata is
 # NOT exported here. Run `wrangler deploy` + Cloudflare Dashboard for
 # up-to-date Worker / Pages state.
+#
+# Sensitive outputs (marked sensitive = true):
+#   • Are masked as (sensitive value) in `terraform plan` / `terraform output`
+#   • Are NOT masked in `terraform output -json` — use text output in CI
+#   • Are auto-pushed to GitHub Secrets/Variables by terraform.yml after apply
 # ============================================================================
 
 output "project_name" {
@@ -81,20 +86,63 @@ output "durable_object_classes" {
 }
 
 # ============================================================================
-# External dependencies (Terraform does not create them; for manual cross-check
-# against wrangler.toml [vars])
+# Backblaze B2 data buckets (Terraform-managed)
+#    Bucket names match wrangler.toml [vars]: B2_INGESTION_BUCKET / B2_ARCHIVE_BUCKET
 # ============================================================================
-output "external_backblaze_b2" {
-  description = "Backblaze B2 external dependency metadata (buckets are managed externally; for wrangler.toml cross-check)."
+output "b2_buckets" {
+  description = "B2 data buckets created and managed by Terraform."
   value = {
-    region           = var.b2_region
-    ingestion_bucket = var.b2_ingestion_bucket
-    archive_bucket   = var.b2_archive_bucket
-    required_bucket_tags = {
-      Environment = var.environment
-      Project     = var.project_name
-      Service     = "shared (ingestion + cleanup)"
-      Lifecycle   = "long-lived"
+    region = var.b2_region
+    ingestion_staging = {
+      name       = b2_bucket.ingestion_staging.bucket_name
+      bucket_id  = b2_bucket.ingestion_staging.bucket_id
+      account_id = b2_bucket.ingestion_staging.account_id
+    }
+    tenant_archive = {
+      name       = b2_bucket.tenant_archive.bucket_name
+      bucket_id  = b2_bucket.tenant_archive.bucket_id
+      account_id = b2_bucket.tenant_archive.account_id
     }
   }
+}
+
+# ============================================================================
+# B2 Worker Application Key (least-privilege, bucket-scoped)
+#    Terraform creates this key restricted to the two data buckets with
+#    listFiles / readFiles / writeFiles / deleteFiles capabilities.
+#    Pushed to GitHub Secrets (B2_KEY_ID / B2_KEY) after apply.
+#    The B2 Master Key (B2_MASTER_KEY_ID / B2_MASTER_KEY) used by Terraform
+#    itself is NOT exported — it stays only in GitHub Secrets for the TF run.
+# ============================================================================
+output "b2_worker_key" {
+  description = "B2 application key for ingestion/cleanup workers (bucket-scoped, least-privilege). Sensitive — pushed to GitHub Secrets B2_KEY_ID / B2_KEY."
+  value = {
+    application_key_id = b2_application_key.worker.application_key_id
+    application_key    = b2_application_key.worker.application_key
+    key_name           = b2_application_key.worker.key_name
+  }
+  sensitive = true
+}
+
+# ============================================================================
+# Neo4j AuraDB instance (Terraform-managed)
+#    Connection details are auto-pushed to GitHub by terraform.yml after apply:
+#      NEO4J_URI      ← connection_url  (Repository Variable)
+#      NEO4J_USERNAME  ← username        (Repository Variable)
+#      NEO4J_PASSWORD  ← password        (Repository Secret)
+#      NEO4J_DATABASE   ← "neo4j"         (Repository Variable, AuraDB default)
+# ============================================================================
+output "neo4j_instance" {
+  description = "Neo4j AuraDB instance created and managed by Terraform. Sensitive — auto-pushed to GitHub Secrets/Variables."
+  value = {
+    name           = neo4jaura_instance.neo4j.name
+    instance_id    = neo4jaura_instance.neo4j.instance_id
+    connection_url = neo4jaura_instance.neo4j.connection_url
+    username       = neo4jaura_instance.neo4j.username
+    password       = neo4jaura_instance.neo4j.password
+    cloud_provider = neo4jaura_instance.neo4j.cloud_provider
+    region         = neo4jaura_instance.neo4j.region
+    type           = neo4jaura_instance.neo4j.type
+  }
+  sensitive = true
 }

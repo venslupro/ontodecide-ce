@@ -234,6 +234,20 @@ jobs:
           # staging→stg.
           ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/graph
+      - name: Resolve Neo4j connection config
+        # NEO4J_URI / NEO4J_USERNAME / NEO4J_DATABASE come from Repository
+        # Variables (set by terraform.yml after apply). NEO4J_PASSWORD is
+        # passed separately as a Worker secret (below).
+        env:
+          NEO4J_URI: ${{ vars.NEO4J_URI }}
+          NEO4J_USERNAME: ${{ vars.NEO4J_USERNAME }}
+          NEO4J_DATABASE: ${{ vars.NEO4J_DATABASE }}
+        run: |
+          sed -i \
+            -e "s|^NEO4J_URI.*=.*|NEO4J_URI      = \"${NEO4J_URI}\"|" \
+            -e "s|^NEO4J_USERNAME.*=.*|NEO4J_USERNAME = \"${NEO4J_USERNAME}\"|" \
+            -e "s|^NEO4J_DATABASE.*=.*|NEO4J_DATABASE = \"${NEO4J_DATABASE}\"|" \
+            apps/api/graph/wrangler.toml
       - name: Deploy graph worker
         uses: cloudflare/wrangler-action@v4
         with:
@@ -323,6 +337,17 @@ jobs:
           # staging→stg.
           ENVIRONMENT: production
         run: ./scripts/resolve-d1-ids.sh apps/api/cleanup
+      - name: Resolve Neo4j connection config
+        env:
+          NEO4J_URI: ${{ vars.NEO4J_URI }}
+          NEO4J_USERNAME: ${{ vars.NEO4J_USERNAME }}
+          NEO4J_DATABASE: ${{ vars.NEO4J_DATABASE }}
+        run: |
+          sed -i \
+            -e "s|^NEO4J_URI.*=.*|NEO4J_URI  = \"${NEO4J_URI}\"|" \
+            -e "s|^NEO4J_USERNAME.*=.*|NEO4J_USERNAME = \"${NEO4J_USERNAME}\"|" \
+            -e "s|^NEO4J_DATABASE.*=.*|NEO4J_DATABASE = \"${NEO4J_DATABASE}\"|" \
+            apps/api/cleanup/wrangler.toml
       - name: Deploy cleanup worker
         uses: cloudflare/wrangler-action@v4
         with:
