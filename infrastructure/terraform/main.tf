@@ -22,7 +22,7 @@
 #   • Durable Object class upload — handled by wrangler.toml [[migrations]] tag=v1
 #   • Queue consumer / DLQ binding — wrangler.toml [[queues.consumers]] dead_letter_queue
 #   • D1 migration SQL — scripts/migrate.sh --remote runs after all deploys succeed
-#   • Terraform state bucket (ontodecide-prd-terraform-state) — bootstrap
+#   • Terraform state bucket (ontodecide-prd-tf-state) — bootstrap
 #     dependency, manually created (chicken-and-egg with S3 backend)
 #
 # Naming convention (unified):
@@ -154,7 +154,7 @@ resource "cloudflare_queue" "cleanup" {
 #    Naming: ${res_prefix}-{service}-{component}
 #      e.g. ontodecide-prd-ingestion-staging, ontodecide-prd-tenant-archive
 #
-#    The Terraform state bucket (ontodecide-prd-terraform-state) is NOT
+#    The Terraform state bucket (ontodecide-prd-tf-state) is NOT
 #    managed here — it is a bootstrap dependency for the S3 backend.
 # ============================================================================
 resource "b2_bucket" "ingestion_staging" {

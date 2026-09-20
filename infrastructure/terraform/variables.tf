@@ -36,7 +36,7 @@ variable "environment" {
 # ---- Backblaze B2 variables (Terraform-managed resources) ----
 # B2 bucket naming convention: ${project_name}-${env_short}-{service}-{component}
 # Buckets are created and managed by Terraform via the Backblaze/b2 provider.
-# The state bucket (ontodecide-prd-terraform-state) is NOT managed here —
+# The state bucket (ontodecide-prd-tf-state) is NOT managed here —
 # it is a bootstrap dependency for the S3 backend (chicken-and-egg).
 variable "b2_region" {
   description = "Backblaze B2 S3 region, e.g. us-east-005."
@@ -104,4 +104,4 @@ variable "neo4j_version" {
 
 # ---- Terraform remote state backend (B2 S3-compatible) ----
 # B2 bucket name is hardcoded statically in versions.tf backend "s3" block
-# (ontodecide-prd-terraform-state); credentials are injected via env vars.
+# (ontodecide-prd-tf-state); credentials are injected via env vars.

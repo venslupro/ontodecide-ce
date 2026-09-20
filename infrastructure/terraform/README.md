@@ -39,7 +39,7 @@
   per-service `wrangler.toml` (Terraform only creates the raw Queue resources)
 - D1 migration SQL execution → `scripts/migrate.sh --remote` in the
   `migrate-d1` CI job that runs **after** all Workers deploy
-- B2 terraform-state bucket → created manually (chicken-and-egg: state
+- B2 tf-state bucket → created manually (chicken-and-egg: state
   backend must exist before `terraform init`)
 
 ---
@@ -81,7 +81,7 @@ Terraform state is persisted in a B2 bucket (S3-compatible backend) so
 that CI runs share state. This prevents the "plan shows +create for all
 resources but apply fails because they already exist" problem.
 
-1. Create a B2 bucket named `ontodecide-prd-terraform-state` (region:
+1. Create a B2 bucket named `ontodecide-prd-tf-state` (region:
    `us-east-005`). Tag it with the same 4D governance tags as other B2
    buckets (Environment / Project / Service=tf-state / Lifecycle).
 2. Use the **B2 master key** (`B2_MASTER_KEY_ID` / `B2_MASTER_KEY` GitHub

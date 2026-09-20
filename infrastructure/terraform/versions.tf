@@ -36,7 +36,7 @@ terraform {
   #   • `terraform apply` doesn't fail on "resource already exists"
   # ──────────────────────────────────────────────────────────
   backend "s3" {
-    bucket = "ontodecide-prd-terraform-state"
+    bucket = "ontodecide-prd-tf-state"
     key    = "ontodecide/terraform.tfstate"
     region = "us-east-005"
 
