@@ -135,6 +135,33 @@ jobs:
           key: v3-tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
       - name: Purge stale cached providers (safety wipe before upgrade)
         run: rm -rf infrastructure/terraform/.terraform/providers
+      - name: Diagnose B2 credentials (metadata only)
+        # Do NOT print secret values — only length + format checks.
+        # "Malformed Access Key Id" means AWS_ACCESS_KEY_ID is empty or
+        # has wrong format (B2 key IDs start with "00" or are numeric).
+        run: |
+          set -euo pipefail
+          KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+          KEY="${AWS_SECRET_ACCESS_KEY:-}"
+          echo "AWS_ACCESS_KEY_ID length: ${#KEY_ID}"
+          echo "AWS_SECRET_ACCESS_KEY length: ${#KEY}"
+          if [ -z "${KEY_ID}" ]; then
+            echo "::error::AWS_ACCESS_KEY_ID is EMPTY — secret B2_MASTER_KEY_ID not found in Repository secrets"
+            exit 1
+          fi
+          if [ -z "${KEY}" ]; then
+            echo "::error::AWS_SECRET_ACCESS_KEY is EMPTY — secret B2_MASTER_KEY not found in Repository secrets"
+            exit 1
+          fi
+          # B2 application key IDs start with "00"; master key ID is the numeric account ID.
+          if [[ "${KEY_ID}" =~ ^00[0-9a-fA-F]+$ ]]; then
+            echo "Key ID format: B2 Application Key (starts with 00)"
+          elif [[ "${KEY_ID}" =~ ^[0-9]+$ ]]; then
+            echo "Key ID format: B2 Master Key (account ID, numeric)"
+          else
+            echo "::warning::Key ID format is unexpected (neither 00-prefixed nor numeric). Value may have trailing whitespace."
+            echo "First 2 chars: ${KEY_ID:0:2}"
+          fi
       - name: Init
         # Re-resolve providers — cache key is lock-file based, so a fresh
         # lock entry from -upgrade is persisted for subsequent steps.
