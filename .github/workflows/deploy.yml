@@ -360,8 +360,8 @@ jobs:
             B2_KEY
         env:
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
-          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
-          B2_KEY: ${{ secrets.B2_KEY }}
+          B2_KEY_ID: ${{ secrets.B2_WORKER_KEY_ID }}
+          B2_KEY: ${{ secrets.B2_WORKER_KEY }}
 
   # web — Cloudflare Pages SPA. Deployed AFTER the Gateway so the
   # GATEWAY_SERVICE Service Binding (used by the /api/* proxy Function)
@@ -463,8 +463,8 @@ jobs:
             B2_KEY_ID
             B2_KEY
         env:
-          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
-          B2_KEY: ${{ secrets.B2_KEY }}
+          B2_KEY_ID: ${{ secrets.B2_WORKER_KEY_ID }}
+          B2_KEY: ${{ secrets.B2_WORKER_KEY }}
 
   # ── LAYER 3 — gateway (depends on all L1 + L2) ──────────────────────
 

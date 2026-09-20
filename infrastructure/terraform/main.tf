@@ -187,13 +187,14 @@ resource "b2_bucket" "tenant_archive" {
 # B2 Application Key for Workers (least-privilege, bucket-scoped)
 #
 # Terraform authenticates with the B2 Master Key (B2_MASTER_KEY_ID /
-# B2_MASTER_KEY) to create buckets + this key. This application key is
+# B2_MASTER_KEY) to create buckets + this key. The application key is
 # restricted to the two data buckets with only the capabilities the
 # ingestion & cleanup workers need (list / read / write / delete files).
 #
 # The key ID + secret are exported as a sensitive output and pushed to
-# GitHub Secrets (B2_KEY_ID / B2_KEY) after `terraform apply`, so the
-# workers never hold the master key.
+# GitHub Secrets (B2_WORKER_KEY_ID / B2_WORKER_KEY) after apply, then
+# mapped to worker env vars B2_KEY_ID / B2_KEY by deploy.yml — workers
+# never hold the master key.
 # ---------------------------------------------------------------------------
 resource "b2_application_key" "worker" {
   key_name = "${local.res_prefix}-worker-b2"

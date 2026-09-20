@@ -13,8 +13,8 @@ provider "cloudflare" {
 
 provider "b2" {
   # Authentication via environment variables:
-  #   B2_APPLICATION_KEY_ID  — injected by GitHub Actions (secrets.B2_KEY_ID)
-  #   B2_APPLICATION_KEY     — injected by GitHub Actions (secrets.B2_KEY)
+  #   B2_APPLICATION_KEY_ID  — injected by GitHub Actions (secrets.B2_MASTER_KEY_ID)
+  #   B2_APPLICATION_KEY     — injected by GitHub Actions (secrets.B2_MASTER_KEY)
   # Same B2 master key used for the S3 backend in versions.tf.
 }
 

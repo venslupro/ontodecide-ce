@@ -110,12 +110,12 @@ output "b2_buckets" {
 # B2 Worker Application Key (least-privilege, bucket-scoped)
 #    Terraform creates this key restricted to the two data buckets with
 #    listFiles / readFiles / writeFiles / deleteFiles capabilities.
-#    Pushed to GitHub Secrets (B2_KEY_ID / B2_KEY) after apply.
+#    Pushed to GitHub Secrets (B2_WORKER_KEY_ID / B2_WORKER_KEY) after apply.
 #    The B2 Master Key (B2_MASTER_KEY_ID / B2_MASTER_KEY) used by Terraform
 #    itself is NOT exported — it stays only in GitHub Secrets for the TF run.
 # ============================================================================
 output "b2_worker_key" {
-  description = "B2 application key for ingestion/cleanup workers (bucket-scoped, least-privilege). Sensitive — pushed to GitHub Secrets B2_KEY_ID / B2_KEY."
+  description = "B2 application key for ingestion/cleanup workers (bucket-scoped, least-privilege). Sensitive — pushed to GitHub Secrets B2_WORKER_KEY_ID / B2_WORKER_KEY."
   value = {
     application_key_id = b2_application_key.worker.application_key_id
     application_key    = b2_application_key.worker.application_key

@@ -22,7 +22,7 @@ terraform {
   # STATIC config — bucket / endpoint / region are the same
   # across environments (single B2 bucket in us-east-005).
   # Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-  # env vars (reusing B2_KEY_ID / B2_KEY GitHub secrets).
+  # env vars (reusing B2_MASTER_KEY_ID / B2_MASTER_KEY GitHub secrets).
   #
   # To override (e.g. different bucket), create a local
   # backend_override.tf (gitignored via *_override.tf pattern).

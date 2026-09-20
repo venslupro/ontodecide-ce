@@ -12,8 +12,8 @@
 # REQUIRED SECRETS (Settings → Secrets and variables → Actions):
 #   CF_API_TOKEN      Cloudflare admin token (shared with deploy-service.yml)
 #   CF_ACCOUNT_ID     Cloudflare Account ID (32 hex chars)
-#   B2_MASTER_KEY_ID / B2_MASTER_KEY  B2 master key — used for S3 state backend
-#                     + B2 provider (creates buckets + worker application key)
+#   B2_MASTER_KEY_ID / B2_MASTER_KEY  B2 master key — S3 state backend + B2
+#                                     provider (creates buckets + worker key)
 #   NEO4J_AURA_CLIENT_ID     Neo4j Aura API client ID
 #   NEO4J_AURA_CLIENT_SECRET Neo4j Aura API client secret
 #   REPO_TOKEN        GitHub PAT with `repo` scope — used to push B2 worker
@@ -23,8 +23,8 @@
 #   TF_ZONE_ID        DNS Zone ID for custom domains
 #
 # AUTO-CREATED SECRETS (by this workflow after apply, do NOT set manually):
-#   B2_KEY_ID / B2_KEY    B2 application key (bucket-scoped, least-privilege)
-#                         for ingestion/cleanup workers
+#   B2_WORKER_KEY_ID / B2_WORKER_KEY  B2 application key (bucket-scoped,
+#                                     least-privilege) for workers
 #   NEO4J_PASSWORD         Neo4j database password
 # AUTO-CREATED VARIABLES:
 #   NEO4J_URI / NEO4J_USERNAME / NEO4J_DATABASE
@@ -69,8 +69,9 @@ env:
   # Cloudflare provider auth
   CLOUDFLARE_API_TOKEN:    ${{ secrets.CF_API_TOKEN }}
   # Backblaze B2 — S3 backend (AWS_* env vars) + B2 provider (B2_* env vars)
-  # Both use the B2 master key (manually configured). Terraform then creates
-  # a bucket-scoped application key for workers, pushed to B2_KEY_ID / B2_KEY.
+  # Both use the B2 master key (manually configured as B2_MASTER_KEY_ID /
+  # B2_MASTER_KEY). Terraform then creates a bucket-scoped application key
+  # for workers, pushed to B2_WORKER_KEY_ID / B2_WORKER_KEY.
   AWS_ACCESS_KEY_ID:       ${{ secrets.B2_MASTER_KEY_ID }}
   AWS_SECRET_ACCESS_KEY:   ${{ secrets.B2_MASTER_KEY }}
   B2_APPLICATION_KEY_ID:   ${{ secrets.B2_MASTER_KEY_ID }}
@@ -228,7 +229,7 @@ jobs:
       - name: Push B2 worker key + Neo4j outputs to GitHub Secrets/Variables
         # After apply, Terraform-created credentials are pushed to GitHub:
         #   • B2 worker application key (bucket-scoped, least-privilege)
-        #     → Secrets: B2_KEY_ID, B2_KEY
+        #     → Secrets: B2_WORKER_KEY_ID, B2_WORKER_KEY
         #   • Neo4j connection details
         #     → Secret: NEO4J_PASSWORD
         #     → Variables: NEO4J_URI, NEO4J_USERNAME, NEO4J_DATABASE
@@ -247,8 +248,8 @@ jobs:
           B2_KEY_ID="$(echo "${B2_KEY_JSON}" | jq -r '.value.application_key_id')"
           B2_KEY="$(echo "${B2_KEY_JSON}" | jq -r '.value.application_key')"
 
-          echo "${B2_KEY_ID}" | gh secret set B2_KEY_ID --repo "${REPO}"
-          echo "${B2_KEY}" | gh secret set B2_KEY --repo "${REPO}"
+          echo "${B2_KEY_ID}" | gh secret set B2_WORKER_KEY_ID --repo "${REPO}"
+          echo "${B2_KEY}" | gh secret set B2_WORKER_KEY --repo "${REPO}"
 
           # ---- Neo4j connection details ----
           NEO4J_JSON="$(terraform output -json neo4j_instance)"
@@ -264,5 +265,5 @@ jobs:
           gh variable set NEO4J_DATABASE --body "${NEO4J_DATABASE}" --repo "${REPO}"
 
           echo "✓ Credentials pushed to GitHub"
-          echo "  Secrets:   B2_KEY_ID, B2_KEY, NEO4J_PASSWORD"
+          echo "  Secrets:   B2_WORKER_KEY_ID, B2_WORKER_KEY, NEO4J_PASSWORD"
           echo "  Variables: NEO4J_URI, NEO4J_USERNAME, NEO4J_DATABASE"
