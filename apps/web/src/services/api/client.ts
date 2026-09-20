@@ -115,6 +115,42 @@ export async function httpPost<T>(
 }
 
 /**
+ * Performs a {@code POST} request with a multipart/form-data body.
+ *
+ * Used by file-upload endpoints (e.g. ingestion file ingest). The browser
+ * automatically sets the {@code Content-Type: multipart/form-data} header
+ * with the correct boundary, so callers must NOT set it manually.
+ *
+ * @param path Pathname.
+ * @param form A populated FormData instance.
+ * @template T Expected payload type wrapped in the success envelope.
+ */
+export async function executeMultipart<T>(
+  path: string,
+  form: FormData,
+): Promise<ApiResponse<T>> {
+  try {
+    const url = buildUrl(path, undefined);
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+    };
+    const token = readAccessToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    // Do NOT set Content-Type — the browser injects the multipart boundary.
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers,
+      body: form,
+    });
+    return parseResponse<T>(response);
+  } catch (err) {
+    return networkError<T>(err);
+  }
+}
+
+/**
  * Performs a {@code PUT} request with a JSON body.
  *
  * @param path Pathname.
