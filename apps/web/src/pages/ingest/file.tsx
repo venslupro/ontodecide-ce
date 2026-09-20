@@ -17,6 +17,7 @@ import Alert from '@/components/ui/Alert';
 import IconButton from '@/components/ui/IconButton';
 import DataSourceIcon from '@/components/shared/DataSourceIcon';
 import Table, { TableHeader, TableRow, TableCell } from '@/components/ui/Table';
+import * as ingestionResource from '@/services/api/ingestionResource';
 
 interface FileEntry {
   id: string;
@@ -24,6 +25,9 @@ interface FileEntry {
   size: number;
   progress: number; // 0-100
   type: 'csv' | 'json' | 'parquet' | 'xml';
+  status?: 'queued' | 'running' | 'succeeded' | 'failed';
+  jobId?: string;
+  error?: string;
 }
 
 const SUPPORTED_FORMATS = [
@@ -99,18 +103,27 @@ function FileUploadTab() {
     { id: 'f2', name: 'pricing_feed.jsonl', size: 1_842_991, progress: 72, type: 'json' },
     { id: 'f3', name: 'inventory_snapshot.parquet', size: 12_290_821, progress: 0, type: 'parquet' },
   ]);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [ontologyType, setOntologyType] = useState('');
+  const [mapping, setMapping] = useState('');
   const [note, setNote] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Keep a reference to the actual File objects keyed by entry id.
+  const fileMapRef = useRef<Map<string, File>>(new Map());
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
-    const arr: FileEntry[] = Array.from(list).map((f, i) => ({
-      id: `f${Date.now()}_${i}`,
-      name: f.name,
-      size: f.size,
-      progress: 0,
-      type: extToType(f.name),
-    }));
+    const arr: FileEntry[] = Array.from(list).map((f, i) => {
+      const id = `f${Date.now()}_${i}`;
+      fileMapRef.current.set(id, f);
+      return {
+        id,
+        name: f.name,
+        size: f.size,
+        progress: 0,
+        type: extToType(f.name),
+      };
+    });
     setFiles((cur) => [...cur, ...arr]);
   };
 
@@ -120,21 +133,105 @@ function FileUploadTab() {
     addFiles(e.dataTransfer.files);
   };
 
-  const remove = (id: string) => setFiles((arr) => arr.filter((f) => f.id !== id));
+  const remove = (id: string) => {
+    fileMapRef.current.delete(id);
+    setFiles((arr) => arr.filter((f) => f.id !== id));
+  };
 
-  const uploadAll = () => {
+  /**
+   * Upload each selected file via the ingestion API. Each upload enqueues an
+   * async job; we then poll the job status to drive the progress bar.
+   */
+  const uploadAll = async () => {
+    if (!ontologyType.trim()) {
+      setNote('Please enter an ontology type before uploading.');
+      return;
+    }
+    setUploading(true);
     setNote('Upload queued. Processing will begin momentarily…');
-    // Simulate progress
-    let tick = 0;
-    const handle = setInterval(() => {
-      tick += 1;
-      setFiles((arr) => arr.map((f) => ({
-        ...f,
-        progress: Math.min(100, f.progress + (f.progress === 100 ? 0 : f.progress === 0 ? 22 : 12)),
-      })));
-      if (tick > 8) clearInterval(handle);
-    }, 300);
-    setTimeout(() => setNote(null), 3200);
+    const pending = files.filter(
+      (f) => f.status !== 'succeeded' && fileMapRef.current.has(f.id),
+    );
+    if (pending.length === 0) {
+      setUploading(false);
+      setNote(null);
+      return;
+    }
+    for (const entry of pending) {
+      const file = fileMapRef.current.get(entry.id)!;
+      const format = entry.type === 'xml' ? 'json' : entry.type;
+      setFiles((cur) => cur.map((f) =>
+        f.id === entry.id ? { ...f, progress: 10, status: 'queued' } : f,
+      ));
+      const fieldMapping = parseMappingInput(mapping);
+      const result = await ingestionResource.file(file, {
+        format,
+        ontologyType: ontologyType.trim(),
+        fieldMapping,
+      });
+      if (!result.success || !result.data) {
+        setFiles((cur) => cur.map((f) =>
+          f.id === entry.id
+            ? { ...f, progress: 0, status: 'failed', error: result.error?.message ?? 'Upload failed.' }
+            : f,
+        ));
+        continue;
+      }
+      const jobId = result.data.jobId;
+      setFiles((cur) => cur.map((f) =>
+        f.id === entry.id ? { ...f, jobId, status: 'queued', progress: 30 } : f,
+      ));
+      // Poll job status until terminal.
+      await pollJob(entry.id, jobId);
+    }
+    setUploading(false);
+    setNote(null);
+  };
+
+  /** Poll GET /ingest/jobs/:id until the job reaches a terminal status. */
+  const pollJob = async (entryId: string, jobId: string) => {
+    const maxAttempts = 60; // up to ~5 minutes at 5s intervals
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const result = await ingestionResource.getJob(jobId);
+      if (!result.success || !result.data) continue;
+      const status = result.data.status;
+      if (status === 'running') {
+        setFiles((cur) => cur.map((f) =>
+          f.id === entryId ? { ...f, progress: 60 } : f,
+        ));
+      } else if (status === 'succeeded') {
+        setFiles((cur) => cur.map((f) =>
+          f.id === entryId ? { ...f, progress: 100, status: 'succeeded' } : f,
+        ));
+        return;
+      } else if (status === 'failed') {
+        setFiles((cur) => cur.map((f) =>
+          f.id === entryId
+            ? { ...f, progress: 0, status: 'failed', error: result.data?.error ?? 'Job failed.' }
+            : f,
+        ));
+        return;
+      }
+    }
+    // Polling timed out — mark the file as failed so the user is not left
+    // staring at a permanently "queued" entry.
+    setFiles((cur) => cur.map((f) =>
+      f.id === entryId
+        ? { ...f, status: 'failed', error: 'Job timed out. Check the job detail page.' }
+        : f,
+    ));
+  };
+
+  const parseMappingInput = (value: string): Record<string, string> | undefined => {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return typeof parsed === 'object' && parsed !== null ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
   };
 
   return (
@@ -143,7 +240,7 @@ function FileUploadTab() {
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => fileInputRef.current?.click()}
         role="button"
         aria-label="Upload files by dropping or clicking"
         style={{
@@ -183,7 +280,7 @@ function FileUploadTab() {
           </div>
         </div>
         <input
-          ref={inputRef}
+          ref={fileInputRef}
           type="file"
           multiple
           accept=".csv,.json,.jsonl,.parquet,.pq,.xml"
@@ -198,6 +295,25 @@ function FileUploadTab() {
       </div>
 
       {note && <Alert tone="success" onClose={() => setNote(null)}>{note}</Alert>}
+
+      <div className="g12">
+        <div style={{ gridColumn: 'span 6' }}>
+          <label style={lbl}>Ontology type *</label>
+          <Input
+            placeholder="e.g. Customer, Product, Event"
+            value={ontologyType}
+            onChange={(e) => setOntologyType(e.target.value)}
+          />
+        </div>
+        <div style={{ gridColumn: 'span 6' }}>
+          <label style={lbl}>Field mapping (optional JSON)</label>
+          <Input
+            placeholder='{"src_col": "target_attr"}'
+            value={mapping}
+            onChange={(e) => setMapping(e.target.value)}
+          />
+        </div>
+      </div>
 
       <Card style={{ border: '1px solid var(--color-neutral-200)' }}>
         <CardHeader>
@@ -262,8 +378,8 @@ function FileUploadTab() {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <Button variant="outline" size="sm" onClick={() => setFiles([])}>Clear</Button>
-            <Button variant="primary" size="sm" onClick={uploadAll} disabled={files.length === 0}>
-              ⬆ Upload files
+            <Button variant="primary" size="sm" onClick={uploadAll} disabled={files.length === 0 || uploading}>
+              {uploading ? '⏳ Uploading…' : '⬆ Upload files'}
             </Button>
           </div>
         </div>
@@ -304,7 +420,11 @@ function WebhookTab() {
           <CardContent style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
             <div>
               <label style={lbl}>Webhook URL</label>
-              <Input value={url} onChange={(e) => setUrl(e.target.value)} leftIcon={<span>🔗</span>} />
+              <Input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                leftIcon={<span>🔗</span>}
+              />
             </div>
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>

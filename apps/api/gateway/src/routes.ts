@@ -28,7 +28,6 @@ import {
   ontologyTypeSchema,
   ingestPayloadSchema,
   ingestSyncSchema,
-  ingestFileSchema,
   ingestSyncResultSchema,
   ingestJobEnqueuedSchema,
   cypherQueryRequestSchema,
@@ -539,7 +538,18 @@ export function registerOpenApiSpec(registry: OpenAPIHono['openAPIRegistry']): v
     security: BEARER_AUTH,
     summary: 'Enqueue async file ingestion',
     request: {
-      body: { content: { 'application/json': { schema: ingestFileSchema } } },
+      body: {
+        content: {
+          'multipart/form-data': {
+            schema: z.object({
+              file: z.string().openapi({ format: 'binary' }),
+              format: z.enum(['csv', 'json', 'parquet']),
+              ontologyType: z.string(),
+              mapping: z.string().optional(),
+            }),
+          },
+        },
+      },
     },
     responses: {
       200: jsonOk(ingestJobEnqueuedSchema, 'Job enqueued.'),
@@ -570,6 +580,116 @@ export function registerOpenApiSpec(registry: OpenAPIHono['openAPIRegistry']): v
       200: jsonOk(z.unknown(), 'Job status.'),
       401: jsonError('Authentication required.'),
       404: jsonError('Job not found.'),
+    },
+  });
+
+  // --- Ingestion: Data-source management (Sync Connectors page) -----------
+  registry.registerPath({
+    method: 'get',
+    path: '/api/ingest/sources',
+    tags: ['Ingestion'],
+    security: BEARER_AUTH,
+    summary: 'List data sources for the current tenant',
+    responses: {
+      200: jsonOk(z.array(z.any()), 'List of data sources.'),
+      401: jsonError('Authentication required.'),
+      403: jsonError('Forbidden.'),
+    },
+  });
+
+  registry.registerPath({
+    method: 'post',
+    path: '/api/ingest/sources',
+    tags: ['Ingestion'],
+    security: BEARER_AUTH,
+    summary: 'Create a new data source',
+    request: {
+      body: {
+        content: {
+          'application/json': {
+            schema: z.object({
+              name: z.string().openapi({ description: 'Human-readable source name.' }),
+              kind: z
+                .enum(['csv', 'json', 'parquet', 'webhook'])
+                .openapi({ description: 'Source format kind.' }),
+              url: z.string().openapi({ description: 'Source URL.' }),
+              auth: z.string().optional().openapi({ description: 'Auth credential or token.' }),
+              cron: z.string().optional().openapi({ description: 'Cron expression for sync.' }),
+              timezone: z.string().optional().openapi({ description: 'Timezone for the cron.' }),
+              scheduleEnabled: z
+                .boolean()
+                .optional()
+                .openapi({ description: 'Whether the schedule is active.' }),
+            }),
+          },
+        },
+      },
+    },
+    responses: {
+      201: jsonOk(z.any(), 'Source created.'),
+      400: jsonError('Validation failed.'),
+      401: jsonError('Authentication required.'),
+      403: jsonError('Forbidden.'),
+    },
+  });
+
+  registry.registerPath({
+    method: 'delete',
+    path: '/api/ingest/sources/{id}',
+    tags: ['Ingestion'],
+    security: BEARER_AUTH,
+    summary: 'Delete a data source',
+    request: { params: idParam },
+    responses: {
+      200: jsonOk(z.any(), 'Source deleted.'),
+      401: jsonError('Authentication required.'),
+      403: jsonError('Forbidden.'),
+      404: jsonError('Source not found.'),
+    },
+  });
+
+  registry.registerPath({
+    method: 'post',
+    path: '/api/ingest/sources/{id}/test',
+    tags: ['Ingestion'],
+    security: BEARER_AUTH,
+    summary: 'Probe a data source with a HEAD request',
+    request: { params: idParam },
+    responses: {
+      200: jsonOk(z.any(), 'Test result.'),
+      401: jsonError('Authentication required.'),
+      403: jsonError('Forbidden.'),
+      404: jsonError('Source not found.'),
+    },
+  });
+
+  registry.registerPath({
+    method: 'put',
+    path: '/api/ingest/sources/{id}/schedule',
+    tags: ['Ingestion'],
+    security: BEARER_AUTH,
+    summary: 'Update the cron schedule for a data source',
+    request: {
+      params: idParam,
+      body: {
+        content: {
+          'application/json': {
+            schema: z.object({
+              cron: z.string().openapi({ description: 'Cron expression.' }),
+              timezone: z.string().openapi({ description: 'Timezone for the cron.' }),
+              scheduleEnabled: z
+                .boolean()
+                .openapi({ description: 'Whether the schedule is active.' }),
+            }),
+          },
+        },
+      },
+    },
+    responses: {
+      200: jsonOk(z.any(), 'Schedule updated.'),
+      401: jsonError('Authentication required.'),
+      403: jsonError('Forbidden.'),
+      404: jsonError('Source not found.'),
     },
   });
 

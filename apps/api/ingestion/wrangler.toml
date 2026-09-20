@@ -93,6 +93,12 @@ dead_letter_queue = "ontodecide-prd-ingestion-dlq"
 binding = "JOBS"
 id = "REPLACE_WITH_TERRAFORM_CREATED_KV_JOBS_INGESTION_ID"
 
+# ----- KV: data-source records (Sync Connectors page) ---------------------
+# Tenant-scoped records under `ingest:source:<tenantId>:<sourceId>`.
+[[kv_namespaces]]
+binding = "SOURCES"
+id = "REPLACE_WITH_TERRAFORM_CREATED_KV_SOURCES_INGESTION_ID"
+
 [vars]
 # Backblaze B2 S3-compatible access: region + staging bucket name.
 # Bucket names MUST match Terraform output external_backblaze_b2

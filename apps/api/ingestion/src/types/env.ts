@@ -20,11 +20,30 @@ export interface IngestionEnv extends BaseEnv, IngestionGraphBinding {
   INGEST_QUEUE: Queue<IngestJobMessage>;
   /** KV namespace holding job-status records (polled by the client). */
   JOBS: KVNamespace;
+  /** KV namespace holding data-source records (Sync Connectors page). */
+  SOURCES: KVNamespace;
   /**
    * Fallback URL for calling the Graph Service (dev only — production uses
    * the `GRAPH_SERVICE` Service Binding).
    */
   GRAPH_SERVICE_URL?: string;
+}
+
+/** Data-source record stored in KV under `ingest:source:<tenantId>:<sourceId>`. */
+export interface DataSourceRecord {
+  sourceId: string;
+  tenantId: string;
+  name: string;
+  kind: 'csv' | 'json' | 'parquet' | 'webhook';
+  url: string;
+  auth: string;
+  status: 'healthy' | 'syncing' | 'error' | 'paused';
+  lastSync?: string;
+  nextSync?: string;
+  cron?: string;
+  timezone?: string;
+  scheduleEnabled?: boolean;
+  createdAt: string;
 }
 
 /** Message published to the ingestion queue. */

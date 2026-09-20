@@ -12,7 +12,7 @@
  * transaction under the 10ms CPU budget. A single `POST /entities` call
  * accepts entities + relations in one body, so each chunk is self-contained.
  */
-import { CONFIG, HEADERS, type IngestPayload, uuid } from '@ontodecide/shared';
+import { HEADERS, type IngestPayload } from '@ontodecide/shared';
 
 const CHUNK_SIZE = 50;
 /** Dummy origin used for Service Binding calls (host is ignored). */
@@ -75,8 +75,5 @@ export async function load(
       errors.push(`Chunk ${i / CHUNK_SIZE}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  // Mark CONFIG import as used (kept for the future chunk-size config).
-  void CONFIG;
-  void uuid;
   return { accepted, rejected, errors };
 }

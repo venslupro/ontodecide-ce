@@ -36,6 +36,13 @@ import {
   syncIngestHandler,
   webhookHandler,
 } from './handlers/ingestion.js';
+import {
+  createSourceHandler,
+  deleteSourceHandler,
+  listSourcesHandler,
+  testSourceHandler,
+  updateScheduleHandler,
+} from './handlers/sources.js';
 import { handleQueueBatch } from './queue/consumer.js';
 
 /** Zod schema for the job-status record returned by GET /ingest/jobs/:id. */
@@ -97,6 +104,7 @@ const REQUIRED_KEYS: ConfigKey[] = [
   configKey('B2_INGESTION_BUCKET', 'B2 ingestion staging bucket name', validators.nonEmpty),
   configKey('INGEST_QUEUE', 'Queue producer for async ETL jobs'),
   configKey('JOBS', 'KV namespace for job-status records'),
+  configKey('SOURCES', 'KV namespace for data-source records'),
   configKey('GRAPH_SERVICE', 'Service Binding to Graph Worker'),
 ];
 const OPTIONAL_KEYS: ConfigKey[] = [
@@ -201,6 +209,98 @@ const jobStatusRoute = createRoute({
   },
 });
 app.openapi(jobStatusRoute, jobStatusHandler);
+
+// GET /ingest/sources — list all data sources for the current tenant.
+const listSourcesRoute = createRoute({
+  method: 'get',
+  path: '/ingest/sources',
+  responses: {
+    200: jsonOk(z.array(z.any()), 'List of data sources.'),
+    403: jsonError('Forbidden.'),
+  },
+});
+app.openapi(listSourcesRoute, listSourcesHandler);
+
+// POST /ingest/sources — create a new data source.
+const createSourceRoute = createRoute({
+  method: 'post',
+  path: '/ingest/sources',
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            name: z.string(),
+            kind: z.enum(['csv', 'json', 'parquet', 'webhook']),
+            url: z.string(),
+            auth: z.string().optional(),
+            cron: z.string().optional(),
+            timezone: z.string().optional(),
+            scheduleEnabled: z.boolean().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: jsonOk(z.any(), 'Source created.'),
+    400: jsonError('Validation failed.'),
+    403: jsonError('Forbidden.'),
+  },
+});
+app.openapi(createSourceRoute, createSourceHandler);
+
+// DELETE /ingest/sources/:id — delete a data source.
+const deleteSourceRoute = createRoute({
+  method: 'delete',
+  path: '/ingest/sources/{id}',
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: jsonOk(z.any(), 'Source deleted.'),
+    404: jsonError('Source not found.'),
+    403: jsonError('Forbidden.'),
+  },
+});
+app.openapi(deleteSourceRoute, deleteSourceHandler);
+
+// POST /ingest/sources/:id/test — probe the source URL with a HEAD request.
+const testSourceRoute = createRoute({
+  method: 'post',
+  path: '/ingest/sources/{id}/test',
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: jsonOk(z.any(), 'Test result.'),
+    404: jsonError('Source not found.'),
+    403: jsonError('Forbidden.'),
+  },
+});
+app.openapi(testSourceRoute, testSourceHandler);
+
+// PUT /ingest/sources/:id/schedule — update the cron schedule for a source.
+const updateScheduleRoute = createRoute({
+  method: 'put',
+  path: '/ingest/sources/{id}/schedule',
+  request: {
+    params: z.object({ id: z.string() }),
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            cron: z.string(),
+            timezone: z.string(),
+            scheduleEnabled: z.boolean(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: jsonOk(z.any(), 'Schedule updated.'),
+    404: jsonError('Source not found.'),
+    403: jsonError('Forbidden.'),
+  },
+});
+app.openapi(updateScheduleRoute, updateScheduleHandler);
 
 export default {
   fetch: app.fetch,
