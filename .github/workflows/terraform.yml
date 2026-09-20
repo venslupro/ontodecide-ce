@@ -143,8 +143,8 @@ jobs:
           set -euo pipefail
           KEY_ID="${AWS_ACCESS_KEY_ID:-}"
           KEY="${AWS_SECRET_ACCESS_KEY:-}"
-          echo "AWS_ACCESS_KEY_ID length: ${#KEY_ID}"
-          echo "AWS_SECRET_ACCESS_KEY length: ${#KEY}"
+          echo "AWS_ACCESS_KEY_ID raw length: ${#KEY_ID}"
+          echo "AWS_SECRET_ACCESS_KEY raw length: ${#KEY}"
           if [ -z "${KEY_ID}" ]; then
             echo "::error::AWS_ACCESS_KEY_ID is EMPTY — secret B2_MASTER_KEY_ID not found in Repository secrets"
             exit 1
@@ -153,14 +153,25 @@ jobs:
             echo "::error::AWS_SECRET_ACCESS_KEY is EMPTY — secret B2_MASTER_KEY not found in Repository secrets"
             exit 1
           fi
+          # Trim surrounding whitespace/newlines (common copy-paste artifact).
+          KEY_ID_TRIMMED="$(echo -n "${KEY_ID}" | tr -d '[:space:]')"
+          KEY_TRIMMED="$(echo -n "${KEY}" | tr -d '[:space:]')"
+          echo "After trim — key ID length: ${#KEY_ID_TRIMMED}, key length: ${#KEY_TRIMMED}"
+          if [ "${#KEY_ID}" -ne "${#KEY_ID_TRIMMED}" ]; then
+            echo "::warning::Key ID had surrounding whitespace (raw=${#KEY_ID}, trimmed=${#KEY_ID_TRIMMED}). Re-enter the secret without whitespace."
+          fi
           # B2 application key IDs start with "00"; master key ID is the numeric account ID.
-          if [[ "${KEY_ID}" =~ ^00[0-9a-fA-F]+$ ]]; then
-            echo "Key ID format: B2 Application Key (starts with 00)"
-          elif [[ "${KEY_ID}" =~ ^[0-9]+$ ]]; then
-            echo "Key ID format: B2 Master Key (account ID, numeric)"
+          if [[ "${KEY_ID_TRIMMED}" =~ ^00[0-9a-fA-F]+$ ]]; then
+            echo "Key ID format: B2 Application Key (starts with 00, ${#KEY_ID_TRIMMED} chars) ✓"
+          elif [[ "${KEY_ID_TRIMMED}" =~ ^[0-9]+$ ]]; then
+            echo "Key ID format: B2 Master Key (account ID, ${#KEY_ID_TRIMMED} digits) ✓"
           else
-            echo "::warning::Key ID format is unexpected (neither 00-prefixed nor numeric). Value may have trailing whitespace."
-            echo "First 2 chars: ${KEY_ID:0:2}"
+            echo "::error::Key ID format invalid (not 00-prefixed hex, not numeric)."
+            echo "  - If using Master Key: keyID must be the numeric account ID (e.g. 123456789012)"
+            echo "  - If using Application Key: keyID must start with 00 (e.g. 00a1b2c3...)"
+            echo "  - Common mistake: swapped keyID and applicationKey values."
+            echo "  First 4 chars of trimmed key ID: ${KEY_ID_TRIMMED:0:4}"
+            echo "  First 4 chars of trimmed key:    ${KEY_TRIMMED:0:4}"
           fi
       - name: Init
         # Re-resolve providers — cache key is lock-file based, so a fresh
