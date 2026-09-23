@@ -8,6 +8,6 @@ environment  = "production"
 
 # External dependency defaults (aligned with wrangler config; real B2 buckets / Neo4j managed by external IaC)
 # B2 bucket naming convention: ontodecide-prd-{purpose}
-b2_region           = "us-west-004"
+b2_region           = "us-east-005"
 b2_ingestion_bucket = "ontodecide-prd-ingestion-staging"
 b2_archive_bucket   = "ontodecide-prd-tenant-archive"

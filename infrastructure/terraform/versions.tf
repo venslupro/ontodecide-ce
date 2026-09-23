@@ -6,6 +6,14 @@ terraform {
       source  = "cloudflare/cloudflare"
       version = "~> 5.19"
     }
+    b2 = {
+      source  = "Backblaze/b2"
+      version = "~> 0.14"
+    }
+    neo4jaura = {
+      source  = "neo4j-labs/neo4jaura"
+      version = "~> 1.1"
+    }
   }
 
   # ──────────────────────────────────────────────────────────
@@ -14,7 +22,9 @@ terraform {
   # STATIC config — bucket / endpoint / region are the same
   # across environments (single B2 bucket in us-east-005).
   # Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-  # env vars (reusing B2_KEY_ID / B2_KEY GitHub secrets).
+  # env vars — preferably a key scoped to the state bucket only
+  # (B2_STATE_KEY_ID / B2_STATE_KEY secrets); terraform.yml falls
+  # back to B2_MASTER_KEY_ID / B2_MASTER_KEY when those are unset.
   #
   # To override (e.g. different bucket), create a local
   # backend_override.tf (gitignored via *_override.tf pattern).
@@ -28,13 +38,18 @@ terraform {
   #   • `terraform apply` doesn't fail on "resource already exists"
   # ──────────────────────────────────────────────────────────
   backend "s3" {
-    bucket = "ontodecide-prd-terraform-state"
+    bucket = "ontodecide-prd-tf-state"
     key    = "ontodecide/terraform.tfstate"
     region = "us-east-005"
 
     endpoints = {
       s3 = "https://s3.us-east-005.backblazeb2.com"
     }
+
+    # State holds plaintext secrets (B2 worker key, Neo4j password).
+    # encrypt = true sends x-amz-server-side-encryption: AES256, which
+    # B2 maps to SSE-B2 (encryption at rest with B2-managed keys).
+    encrypt = true
 
     # B2 is not AWS — skip all AWS-specific validations
     skip_credentials_validation = true

@@ -22,7 +22,8 @@
 #   • Durable Object class upload — handled by wrangler.toml [[migrations]] tag=v1
 #   • Queue consumer / DLQ binding — wrangler.toml [[queues.consumers]] dead_letter_queue
 #   • D1 migration SQL — scripts/migrate.sh --remote runs after all deploys succeed
-#   • Backblaze B2 buckets / Neo4j AuraDB — external IaC / console-managed (B2 summarized in outputs; Neo4j configured in wrangler.json [vars])
+#   • Terraform state bucket (ontodecide-prd-tf-state) — bootstrap
+#     dependency, manually created (chicken-and-egg with S3 backend)
 #
 # Naming convention (unified):
 #   ${project_name}-${env_short}-${service}[-${suffix}]
@@ -144,12 +145,111 @@ resource "cloudflare_queue" "cleanup" {
 }
 
 # ============================================================================
-# NOTE: Sections 4–7 (Workers Script tiers, Cron trigger, Custom domains,
+# 4) Backblaze B2 data buckets (Terraform-managed via Backblaze/b2 provider)
+#
+#    Two private buckets for the ingestion → cleanup data lifecycle:
+#      • ingestion-staging: uploaded files await ETL processing (Ingestion)
+#      • tenant-archive:    archived tenant data after cleanup (Cleanup)
+#
+#    Naming: ${res_prefix}-{service}-{component}
+#      e.g. ontodecide-prd-ingestion-staging, ontodecide-prd-tenant-archive
+#
+#    The Terraform state bucket (ontodecide-prd-tf-state) is NOT
+#    managed here — it is a bootstrap dependency for the S3 backend.
+# ============================================================================
+resource "b2_bucket" "ingestion_staging" {
+  bucket_name = var.b2_ingestion_bucket
+  bucket_type = "allPrivate"
+
+  bucket_info = {
+    environment = lower(var.environment)
+    project     = var.project_name
+    service     = "ingestion"
+    component   = "staging"
+    lifecycle   = "long-lived"
+  }
+}
+
+resource "b2_bucket" "tenant_archive" {
+  bucket_name = var.b2_archive_bucket
+  bucket_type = "allPrivate"
+
+  bucket_info = {
+    environment = lower(var.environment)
+    project     = var.project_name
+    service     = "cleanup"
+    component   = "archive"
+    lifecycle   = "long-lived"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# B2 Application Key for Workers (least-privilege, bucket-scoped)
+#
+# Terraform authenticates with the B2 Master Key (B2_MASTER_KEY_ID /
+# B2_MASTER_KEY) to create buckets + this key. The application key is
+# restricted to the two data buckets with only the capabilities the
+# ingestion & cleanup workers need (list / read / write / delete files).
+#
+# The key ID + secret are exported as a sensitive output; deploy.yml reads
+# it from state and uploads it as the ingestion + cleanup Worker Secrets
+# B2_KEY_ID / B2_KEY — workers never hold the master key, and the key
+# never passes through GitHub Secrets.
+# ---------------------------------------------------------------------------
+resource "b2_application_key" "worker" {
+  key_name = "${local.res_prefix}-worker-b2"
+
+  capabilities = [
+    "listFiles",
+    "readFiles",
+    "writeFiles",
+    "deleteFiles",
+  ]
+
+  bucket_ids = [
+    b2_bucket.ingestion_staging.bucket_id,
+    b2_bucket.tenant_archive.bucket_id,
+  ]
+}
+
+# ============================================================================
+# 5) Neo4j AuraDB instance (Terraform-managed via neo4j-labs/neo4jaura provider)
+#
+#    Single Neo4j Aura instance for graph storage:
+#      • Used by Graph Worker (NEO4J_URI / NEO4J_USERNAME / NEO4J_DATABASE)
+#      • Password is a sensitive output — uploaded by deploy.yml as Worker Secret NEO4J_PASSWORD
+#      • Defaults to AuraDB Free (var.neo4j_type = "free-db"); memory /
+#        storage stay null for the free tier's fixed size
+#
+#    Naming: ${res_prefix}-neo4j  e.g. ontodecide-prd-neo4j
+#
+#    prevent_destroy: avoids accidental `terraform destroy` deleting
+#    production graph data. To destroy, remove the lifecycle block first.
+# ============================================================================
+data "neo4jaura_projects" "this" {}
+
+resource "neo4jaura_instance" "neo4j" {
+  name           = "${local.res_prefix}-neo4j"
+  cloud_provider = var.neo4j_cloud_provider
+  region         = var.neo4j_region
+  type           = var.neo4j_type
+  memory         = var.neo4j_memory
+  storage        = var.neo4j_storage
+  version        = var.neo4j_version
+  project_id     = data.neo4jaura_projects.this.projects[0].id
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# ============================================================================
+# NOTE: Sections 6–9 (Workers Script tiers, Cron trigger, Custom domains,
 #       Pages project) have been moved entirely to wrangler.toml + deploy.yml.
 #
 # Why this separation works:
-#   • D1 / KV / Queues have stable IDs and cross-referencing constraints
-#     that benefit from declarative IaC ordering + drift correction.
+#   • D1 / KV / Queues / B2 / Neo4j have stable IDs and cross-referencing
+#     constraints that benefit from declarative IaC ordering + drift correction.
 #   • Workers Scripts / Pages are code-coupled (script content, bindings,
 #     [vars], [ai], DO classes, [observability], cron, service bindings)
 #     and change every deploy — wrangler deploy handles them as one

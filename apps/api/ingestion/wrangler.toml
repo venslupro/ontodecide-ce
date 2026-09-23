@@ -103,7 +103,7 @@ id = "REPLACE_WITH_TERRAFORM_CREATED_KV_SOURCES_INGESTION_ID"
 # Backblaze B2 S3-compatible access: region + staging bucket name.
 # Bucket names MUST match Terraform output external_backblaze_b2
 # (tags: Environment / Project / Service=shared / Lifecycle=long-lived).
-B2_REGION           = "us-west-004"
+B2_REGION           = "us-east-005"
 B2_INGESTION_BUCKET = "ontodecide-prd-ingestion-staging"
 
 # Secrets (Dashboard → Secrets, CI, or `wrangler secret put`):
