@@ -10,7 +10,13 @@
 # Sensitive outputs (marked sensitive = true):
 #   • Are masked as (sensitive value) in `terraform plan` / `terraform output`
 #   • Are NOT masked in `terraform output -json` — use text output in CI
-#   • Are auto-pushed to GitHub Secrets/Variables by terraform.yml after apply
+#   • Are read from remote state by deploy.yml (.github/actions/tf-outputs)
+#     and uploaded as Worker Secrets (never to GitHub Secrets, logs, or
+#     artifacts)
+#
+# CONTRACT: .github/actions/tf-outputs reads b2_worker_key, neo4j_password
+# and neo4j_instance by name/shape straight from state — keep it in sync
+# when renaming or restructuring those outputs.
 # ============================================================================
 
 output "project_name" {
@@ -88,20 +94,20 @@ output "durable_object_classes" {
 # ============================================================================
 # Backblaze B2 data buckets (Terraform-managed)
 #    Bucket names match wrangler.toml [vars]: B2_INGESTION_BUCKET / B2_ARCHIVE_BUCKET
+#    account_id is deliberately NOT exported: the B2 account ID equals the
+#    master key's keyID, and this output is printed in public CI logs.
 # ============================================================================
 output "b2_buckets" {
   description = "B2 data buckets created and managed by Terraform."
   value = {
     region = var.b2_region
     ingestion_staging = {
-      name       = b2_bucket.ingestion_staging.bucket_name
-      bucket_id  = b2_bucket.ingestion_staging.bucket_id
-      account_id = b2_bucket.ingestion_staging.account_id
+      name      = b2_bucket.ingestion_staging.bucket_name
+      bucket_id = b2_bucket.ingestion_staging.bucket_id
     }
     tenant_archive = {
-      name       = b2_bucket.tenant_archive.bucket_name
-      bucket_id  = b2_bucket.tenant_archive.bucket_id
-      account_id = b2_bucket.tenant_archive.account_id
+      name      = b2_bucket.tenant_archive.bucket_name
+      bucket_id = b2_bucket.tenant_archive.bucket_id
     }
   }
 }
@@ -110,12 +116,13 @@ output "b2_buckets" {
 # B2 Worker Application Key (least-privilege, bucket-scoped)
 #    Terraform creates this key restricted to the two data buckets with
 #    listFiles / readFiles / writeFiles / deleteFiles capabilities.
-#    Pushed to GitHub Secrets (B2_WORKER_KEY_ID / B2_WORKER_KEY) after apply.
+#    Uploaded as Worker Secrets B2_KEY_ID / B2_KEY (ingestion + cleanup)
+#    by deploy.yml, read from state.
 #    The B2 Master Key (B2_MASTER_KEY_ID / B2_MASTER_KEY) used by Terraform
 #    itself is NOT exported — it stays only in GitHub Secrets for the TF run.
 # ============================================================================
 output "b2_worker_key" {
-  description = "B2 application key for ingestion/cleanup workers (bucket-scoped, least-privilege). Sensitive — pushed to GitHub Secrets B2_WORKER_KEY_ID / B2_WORKER_KEY."
+  description = "B2 application key for ingestion/cleanup workers (bucket-scoped, least-privilege). Sensitive — uploaded as Worker Secrets B2_KEY_ID / B2_KEY by deploy.yml."
   value = {
     application_key_id = b2_application_key.worker.application_key_id
     application_key    = b2_application_key.worker.application_key
@@ -126,23 +133,26 @@ output "b2_worker_key" {
 
 # ============================================================================
 # Neo4j AuraDB instance (Terraform-managed)
-#    Connection details are auto-pushed to GitHub by terraform.yml after apply:
-#      NEO4J_URI      ← connection_url  (Repository Variable)
-#      NEO4J_USERNAME  ← username        (Repository Variable)
-#      NEO4J_PASSWORD  ← password        (Repository Secret)
-#      NEO4J_DATABASE   ← "neo4j"         (Repository Variable, AuraDB default)
+#    Connection details are NOT secret — deploy.yml reads them from state
+#    and patches NEO4J_URI / NEO4J_USERNAME in wrangler.toml [vars].
+#    The password is a separate sensitive output, uploaded by deploy.yml
+#    as Worker Secret NEO4J_PASSWORD (graph + cleanup).
 # ============================================================================
 output "neo4j_instance" {
-  description = "Neo4j AuraDB instance created and managed by Terraform. Sensitive — auto-pushed to GitHub Secrets/Variables."
+  description = "Neo4j AuraDB instance metadata + connection details (non-sensitive; patched into wrangler.toml [vars] by deploy.yml)."
   value = {
     name           = neo4jaura_instance.neo4j.name
     instance_id    = neo4jaura_instance.neo4j.instance_id
     connection_url = neo4jaura_instance.neo4j.connection_url
     username       = neo4jaura_instance.neo4j.username
-    password       = neo4jaura_instance.neo4j.password
     cloud_provider = neo4jaura_instance.neo4j.cloud_provider
     region         = neo4jaura_instance.neo4j.region
     type           = neo4jaura_instance.neo4j.type
   }
-  sensitive = true
+}
+
+output "neo4j_password" {
+  description = "Neo4j AuraDB database password. Sensitive — uploaded as Worker Secret NEO4J_PASSWORD (graph + cleanup) by deploy.yml."
+  value       = neo4jaura_instance.neo4j.password
+  sensitive   = true
 }

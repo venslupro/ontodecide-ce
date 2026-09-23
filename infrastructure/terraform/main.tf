@@ -191,10 +191,10 @@ resource "b2_bucket" "tenant_archive" {
 # restricted to the two data buckets with only the capabilities the
 # ingestion & cleanup workers need (list / read / write / delete files).
 #
-# The key ID + secret are exported as a sensitive output and pushed to
-# GitHub Secrets (B2_WORKER_KEY_ID / B2_WORKER_KEY) after apply, then
-# mapped to worker env vars B2_KEY_ID / B2_KEY by deploy.yml — workers
-# never hold the master key.
+# The key ID + secret are exported as a sensitive output; deploy.yml reads
+# it from state and uploads it as the ingestion + cleanup Worker Secrets
+# B2_KEY_ID / B2_KEY — workers never hold the master key, and the key
+# never passes through GitHub Secrets.
 # ---------------------------------------------------------------------------
 resource "b2_application_key" "worker" {
   key_name = "${local.res_prefix}-worker-b2"
@@ -217,7 +217,9 @@ resource "b2_application_key" "worker" {
 #
 #    Single Neo4j Aura instance for graph storage:
 #      • Used by Graph Worker (NEO4J_URI / NEO4J_USERNAME / NEO4J_DATABASE)
-#      • Password is a sensitive output — auto-pushed to GitHub Secret NEO4J_PASSWORD
+#      • Password is a sensitive output — uploaded by deploy.yml as Worker Secret NEO4J_PASSWORD
+#      • Defaults to AuraDB Free (var.neo4j_type = "free-db"); memory /
+#        storage stay null for the free tier's fixed size
 #
 #    Naming: ${res_prefix}-neo4j  e.g. ontodecide-prd-neo4j
 #

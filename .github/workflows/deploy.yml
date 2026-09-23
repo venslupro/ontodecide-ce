@@ -1,9 +1,15 @@
 # Continuous Deployment (CD) — Worker Services + Frontend Pages
 #
-# Code + configuration deploys here. Long-lived resources (D1 / KV / Queues)
-# live in infrastructure/terraform via terraform.yml — run Terraform apply
-# BEFORE service deploys the first time so resolve-d1-ids.sh / resolve-kv-ids.sh
-# can look up the real resource IDs from the Cloudflare API.
+# Code + configuration deploys here. Long-lived resources (D1 / KV / Queues /
+# B2 / Neo4j) live in infrastructure/terraform via terraform.yml — run
+# Terraform apply BEFORE service deploys the first time so resolve-d1-ids.sh /
+# resolve-kv-ids.sh can look up the real resource IDs from the Cloudflare API.
+#
+# Bootstrap is two steps: terraform.yml apply → deploy.yml. Terraform-owned
+# credentials (B2 worker key, Neo4j password + URI/username) are read from
+# Terraform state by .github/actions/tf-outputs and uploaded with the code
+# via wrangler-action `secrets:` — deploy is the single writer of those
+# Worker Secrets. After rotating one in Terraform, re-run this workflow.
 #
 # Workers Scripts, Cron triggers, Service Bindings, Observability settings,
 # and the Cloudflare Pages Project (apps/web) are ALL created automatically
@@ -234,21 +240,23 @@ jobs:
           # staging→stg.
           ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/graph
-      - name: Resolve Neo4j connection config
-        # NEO4J_URI / NEO4J_USERNAME / NEO4J_DATABASE come from Repository
-        # Variables (set by terraform.yml after apply). NEO4J_PASSWORD is
-        # passed separately as a Worker secret (below).
-        env:
-          NEO4J_URI: ${{ vars.NEO4J_URI }}
-          NEO4J_USERNAME: ${{ vars.NEO4J_USERNAME }}
-          NEO4J_DATABASE: ${{ vars.NEO4J_DATABASE }}
+      - name: Read Neo4j credentials from Terraform state
+        uses: ./.github/actions/tf-outputs
+        with:
+          neo4j: 'true'
+          # Read-only state key preferred (deploy runs on every push);
+          # falls back to the Terraform state / admin key.
+          state-key-id: ${{ secrets.B2_STATE_READ_KEY_ID || secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
+          state-key: ${{ secrets.B2_STATE_READ_KEY || secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
+      - name: Patch Neo4j connection into wrangler.toml [vars]
         run: |
           sed -i \
-            -e "s|^NEO4J_URI.*=.*|NEO4J_URI      = \"${NEO4J_URI}\"|" \
-            -e "s|^NEO4J_USERNAME.*=.*|NEO4J_USERNAME = \"${NEO4J_USERNAME}\"|" \
-            -e "s|^NEO4J_DATABASE.*=.*|NEO4J_DATABASE = \"${NEO4J_DATABASE}\"|" \
+            -e "s|^NEO4J_URI .*=.*|NEO4J_URI      = \"${NEO4J_URI}\"|" \
+            -e "s|^NEO4J_USERNAME .*=.*|NEO4J_USERNAME = \"${NEO4J_USERNAME}\"|" \
             apps/api/graph/wrangler.toml
       - name: Deploy graph worker
+        # NEO4J_PASSWORD comes from Terraform state (step above) and is
+        # uploaded together with the code — no Worker has to pre-exist.
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
@@ -256,8 +264,6 @@ jobs:
           workingDirectory: apps/api/graph
           secrets: |
             NEO4J_PASSWORD
-        env:
-          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
 
   deploy-ai:
     name: Deploy · ai
@@ -337,18 +343,24 @@ jobs:
           # staging→stg.
           ENVIRONMENT: production
         run: ./scripts/resolve-d1-ids.sh apps/api/cleanup
-      - name: Resolve Neo4j connection config
-        env:
-          NEO4J_URI: ${{ vars.NEO4J_URI }}
-          NEO4J_USERNAME: ${{ vars.NEO4J_USERNAME }}
-          NEO4J_DATABASE: ${{ vars.NEO4J_DATABASE }}
+      - name: Read B2 + Neo4j credentials from Terraform state
+        uses: ./.github/actions/tf-outputs
+        with:
+          b2: 'true'
+          neo4j: 'true'
+          # Read-only state key preferred (deploy runs on every push);
+          # falls back to the Terraform state / admin key.
+          state-key-id: ${{ secrets.B2_STATE_READ_KEY_ID || secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
+          state-key: ${{ secrets.B2_STATE_READ_KEY || secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
+      - name: Patch Neo4j connection into wrangler.toml [vars]
         run: |
           sed -i \
-            -e "s|^NEO4J_URI.*=.*|NEO4J_URI  = \"${NEO4J_URI}\"|" \
-            -e "s|^NEO4J_USERNAME.*=.*|NEO4J_USERNAME = \"${NEO4J_USERNAME}\"|" \
-            -e "s|^NEO4J_DATABASE.*=.*|NEO4J_DATABASE = \"${NEO4J_DATABASE}\"|" \
+            -e "s|^NEO4J_URI .*=.*|NEO4J_URI  = \"${NEO4J_URI}\"|" \
+            -e "s|^NEO4J_USERNAME .*=.*|NEO4J_USERNAME = \"${NEO4J_USERNAME}\"|" \
             apps/api/cleanup/wrangler.toml
       - name: Deploy cleanup worker
+        # NEO4J_PASSWORD / B2_KEY_ID / B2_KEY come from Terraform state
+        # (step above) and are uploaded together with the code.
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
@@ -358,10 +370,6 @@ jobs:
             NEO4J_PASSWORD
             B2_KEY_ID
             B2_KEY
-        env:
-          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
-          B2_KEY_ID: ${{ secrets.B2_WORKER_KEY_ID }}
-          B2_KEY: ${{ secrets.B2_WORKER_KEY }}
 
   # web — Cloudflare Pages SPA. Deployed AFTER the Gateway so the
   # GATEWAY_SERVICE Service Binding (used by the /api/* proxy Function)
@@ -453,7 +461,17 @@ jobs:
           # staging→stg.
           ENVIRONMENT: production
         run: ./scripts/resolve-kv-ids.sh apps/api/ingestion
+      - name: Read B2 credentials from Terraform state
+        uses: ./.github/actions/tf-outputs
+        with:
+          b2: 'true'
+          # Read-only state key preferred (deploy runs on every push);
+          # falls back to the Terraform state / admin key.
+          state-key-id: ${{ secrets.B2_STATE_READ_KEY_ID || secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
+          state-key: ${{ secrets.B2_STATE_READ_KEY || secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
       - name: Deploy ingestion worker
+        # B2_KEY_ID / B2_KEY come from Terraform state (step above) and are
+        # uploaded together with the code.
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
@@ -462,9 +480,6 @@ jobs:
           secrets: |
             B2_KEY_ID
             B2_KEY
-        env:
-          B2_KEY_ID: ${{ secrets.B2_WORKER_KEY_ID }}
-          B2_KEY: ${{ secrets.B2_WORKER_KEY }}
 
   # ── LAYER 3 — gateway (depends on all L1 + L2) ──────────────────────
 

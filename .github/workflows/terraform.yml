@@ -10,24 +10,32 @@
 #                        Environment approval.
 #
 # REQUIRED SECRETS (Settings → Secrets and variables → Actions):
-#   CF_API_TOKEN      Cloudflare admin token (shared with deploy-service.yml)
+#   CF_API_TOKEN      Cloudflare admin token (shared with deploy.yml)
 #   CF_ACCOUNT_ID     Cloudflare Account ID (32 hex chars)
-#   B2_MASTER_KEY_ID / B2_MASTER_KEY  B2 master key — S3 state backend + B2
-#                                     provider (creates buckets + worker key)
+#   B2_MASTER_KEY_ID / B2_MASTER_KEY  B2 admin key for the B2 provider
+#                     (creates buckets + worker key). Prefer a revocable
+#                     non-master key with writeBuckets + writeKeys (+ list/
+#                     read) capabilities over the actual account master key.
 #   NEO4J_AURA_CLIENT_ID     Neo4j Aura API client ID
 #   NEO4J_AURA_CLIENT_SECRET Neo4j Aura API client secret
-#   REPO_TOKEN        GitHub PAT with `repo` scope — used to push B2 worker
-#                     key + Neo4j outputs to Repository Secrets/Variables
-#                     after apply
+# OPTIONAL SECRETS:
+#   B2_STATE_KEY_ID / B2_STATE_KEY  Key restricted to the state bucket
+#                     (ontodecide-prd-tf-state) for the S3 backend. Falls
+#                     back to B2_MASTER_KEY_ID / B2_MASTER_KEY when unset.
 # OPTIONAL VARS:
 #   TF_ZONE_ID        DNS Zone ID for custom domains
 #
-# AUTO-CREATED SECRETS (by this workflow after apply, do NOT set manually):
-#   B2_WORKER_KEY_ID / B2_WORKER_KEY  B2 application key (bucket-scoped,
-#                                     least-privilege) for workers
-#   NEO4J_PASSWORD         Neo4j database password
-# AUTO-CREATED VARIABLES:
-#   NEO4J_URI / NEO4J_USERNAME / NEO4J_DATABASE
+# SECRET HANDLING (public repository — every log and artifact is readable):
+#   • Terraform-generated credentials (B2 worker key, Neo4j password) stay
+#     in the SSE-encrypted remote state only. deploy.yml reads them from
+#     state (.github/actions/tf-outputs) and uploads them together with the
+#     Worker code — so bootstrap is two steps: this apply → deploy.yml.
+#     They never go to GitHub Secrets, logs, or artifacts.
+#   • Only the human-readable plan summary (sensitive values masked) is
+#     uploaded — never tfplan.binary / `terraform show -json`, which contain
+#     plaintext secrets.
+#   • Non-secret Neo4j connection details (URI / username) are shown in the
+#     apply job summary and patched into wrangler.toml by deploy.yml.
 # ============================================================================
 
 name: Terraform · Infrastructure
@@ -55,6 +63,10 @@ on:
         options: [production, staging]
         default: production
 
+# Least privilege for GITHUB_TOKEN — this workflow only reads the repo.
+permissions:
+  contents: read
+
 concurrency:
   group: terraform-${{ github.ref }}
   cancel-in-progress: false
@@ -69,11 +81,12 @@ env:
   # Cloudflare provider auth
   CLOUDFLARE_API_TOKEN:    ${{ secrets.CF_API_TOKEN }}
   # Backblaze B2 — S3 backend (AWS_* env vars) + B2 provider (B2_* env vars)
-  # Both use the B2 master key (manually configured as B2_MASTER_KEY_ID /
-  # B2_MASTER_KEY). Terraform then creates a bucket-scoped application key
-  # for workers, pushed to B2_WORKER_KEY_ID / B2_WORKER_KEY.
-  AWS_ACCESS_KEY_ID:       ${{ secrets.B2_MASTER_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY:   ${{ secrets.B2_MASTER_KEY }}
+  # Backend prefers a state-bucket-scoped key (B2_STATE_KEY_ID / B2_STATE_KEY)
+  # and falls back to the B2 admin key. The B2 provider uses the admin key to
+  # create buckets + a bucket-scoped worker key, which deploy.yml reads from
+  # state and uploads as Worker Secrets B2_KEY_ID / B2_KEY.
+  AWS_ACCESS_KEY_ID:       ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY:   ${{ secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
   B2_APPLICATION_KEY_ID:   ${{ secrets.B2_MASTER_KEY_ID }}
   B2_APPLICATION_KEY:      ${{ secrets.B2_MASTER_KEY }}
   # Neo4j Aura provider auth
@@ -136,7 +149,8 @@ jobs:
       - name: Purge stale cached providers (safety wipe before upgrade)
         run: rm -rf infrastructure/terraform/.terraform/providers
       - name: Diagnose B2 credentials (metadata only)
-        # Do NOT print secret values — only length + format checks.
+        # Do NOT print secret values or any part of them (public repo logs)
+        # — only length + format checks.
         # "Malformed Access Key Id" means AWS_ACCESS_KEY_ID is empty or
         # has wrong format (B2 key IDs start with "00" or are numeric).
         run: |
@@ -146,11 +160,11 @@ jobs:
           echo "AWS_ACCESS_KEY_ID raw length: ${#KEY_ID}"
           echo "AWS_SECRET_ACCESS_KEY raw length: ${#KEY}"
           if [ -z "${KEY_ID}" ]; then
-            echo "::error::AWS_ACCESS_KEY_ID is EMPTY — secret B2_MASTER_KEY_ID not found in Repository secrets"
+            echo "::error::AWS_ACCESS_KEY_ID is EMPTY — neither B2_STATE_KEY_ID nor B2_MASTER_KEY_ID found in secrets"
             exit 1
           fi
           if [ -z "${KEY}" ]; then
-            echo "::error::AWS_SECRET_ACCESS_KEY is EMPTY — secret B2_MASTER_KEY not found in Repository secrets"
+            echo "::error::AWS_SECRET_ACCESS_KEY is EMPTY — neither B2_STATE_KEY nor B2_MASTER_KEY found in secrets"
             exit 1
           fi
           # Trim surrounding whitespace/newlines (common copy-paste artifact).
@@ -170,8 +184,6 @@ jobs:
             echo "  - If using Master Key: keyID must be the numeric account ID (e.g. 123456789012)"
             echo "  - If using Application Key: keyID must start with 00 (e.g. 00a1b2c3...)"
             echo "  - Common mistake: swapped keyID and applicationKey values."
-            echo "  First 4 chars of trimmed key ID: ${KEY_ID_TRIMMED:0:4}"
-            echo "  First 4 chars of trimmed key:    ${KEY_TRIMMED:0:4}"
           fi
       - name: Init
         # Re-resolve providers — cache key is lock-file based, so a fresh
@@ -212,15 +224,16 @@ jobs:
           else
             terraform plan -input=false -out=tfplan.binary
           fi
-      - run: terraform show -json tfplan.binary > tfplan.json
-      - run: terraform show tfplan.binary | tee tfplan-summary.txt
+      # Only the human-readable summary is kept: `terraform show` masks
+      # sensitive values as (sensitive value). NEVER upload tfplan.binary or
+      # `terraform show -json` output — both embed plaintext secrets from
+      # state, and artifacts of a public repo are downloadable by anyone.
+      # (The apply job re-plans after approval, so the binary isn't needed.)
+      - run: terraform show -no-color tfplan.binary | tee tfplan-summary.txt
       - uses: actions/upload-artifact@v7
         with:
-          name: tfplan-${{ github.sha }}
-          path: |
-            infrastructure/terraform/tfplan.json
-            infrastructure/terraform/tfplan-summary.txt
-            infrastructure/terraform/tfplan.binary
+          name: tfplan-summary-${{ github.sha }}
+          path: infrastructure/terraform/tfplan-summary.txt
           retention-days: 30
 
   # ── Phase 3: apply — manual dispatch + main only + env approval ────────
@@ -239,7 +252,10 @@ jobs:
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: '~> 1.9'
-          terraform_wrapper: true
+          # Wrapper disabled: it mirrors every command's stdout into the log
+          # and step outputs — keep raw stdout for jq and avoid ever
+          # echoing an output value by accident.
+          terraform_wrapper: false
       - name: Cache Terraform providers
         uses: actions/cache@v6
         with:
@@ -262,46 +278,21 @@ jobs:
       - name: Show outputs (sensitive values masked)
         # Text output masks sensitive values as (sensitive value).
         # NEVER use `terraform output -json` in CI logs — JSON includes
-        # plaintext secrets (passwords, connection URLs).
+        # plaintext secrets.
         run: terraform output || true
-      - name: Push B2 worker key + Neo4j outputs to GitHub Secrets/Variables
-        # After apply, Terraform-created credentials are pushed to GitHub:
-        #   • B2 worker application key (bucket-scoped, least-privilege)
-        #     → Secrets: B2_WORKER_KEY_ID, B2_WORKER_KEY
-        #   • Neo4j connection details
-        #     → Secret: NEO4J_PASSWORD
-        #     → Variables: NEO4J_URI, NEO4J_USERNAME, NEO4J_DATABASE
-        # deploy.yml reads these back to configure workers before deploy.
-        #
-        # Requires REPO_TOKEN secret — a PAT with `repo` scope (needed for
-        # both secrets and variables; GITHUB_TOKEN lacks repo secret write).
-        env:
-          GH_TOKEN: ${{ secrets.REPO_TOKEN }}
+      - name: Summarize Neo4j connection details (non-sensitive)
+        # URI / username are not secrets. deploy.yml reads them (and the
+        # credentials) from state and patches wrangler.toml [vars] itself;
+        # this summary is for human review only.
         run: |
           set -euo pipefail
-          REPO="${{ github.repository }}"
-
-          # ---- B2 worker application key (bucket-scoped) ----
-          B2_KEY_JSON="$(terraform output -json b2_worker_key)"
-          B2_KEY_ID="$(echo "${B2_KEY_JSON}" | jq -r '.value.application_key_id')"
-          B2_KEY="$(echo "${B2_KEY_JSON}" | jq -r '.value.application_key')"
-
-          echo "${B2_KEY_ID}" | gh secret set B2_WORKER_KEY_ID --repo "${REPO}"
-          echo "${B2_KEY}" | gh secret set B2_WORKER_KEY --repo "${REPO}"
-
-          # ---- Neo4j connection details ----
-          NEO4J_JSON="$(terraform output -json neo4j_instance)"
-          NEO4J_URI="$(echo "${NEO4J_JSON}" | jq -r '.value.connection_url')"
-          NEO4J_USERNAME="$(echo "${NEO4J_JSON}" | jq -r '.value.username')"
-          NEO4J_PASSWORD="$(echo "${NEO4J_JSON}" | jq -r '.value.password')"
-          # AuraDB default database name is always "neo4j".
-          NEO4J_DATABASE="neo4j"
-
-          echo "${NEO4J_PASSWORD}" | gh secret set NEO4J_PASSWORD --repo "${REPO}"
-          gh variable set NEO4J_URI --body "${NEO4J_URI}" --repo "${REPO}"
-          gh variable set NEO4J_USERNAME --body "${NEO4J_USERNAME}" --repo "${REPO}"
-          gh variable set NEO4J_DATABASE --body "${NEO4J_DATABASE}" --repo "${REPO}"
-
-          echo "✓ Credentials pushed to GitHub"
-          echo "  Secrets:   B2_WORKER_KEY_ID, B2_WORKER_KEY, NEO4J_PASSWORD"
-          echo "  Variables: NEO4J_URI, NEO4J_USERNAME, NEO4J_DATABASE"
+          terraform output -json neo4j_instance | jq -r '
+            "### Neo4j connection details",
+            "",
+            "Run **Deploy · Services** next — it picks these up from state.",
+            "",
+            "| Key | Value |", "|---|---|",
+            "| NEO4J_URI | `\(.connection_url)` |",
+            "| NEO4J_USERNAME | `\(.username)` |",
+            "| instance | `\(.name)` (`\(.type)`) |"
+          ' >> "${GITHUB_STEP_SUMMARY}"

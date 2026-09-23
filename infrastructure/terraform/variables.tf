@@ -79,21 +79,21 @@ variable "neo4j_region" {
 }
 
 variable "neo4j_type" {
-  description = "Neo4j Aura instance type. One of: free-db, professional-db, business-critical, enterprise-db."
+  description = "Neo4j Aura instance type. One of: free-db, professional-db, business-critical, enterprise-db. Defaults to free-db (AuraDB Free) — paid tiers incur charges."
   type        = string
-  default     = "professional-db"
+  default     = "free-db"
 }
 
 variable "neo4j_memory" {
-  description = "Memory allocated for Neo4j Aura instance. e.g. 1GB, 2GB, 4GB, 8GB."
+  description = "Memory allocated for Neo4j Aura instance (paid tiers only), e.g. 2GB, 4GB, 8GB. Leave null for free-db — the tier has a fixed size."
   type        = string
-  default     = "2GB"
+  default     = null
 }
 
 variable "neo4j_storage" {
-  description = "Storage allocated for Neo4j Aura instance. e.g. 2GB, 4GB, 8GB, 16GB."
+  description = "Storage allocated for Neo4j Aura instance (paid tiers only), e.g. 4GB, 8GB, 16GB. Leave null for free-db — the tier has a fixed size."
   type        = string
-  default     = "4GB"
+  default     = null
 }
 
 variable "neo4j_version" {

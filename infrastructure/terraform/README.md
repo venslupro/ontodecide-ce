@@ -22,7 +22,7 @@
 | Workers Domain (opt.) | 1     | `api.${project}.com` (requires non-empty zone_id)       |
 | B2 buckets (data)     | 2     | `${project}-${env_short}-{ingestion-staging,tenant-archive}` (allPrivate) |
 | B2 Application Key    | 1     | Worker-scoped key (least-privilege) for ingestion + cleanup |
-| Neo4j AuraDB instance | 1     | `${project}-${env_short}-neo4j` (professional-db, 2GB/4GB, v5) |
+| Neo4j AuraDB instance | 1     | `${project}-${env_short}-neo4j` (free-db by default, v5) |
 
 > **Env short**: `production` → `prd`, `staging` → `stg`
 
@@ -81,12 +81,21 @@ Terraform state is persisted in a B2 bucket (S3-compatible backend) so
 that CI runs share state. This prevents the "plan shows +create for all
 resources but apply fails because they already exist" problem.
 
-1. Create a B2 bucket named `ontodecide-prd-tf-state` (region:
+1. Create a **private** B2 bucket named `ontodecide-prd-tf-state` (region:
    `us-east-005`). Tag it with the same 4D governance tags as other B2
-   buckets (Environment / Project / Service=tf-state / Lifecycle).
-2. Use the **B2 master key** (`B2_MASTER_KEY_ID` / `B2_MASTER_KEY` GitHub
-   secrets) for the remote state backend + B2 provider. The master key has
-   full account access and is required to create buckets + application keys.
+   buckets (Environment / Project / Service=tf-state / Lifecycle), enable
+   **default encryption (SSE-B2)** and keep file versions (lifecycle
+   "keep all versions") so a corrupted state can be rolled back.
+   State contains plaintext secrets (B2 worker key, Neo4j password) —
+   `encrypt = true` in `versions.tf` also requests SSE on every write.
+2. Credentials (least privilege first):
+   - **State backend** → `B2_STATE_KEY_ID` / `B2_STATE_KEY`: an application
+     key restricted to the `ontodecide-prd-tf-state` bucket (list / read /
+     write / delete files). Optional — falls back to the admin key below.
+   - **B2 provider** → `B2_MASTER_KEY_ID` / `B2_MASTER_KEY`: needs to create
+     buckets + application keys. Prefer a revocable non-master application
+     key with `listBuckets, writeBuckets, listKeys, writeKeys` (+ file
+     capabilities) over the real account master key.
    Workers use a separate, least-privilege **worker key** that Terraform
    auto-generates (see §3).
 3. The backend config (bucket, endpoint, region, skip flags) is
@@ -95,12 +104,16 @@ resources but apply fails because they already exist" problem.
    (gitignored via `*_override.tf` pattern).
 4. For **local dev**, just export B2 credentials:
    ```bash
-   export AWS_ACCESS_KEY_ID='<B2_MASTER_KEY_ID>'      # master key ID
-   export AWS_SECRET_ACCESS_KEY='<B2_MASTER_KEY>'     # master key secret
-   export B2_APPLICATION_KEY_ID='<B2_MASTER_KEY_ID>'  # same (B2 provider)
-   export B2_APPLICATION_KEY='<B2_MASTER_KEY>'        # same (B2 provider)
-   terraform -chdir=infrastructure/terraform init
+   export AWS_ACCESS_KEY_ID='<B2_STATE_KEY_ID>'       # state-bucket key (or admin key)
+   export AWS_SECRET_ACCESS_KEY='<B2_STATE_KEY>'
+   export B2_APPLICATION_KEY_ID='<B2_MASTER_KEY_ID>'  # admin key (B2 provider)
+   export B2_APPLICATION_KEY='<B2_MASTER_KEY>'
+   terraform -chdir=infrastructure/terraform init -reconfigure
    ```
+   (`-reconfigure` is needed once on existing checkouts after the backend
+   gained `encrypt = true`.)
+5. **Never** share `terraform show -json`, `terraform output -json`, a
+   plan file, or `terraform.tfstate` — all contain plaintext secrets.
 
 ### 2.3 Init + validate (no Cloudflare calls, 100 % offline-safe)
 
@@ -116,8 +129,8 @@ terraform -chdir=infrastructure/terraform validate
 cd infrastructure/terraform
 cp terraform.tfvars.example terraform.tfvars   # then edit values
 # Backend config is static in versions.tf — just export B2 creds and init:
-export AWS_ACCESS_KEY_ID='<B2_MASTER_KEY_ID>'
-export AWS_SECRET_ACCESS_KEY='<B2_MASTER_KEY>'
+export AWS_ACCESS_KEY_ID='<B2_STATE_KEY_ID>'
+export AWS_SECRET_ACCESS_KEY='<B2_STATE_KEY>'
 terraform init
 terraform plan
 ```
@@ -180,19 +193,43 @@ plus B2 master key and Neo4j Aura credentials for resource creation.
 | -------- | ----------------------------- | ---------------------------------------------------- |
 | Secret   | `CF_API_TOKEN`                | Wide-scope Cloudflare API token (shared)             |
 | Secret   | `CF_ACCOUNT_ID`               | 32-hex Cloudflare account ID (shared)               |
-| Secret   | `B2_MASTER_KEY_ID` / `B2_MASTER_KEY` | B2 **master** key — S3 state backend + B2 provider |
+| Secret   | `B2_MASTER_KEY_ID` / `B2_MASTER_KEY` | B2 admin key — B2 provider (prefer a non-master key with bucket/key write caps) |
+| Secret   | `B2_STATE_KEY_ID` / `B2_STATE_KEY` | (optional) state-bucket-only key for the S3 backend; falls back to the admin key |
 | Secret   | `NEO4J_AURA_CLIENT_ID`        | Neo4j Aura API client ID (creates AuraDB instance)  |
 | Secret   | `NEO4J_AURA_CLIENT_SECRET`    | Neo4j Aura API client secret                         |
-| Secret   | `REPO_TOKEN`                  | GitHub PAT (`repo` scope) — pushes auto-created creds |
 | Variable | `TF_ZONE_ID`                  | (optional) Zone ID for `api.ontodecide.com`          |
 
-**Auto-created after `apply` (do NOT set manually):**
+**Uploaded as Cloudflare Worker Secrets by `deploy.yml` (never to GitHub):**
 
-| Kind     | Name                          | Source                                               |
-| -------- | ----------------------------- | ---------------------------------------------------- |
-| Secret   | `B2_WORKER_KEY_ID` / `B2_WORKER_KEY` | Terraform `b2_application_key.worker` (bucket-scoped) |
-| Secret   | `NEO4J_PASSWORD`              | Terraform `neo4jaura_instance.neo4j.password`        |
-| Variable | `NEO4J_URI` / `NEO4J_USERNAME` / `NEO4J_DATABASE` | Terraform Neo4j outputs |
+| Worker Secret      | Workers             | Source (Terraform state)                      |
+| ------------------ | ------------------- | --------------------------------------------- |
+| `B2_KEY_ID` / `B2_KEY` | ingestion + cleanup | Terraform `b2_application_key.worker` (bucket-scoped) |
+| `NEO4J_PASSWORD`   | graph + cleanup     | Terraform `neo4jaura_instance.neo4j.password` |
+
+Terraform owns the values; `deploy.yml` is their single writer. The
+local composite action `.github/actions/tf-outputs` reads the outputs
+straight from the remote state object (`aws s3 cp` + `jq`, no
+`terraform init`), masks them, and each deploy job hands only the ones
+it needs to `wrangler-action` `secrets:` — so secrets are uploaded
+together with the code. `NEO4J_URI` / `NEO4J_USERNAME` are patched into
+wrangler.toml `[vars]` the same way. No PAT and no GitHub Secrets hop.
+
+- **Bootstrap is two steps:** `terraform.yml` apply → `deploy.yml`. No
+  Worker has to exist before apply, and nothing has to be copied by hand.
+- **Rotation:** `terraform apply -replace=b2_application_key.worker`
+  (or reset the Neo4j password), then re-run `deploy.yml`.
+- A deleted/recreated Worker simply gets its secrets back on the next
+  `deploy.yml` run.
+- Deploy jobs read state with `B2_STATE_READ_KEY_ID` / `B2_STATE_READ_KEY`
+  (read-only key on the state bucket, recommended), falling back to
+  `B2_STATE_KEY_*` then `B2_MASTER_KEY_*`.
+- `b2_buckets` deliberately omits `account_id` (the B2 account ID is the
+  master key's keyID, and outputs are printed in public CI logs).
+
+The plan job uploads **only** `tfplan-summary.txt` (sensitive values
+masked). Plan binaries and `terraform show -json` embed plaintext
+secrets and must never be uploaded — artifacts of a public repository
+are downloadable by anyone.
 
 > **Project name** is fixed to `ontodecide` in `terraform.yml` env.
 > **Environment** defaults to `production` (→ `prd`).
@@ -214,13 +251,12 @@ locked at the reviewed-plan stage.
 | Secret   | `CF_ACCOUNT_ID`              | All workers                                |
 | Secret   | `JWT_SECRET`                 | gateway + user only                        |
 | Secret   | `EMAIL_API_KEY`              | user only (optional)                       |
-| Secret   | `NEO4J_PASSWORD`             | graph + cleanup (auto-created by terraform.yml) |
-| Secret   | `B2_WORKER_KEY_ID` / `B2_WORKER_KEY` | ingestion + cleanup (auto-created, mapped to worker env `B2_KEY_ID`/`B2_KEY`) |
-| Secret   | `GOOGLE_API_KEY` / `GROQ_API_KEY` | ai only (optional)                     |
-| Variable | `NEO4J_URI` / `NEO4J_USERNAME` / `NEO4J_DATABASE` | graph + cleanup (auto-created) |
+| Secret   | `B2_STATE_READ_KEY_ID` / `B2_STATE_READ_KEY` | (recommended) read-only state key — graph / ingestion / cleanup read Terraform outputs |
+| Secret   | `GOOGLE_API_KEY` / `GROQ_API_KEY` | ai only (optional — set on Cloudflare Dashboard, not GitHub) |
 
-> `NEO4J_*` and `B2_WORKER_*` are auto-created by `terraform.yml` after
-> apply — do not set them manually.
+> `NEO4J_PASSWORD`, `B2_KEY_ID` / `B2_KEY` and `NEO4J_URI` /
+> `NEO4J_USERNAME` come from Terraform state at deploy time — never set
+> them in GitHub. `NEO4J_DATABASE` stays a plain `[vars]` in wrangler.toml.
 
 ---
 
@@ -240,26 +276,21 @@ locked at the reviewed-plan stage.
 └───┬───┘ └────┬────┘ └───────┬────────┘ └────┬─────┘ └──────┬───────┘
     │          │              │               │              │
     ▼          ▼              ▼               ▼              ▼
-(fill REPLACE_WITH_* IDs) sentinel code   (cron fires     auto-push to
-  → wrangler.toml          replaced by:    daily 03:00Z)  GitHub Secrets
-                           wrangler deploy                  + Variables
-                           ⟵ deploy.yml (auto)                │
-                                                                ▼
-                                              deploy.yml reads creds →
-                                              inject into Workers
+(fill REPLACE_WITH_* IDs) sentinel code   (cron fires   remote state
+  → wrangler.toml          replaced by:    daily 03:00Z)  → deploy.yml
+                           wrangler deploy                 uploads Worker
+                           ⟵ deploy.yml (auto)             Secrets w/ code
 ```
 
 **Deploy order required by the hybrid model:**
 1. `terraform apply` (human-reviewed, ONCE per infra change) — creates
    all resources including B2 buckets, worker key, Neo4j AuraDB
-2. `terraform.yml` auto-pushes B2 worker key + Neo4j creds to GitHub
-   Secrets/Variables (requires `REPO_TOKEN`)
-3. Fill in wrangler.toml `[[kv_namespaces]].id` placeholders (D1/KV
+2. Fill in wrangler.toml `[[kv_namespaces]].id` placeholders (D1/KV
    IDs are resolved by `resolve-kv-ids.sh` / `resolve-d1-ids.sh` in CI)
-4. Push code → `deploy.yml` runs — reads `NEO4J_*` from Variables,
-   patches wrangler.toml, injects `NEO4J_PASSWORD` + `B2_WORKER_*` as
-   Worker secrets, deploys all Workers (3-layer dependency order)
-5. Post-deploy `migrate-d1` job runs `scripts/migrate.sh --remote`
+3. Push code / run `deploy.yml` — reads B2 worker key + Neo4j creds from
+   Terraform state, deploys all Workers with their secrets (3-layer
+   dependency order)
+4. Post-deploy `migrate-d1` job runs `scripts/migrate.sh --remote`
    against the shared D1
 
 ---
