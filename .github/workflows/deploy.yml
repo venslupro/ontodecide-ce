@@ -43,6 +43,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          # pnpm is installed by corepack in the next step, so setup-node
+          # must not try to cache it before it exists.
+          package-manager-cache: false
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.10.5

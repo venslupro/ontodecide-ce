@@ -23,6 +23,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          # pnpm is installed by corepack in the next step, so setup-node
+          # must not try to cache it before it exists.
+          package-manager-cache: false
       - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
