@@ -1,0 +1,407 @@
+{
+  "kinds": {
+    "file": {
+      "title": "File upload",
+      "desc": "Upload a CSV, XLSX or JSON file; it is parsed in the browser and imported in batches.",
+      "meta": "CSV · XLSX · JSON · ≤ 20 MB / 10k rows"
+    },
+    "rest": {
+      "title": "REST pull",
+      "desc": "Pull records incrementally from a business system’s REST API on a schedule.",
+      "meta": "Every 15 min · cursor-based · ≤ 500 per pull"
+    },
+    "webhook": {
+      "title": "Webhook push",
+      "desc": "External systems push records to you, verified with an HMAC signature.",
+      "meta": "HMAC-SHA256 signature · 5-minute replay window"
+    }
+  },
+  "list": {
+    "title": "Data integration",
+    "description": "Manage data sources, import jobs and data quality.",
+    "newSource": "New data source",
+    "empty": "No data sources yet",
+    "emptyHint": "Create a data source to bring business data into ontology objects.",
+    "cols": {
+      "name": "Name",
+      "kind": "Kind",
+      "target": "Target object type",
+      "state": "State",
+      "lastJob": "Last job",
+      "quality": "Quality",
+      "actions": "Actions"
+    },
+    "state": {
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "paused": "Paused by ontology change",
+      "pausedHint": "A breaking ontology change may have invalidated the mapping. Update the mapping, then re-enable the source.",
+      "stale": "Stale"
+    },
+    "never": "Never run",
+    "quality": "Quality {value}",
+    "txn": {
+      "APPEND": "Append",
+      "SNAPSHOT": "Snapshot"
+    },
+    "jobs": {
+      "title": "Import jobs",
+      "show": "Show jobs of {name}",
+      "hide": "Hide jobs of {name}",
+      "empty": "No jobs yet",
+      "counts": "Received {received, number} · written {upserted, number} · rejected {rejected, number}"
+    },
+    "toggle": {
+      "enable": "Enable {name}",
+      "disable": "Disable {name}"
+    },
+    "delete": {
+      "label": "Delete {name}",
+      "title": "Delete data source",
+      "body": "Delete the data source “{name}”? Imported objects are kept, but this source stops ingesting.",
+      "confirm": "Delete",
+      "done": "Deleted “{name}”",
+      "failed": "Delete failed"
+    }
+  },
+  "wizard": {
+    "title": "New data source",
+    "description": "Five steps: choose source → upload or connect → field mapping → quality rules → preview & run.",
+    "stepperLabel": "Wizard steps",
+    "steps": {
+      "kind": "Source kind",
+      "upload": "Upload or connect",
+      "mapping": "Field mapping",
+      "quality": "Quality rules",
+      "preview": "Preview & run"
+    },
+    "createFailed": "Could not save the data source"
+  },
+  "upload": {
+    "title": {
+      "file": "Upload a file",
+      "rest": "Connect a REST API",
+      "webhook": "Webhook push"
+    },
+    "subtitle": {
+      "file": "Files are parsed in a background thread and never block the page.",
+      "rest": "Enter the endpoint and the path of the records; sensitive headers are stored encrypted.",
+      "webhook": "You get a push URL and signing secret after creation."
+    },
+    "dropTitle": "Drop a file here, or click to choose",
+    "dropHint": "CSV (header row), XLSX or JSON array; up to {maxMb} MB and {maxRows, number} rows per file",
+    "choose": "Choose file",
+    "fileInput": "Choose a file to upload",
+    "parsing": "Parsing {name}… {rows, number} rows read",
+    "summary": "File details",
+    "fileName": "File name",
+    "size": "Size",
+    "rows": "Rows",
+    "rowsValue": "{count, plural, one {# row} other {# rows}}",
+    "parseTime": "Parse time",
+    "ms": "{ms, number} ms",
+    "fieldsDetected": "{count, plural, one {# field} other {# fields}} detected ({format})",
+    "replace": "Replace file",
+    "sample": "Sample data",
+    "fileRequired": "Upload and parse a file first.",
+    "errors": {
+      "FILE_TOO_LARGE": "The file exceeds {maxMb} MB. Please split the file and import the parts separately.",
+      "TOO_MANY_ROWS": "The file has more than {maxRows, number} rows. Please split the file and import the parts separately.",
+      "UNSUPPORTED_FORMAT": "Unsupported file format. Upload a CSV, XLSX or JSON file.",
+      "EMPTY_FILE": "The file contains no data rows.",
+      "INVALID_JSON": "Invalid JSON: expected an array of objects (or an object with an items / data array).",
+      "PARSE_FAILED": "The file could not be parsed. Check its content and encoding (UTF-8)."
+    }
+  },
+  "settings": {
+    "title": "Source settings",
+    "subtitle": "Records are written to the selected object type.",
+    "name": "Source name",
+    "nameRequired": "Enter a source name",
+    "targetType": "Target object type",
+    "targetTypeRequired": "Choose a target object type",
+    "targetTypeChangeHint": "Changing the target type resets the field mapping and quality rules.",
+    "chooseType": "Choose an object type",
+    "txnType": "Transaction type",
+    "txn": {
+      "APPEND": "Append (APPEND)",
+      "SNAPSHOT": "Snapshot (SNAPSHOT)"
+    },
+    "txnHint": {
+      "APPEND": "Adds or updates records; objects missing from this import are untouched.",
+      "SNAPSHOT": "This import represents the complete dataset of the source."
+    },
+    "conflictPolicy": "Conflict policy",
+    "conflict": {
+      "latest-wins": "Latest wins",
+      "source-priority": "Source priority",
+      "max-confidence": "Highest confidence"
+    },
+    "conflictHint": {
+      "latest-wins": "When several sources write a property, the most recent timestamp wins.",
+      "source-priority": "The source with the higher priority wins.",
+      "max-confidence": "The value with the highest confidence wins."
+    }
+  },
+  "rest": {
+    "url": "Endpoint URL",
+    "method": "Method",
+    "itemsPath": "Records path",
+    "itemsPathHint": "JSONPath, e.g. $.data.items",
+    "cursorParam": "Cursor parameter",
+    "cursorParamHint": "Query parameter carrying the incremental cursor (optional)",
+    "cursorPath": "Next cursor path",
+    "cursorPathHint": "JSONPath of the next cursor in the response (optional)",
+    "headers": "Headers",
+    "addHeader": "Add header",
+    "noHeaders": "No headers",
+    "headerKey": "Header {n} name",
+    "headerValue": "Header {n} value",
+    "removeHeader": "Remove header {n}",
+    "secret": "Sensitive",
+    "secretHint": "Sensitive headers (e.g. Authorization) are stored encrypted and never returned after creation.",
+    "issues": {
+      "url": "Enter a valid http(s) URL",
+      "itemsPath": "The records path must be a JSONPath starting with $, e.g. $.data.items"
+    }
+  },
+  "webhook": {
+    "noticeTitle": "The signing secret is shown only once",
+    "notice": "Creating the source issues a push URL and an HMAC signing secret. The secret is shown only once after creation — store it safely. Senders sign requests with the X-OD-Timestamp and X-OD-Signature headers.",
+    "secretTitle": "Push URL and secret",
+    "secretOnce": "The secret is shown only once and cannot be viewed after leaving this page",
+    "endpoint": "Push URL",
+    "secret": "Signing secret",
+    "copyEndpoint": "Copy push URL",
+    "copySecret": "Copy signing secret",
+    "secretGone": "The secret was issued at creation and cannot be shown again.",
+    "signHint": "Signature = HEX(HMAC-SHA256(secret, timestamp + \".\" + body)); the timestamp must be within 5 minutes."
+  },
+  "mapping": {
+    "title": "Field mapping",
+    "subtitle": "Map source fields to properties of “{type}” and configure transform chains.",
+    "tableLabel": "Field mapping table",
+    "autoMatch": "Auto-match by name",
+    "primaryKey": "Primary key",
+    "primaryKeyHint": "Identifies objects (property: {prop})",
+    "primaryKeySource": "Primary key source field",
+    "chooseField": "Choose a field",
+    "pkTag": "Key",
+    "cols": {
+      "source": "Source field & samples",
+      "target": "Target property",
+      "transform": "Transform chain"
+    },
+    "skip": "Do not import",
+    "targetFor": "Target property for {field}",
+    "samples": "Sample values of {field}",
+    "noFields": "No source fields",
+    "newField": "New source field",
+    "newFieldPlaceholder": "Field name, e.g. supplierId",
+    "addField": "Add field",
+    "removeField": "Remove field {field}",
+    "sourceTs": "Source timestamp field (used by latest-wins)",
+    "sourceTsNone": "None",
+    "chain": {
+      "placeholder": "Add a transform, e.g. trim",
+      "addStep": "Add a transform step for {field}",
+      "removeStep": "Remove transform {step}",
+      "text": "Transform chain text for {field}",
+      "textMode": "Edit as text",
+      "chipsMode": "Edit as chips",
+      "err": {
+        "TOO_MANY_STEPS": "A transform chain has at most {max} steps",
+        "MALFORMED": "Malformed transform: {step}",
+        "UNKNOWN": "Unknown transform: {step}",
+        "BAD_ARGS": "Invalid transform arguments: {step}"
+      }
+    },
+    "links": {
+      "title": "Links",
+      "hint": "Optional: create links to other objects from field values.",
+      "add": "Add link",
+      "none": "The target type has no outgoing link types",
+      "type": "Link {n} type",
+      "toKey": "Link {n} target key field",
+      "toKeyPlaceholder": "Target key field",
+      "split": "Link {n} separator",
+      "splitPlaceholder": "Separator",
+      "weight": "Link {n} weight field",
+      "noWeight": "No weight",
+      "remove": "Remove link {n}"
+    },
+    "ai": {
+      "generate": "Generate AI mapping draft",
+      "suggests": "Suggests mapping to",
+      "suggestsPk": "Suggested primary key field",
+      "confidence": "Confidence {value}",
+      "accept": "Confirm",
+      "dismiss": "Dismiss",
+      "acceptRow": "Confirm AI suggestion for {field}",
+      "dismissRow": "Dismiss AI suggestion for {field}",
+      "acceptAll": "Accept all",
+      "confirmed": "Confirmed",
+      "pendingNotice": "{count, plural, one {# AI suggestion needs} other {# AI suggestions need}} confirmation and won’t apply until confirmed.",
+      "done": "AI returned {count, plural, one {# mapping suggestion} other {# mapping suggestions}}",
+      "failed": "Could not generate a mapping draft",
+      "noSource": "Save the data source first",
+      "noSample": "Sample data is needed to generate a draft",
+      "noQuota": "No AI requests left today"
+    },
+    "preview": {
+      "title": "Mapping preview",
+      "subtitle": "First sample row mapped with confirmed rows ({count, plural, one {# field} other {# fields}})",
+      "noSample": "No sample data to preview"
+    },
+    "issues": {
+      "title": "Mapping checks",
+      "pkMissing": "Choose the primary key source field",
+      "schema": "Invalid mapping: {detail}",
+      "chain": "Invalid transform chain for {field}: {detail}",
+      "duplicate": "Property {prop} is mapped by several fields ({a}, {b})",
+      "requiredMissing": "Required properties not mapped: {props}",
+      "linkIncomplete": "Links need a type and a target key field",
+      "aiPending": "{count, plural, one {# AI suggestion is} other {# AI suggestions are}} unconfirmed; unconfirmed suggestions are not applied"
+    }
+  },
+  "quality": {
+    "title": "Quality rules",
+    "subtitle": "Record-level checks per property; on failure reject, clamp into range or just warn.",
+    "add": "Add rule",
+    "fromSchema": "From required properties",
+    "empty": "No quality rules yet",
+    "emptyHint": "You can skip this step; schema type and required checks always apply.",
+    "cols": {
+      "prop": "Property",
+      "kind": "Rule",
+      "arg": "Argument",
+      "onFail": "On failure"
+    },
+    "kinds": {
+      "required": "Required",
+      "range": "Numeric range",
+      "format": "Format (regex)",
+      "ref": "Reference",
+      "freshness": "Freshness"
+    },
+    "onFail": {
+      "reject": "Reject record",
+      "clamp": "Clamp into range",
+      "defer": "Warn and accept"
+    },
+    "chooseProp": "Choose a property",
+    "propLabel": "Rule {n} property",
+    "kindLabel": "Rule {n} kind",
+    "onFailLabel": "Rule {n} on failure",
+    "remove": "Remove rule {n}",
+    "min": "Rule {n} minimum",
+    "max": "Rule {n} maximum",
+    "minPh": "Min",
+    "maxPh": "Max",
+    "pattern": "Rule {n} regular expression",
+    "hours": "Rule {n} max age (hours)",
+    "hoursUnit": "hours",
+    "refType": "Rule {n} referenced type",
+    "anyType": "Any type",
+    "noArg": "No argument",
+    "footnote": "Rules run in order: the first failing “reject” rule rejects the record; “clamp into range” only applies to range rules.",
+    "issues": {
+      "prop": "Choose a property",
+      "schema": "Invalid rule",
+      "CLAMP_NOT_RANGE": "“Clamp into range” only applies to range rules",
+      "RANGE_ARG": "Enter a minimum and a maximum (min ≤ max)",
+      "FORMAT_ARG": "Enter a valid regular expression",
+      "FRESHNESS_ARG": "Freshness must be a number of hours greater than 0",
+      "REF_ARG": "Invalid referenced type"
+    }
+  },
+  "preview": {
+    "rowsTitle": "First 5 transformed rows",
+    "rowsSubtitle": "Dry run in the browser with the current mapping, transforms and quality rules",
+    "status": "Result",
+    "validBadge": "Valid",
+    "clampedBadge": "Clamped",
+    "statsTitle": "Validation",
+    "statsSubtitle": "Client-side pre-check over all {count, number} rows",
+    "stats": {
+      "total": "Total rows",
+      "valid": "Expected valid",
+      "rejected": "Would reject",
+      "clamped": "Clamped",
+      "warned": "{count, plural, one {# row triggers} other {# rows trigger}} warning rules (still imported)"
+    },
+    "reasons": "Rejection reasons",
+    "reasonCount": "{count, plural, one {# row} other {# rows}} · e.g. row {row}",
+    "allValid": "All records pass the client-side checks",
+    "planTitle": "Upload plan",
+    "planSubtitle": "The raw file is archived, then batches are submitted concurrently",
+    "plan": {
+      "batches": "Batches",
+      "batchesValue": "{count, plural, one {# batch} other {# batches}} × ≤ {size} rows",
+      "concurrency": "Concurrency",
+      "concurrencyValue": "{count} in parallel",
+      "eta": "Estimated time",
+      "etaValue": "About {seconds, number} s",
+      "retry": "Retries",
+      "note": "Rejected records are kept for 30 days and can be fixed and replayed on the job page."
+    },
+    "progress": {
+      "archive": "Raw file archive",
+      "archiveSkipped": "Archive storage not configured — skipped",
+      "batches": "Batch submission",
+      "batchesValue": "{done, number} / {total, number} batches",
+      "inFlight": "{count} in flight",
+      "retrying": "{count, plural, one {# batch} other {# batches}} waiting to retry"
+    },
+    "start": "Start import",
+    "retryImport": "Retry import",
+    "cancel": "Cancel",
+    "started": "File submitted, processing"
+  },
+  "summary": {
+    "title": "Summary",
+    "fields": "Mapped fields",
+    "links": "Links",
+    "rules": "Quality rules",
+    "restNote": "Once enabled the source is pulled every 15 minutes; disable it from the source list.",
+    "finish": "Finish and enable",
+    "created": "Data source created and enabled"
+  },
+  "job": {
+    "title": "Import job",
+    "source": "Source: {name}",
+    "progress": "Progress",
+    "polling": "Refreshes every 2 seconds",
+    "finished": "The job has finished",
+    "quality": "Quality {value}",
+    "groups": "{done, number} / {total, number} message groups",
+    "receivedSoFar": "{count, number} received so far",
+    "started": "Started {time}",
+    "finishedAt": "Finished {time}",
+    "duration": "Took {seconds, number} s",
+    "notFound": "The job does not exist or has expired",
+    "back": "Back to data integration",
+    "counters": {
+      "received": "Received",
+      "upserted": "Written",
+      "merged": "Merged",
+      "skipped": "Skipped",
+      "rejected": "Rejected"
+    },
+    "rejected": {
+      "title": "Rejected records",
+      "subtitle": "Edit values in place, then replay; rejected records are kept for 30 days.",
+      "empty": "No rejected records",
+      "row": "Row",
+      "error": "Error",
+      "cell": "Row {row} {field}",
+      "selectAll": "Select all",
+      "selectRow": "Select row {row}",
+      "selection": "{selected} selected · {edited} edited",
+      "fixReplay": "Fix & replay",
+      "replayAll": "Replay all",
+      "replayed": "Requeued {count, plural, one {# record} other {# records}}",
+      "replayFailed": "Replay failed"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars (gitignored) or pass TF_VAR_* in CI.
+account_id = "your-cloudflare-account-id"
+env        = "prod"
+b2_region  = "us-east-005"

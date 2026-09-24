@@ -1,0 +1,202 @@
+{
+  "title": "态势总览",
+  "description": "实时掌握关键指标、告警与待审批建议",
+  "updatedAt": "更新于 {time}",
+  "wallMode": "大屏模式",
+  "wall": {
+    "brand": "OntoDecide 运营驾驶舱",
+    "exitHint": "按 Esc 退出大屏",
+    "group": "KPI 分组 {current} / {total}",
+    "groupDot": "第 {n} 组"
+  },
+  "realtimeLabel": "实时连接状态：{state}",
+  "loadFailed": "态势数据加载失败",
+  "kpi": {
+    "title": "关键指标",
+    "empty": "暂无 KPI",
+    "emptyHint": "安装行业包或在本体工作台定义 KPI 后即可显示",
+    "vsYesterday": "{change} 较昨日",
+    "up": "上升",
+    "down": "下降",
+    "flat": "持平",
+    "better": "向好",
+    "worse": "变差",
+    "target": "目标 {value}",
+    "offTarget": "未达标",
+    "spark": "{name} 近 24 小时趋势"
+  },
+  "trend": {
+    "title": "指标趋势",
+    "kpi": "选择指标",
+    "range": "时间范围",
+    "aria": "{name} {range} 趋势图，含 {count, plural, other {# 个}}告警标记",
+    "empty": "暂无趋势数据",
+    "alertMarker": "告警"
+  },
+  "alerts": {
+    "title": "实时告警",
+    "filterOpen": "待处理",
+    "filterAll": "全部",
+    "filter": "告警筛选",
+    "empty": "暂无告警",
+    "emptyOpen": "没有待处理的告警",
+    "hits": "{count, plural, other {命中 # 次}}",
+    "ack": "确认",
+    "ackLabel": "确认告警：{title}",
+    "ackFailed": "确认告警失败",
+    "acked": "告警已确认",
+    "noObject": "无关联对象",
+    "count": "{count, plural, other {# 条}}"
+  },
+  "recs": {
+    "title": "待审批建议",
+    "empty": "暂无待审批建议",
+    "confidence": "置信度 {value}",
+    "impact": "预期收益 {value}",
+    "view": "查看",
+    "viewLabel": "查看建议：{summary}"
+  },
+  "impacted": {
+    "title": "受影响对象",
+    "subtitle": "来自最新建议的推演结果",
+    "empty": "暂无推演影响数据",
+    "hop": "{hop, plural, =0 {焦点} other {# 跳}}",
+    "delta": "影响 {value}",
+    "col": {
+      "object": "对象",
+      "type": "类型",
+      "hop": "跳数",
+      "delta": "变化"
+    }
+  },
+  "health": {
+    "title": "数据健康度",
+    "empty": "尚未接入数据源",
+    "quality": "质量分",
+    "qualityLabel": "{name} 质量分",
+    "lastUpdate": "最近更新 {time}",
+    "never": "从未更新",
+    "stale": "已过期",
+    "disabled": "已停用",
+    "kinds": {
+      "file": "文件",
+      "rest": "REST 接口",
+      "webhook": "Webhook"
+    }
+  },
+  "objectTable": {
+    "title": "对象集",
+    "empty": "对象集为空",
+    "failed": "对象集加载失败",
+    "object": "对象"
+  },
+  "automations": {
+    "title": "自动化规则",
+    "description": "当对象满足条件时自动告警、生成建议或执行免审批动作",
+    "create": "新建规则",
+    "empty": "还没有自动化规则",
+    "emptyHint": "创建一条规则，让系统在风险出现时第一时间告警",
+    "col": {
+      "name": "名称",
+      "trigger": "触发",
+      "condition": "条件",
+      "effects": "效果",
+      "severity": "严重级",
+      "cooldown": "冷却",
+      "lastFired": "最近触发",
+      "enabled": "启用",
+      "actions": "操作"
+    },
+    "trigger": {
+      "threshold": "对象变更时",
+      "schedule": "每小时",
+      "objectSetCount": "数量 {op} {value}"
+    },
+    "triggerHint": {
+      "threshold": "对象写入或更新时逐个评估",
+      "schedule": "每小时对该类型全部对象评估一次"
+    },
+    "effect": {
+      "alert": "告警",
+      "recommend": "生成建议",
+      "action": "免审批动作"
+    },
+    "effectHint": {
+      "alert": "在驾驶舱实时告警流中推送",
+      "recommend": "排队生成 AI 处置建议（需人工审批）",
+      "action": "直接执行不需要审批的动作"
+    },
+    "and": "且",
+    "or": "或",
+    "not": "非",
+    "exists": "{prop} 有值",
+    "noCondition": "无条件（全部对象）",
+    "never": "从未触发",
+    "cooldown": {
+      "none": "无",
+      "hours": "{n, plural, other {# 小时}}",
+      "minutes": "{n, plural, other {# 分钟}}",
+      "seconds": "{n, plural, other {# 秒}}"
+    },
+    "toggleLabel": "启用规则：{name}",
+    "editLabel": "编辑规则：{name}",
+    "deleteLabel": "删除规则：{name}",
+    "toggleFailed": "更新规则状态失败",
+    "enabledToast": "规则已启用",
+    "disabledToast": "规则已停用",
+    "saved": "规则已保存",
+    "deleted": "规则已删除",
+    "deleteTitle": "删除规则",
+    "deleteConfirm": "确定删除「{name}」？删除后不再触发，历史告警保留。",
+    "dialog": {
+      "createTitle": "新建自动化规则",
+      "editTitle": "编辑自动化规则",
+      "description": "对象类型 → 属性 → 算子 → 阈值；保存前会用最近数据试运行",
+      "confirmTitle": "确认保存",
+      "back": "返回修改",
+      "confirmSave": "确认保存"
+    },
+    "form": {
+      "basics": "基本信息",
+      "nameZh": "名称（中文）",
+      "nameEn": "名称（English，可选）",
+      "nameEnHint": "留空时英文界面显示中文名称",
+      "nameRequired": "请输入规则名称",
+      "triggerSection": "触发方式",
+      "triggerKind": "触发方式",
+      "objectType": "对象类型",
+      "chooseType": "选择对象类型",
+      "typeRequired": "请选择对象类型",
+      "unsupportedTrigger": "该规则的触发方式暂不支持在此编辑，保存时将保持不变",
+      "condition": "条件",
+      "conditionLabel": "触发条件",
+      "conditionNeedsType": "先选择对象类型再添加条件",
+      "effects": "效果",
+      "effectsRequired": "至少选择一种效果",
+      "perturbation": "设置推演扰动（可选）",
+      "perturbProperty": "扰动属性",
+      "chooseProperty": "选择数值属性",
+      "perturbChange": "变化幅度",
+      "perturbRequired": "请选择扰动属性",
+      "noNumeric": "该对象类型没有数值属性",
+      "actionType": "动作",
+      "chooseAction": "选择动作",
+      "actionRequired": "请选择免审批动作",
+      "noActions": "该对象类型没有免审批动作",
+      "severity": "严重级",
+      "cooldown": "冷却时间（秒）",
+      "cooldownHint": "同一对象两次触发的最小间隔，0–86400，默认 3600",
+      "cooldownRange": "冷却时间须在 0–86400 秒之间",
+      "enabled": "保存后立即启用",
+      "invalid": "规则定义不合法：{detail}"
+    },
+    "dryRun": {
+      "run": "试运行",
+      "running": "试运行中…",
+      "result": "{count, plural, =0 {最近数据不会触发此规则} other {最近数据将触发 # 次}}",
+      "sample": "示例对象",
+      "failed": "试运行失败：{message}",
+      "hint": "基于最近 24 小时数据评估，不会产生告警或写入"
+    }
+  }
+}

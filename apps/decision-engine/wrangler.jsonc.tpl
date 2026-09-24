@@ -1,0 +1,39 @@
+// decision-engine: simulation, AI recommendations, approval, outcome evaluation, LLM gateway.
+{
+  "name": "decision-engine${ENV_SUFFIX}",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "d1_databases": [{
+    "binding": "DECISION_DB",
+    "database_name": "${D1_DECISION_NAME}",
+    "database_id": "${D1_DECISION_ID}",
+    "migrations_dir": "../../migrations/decision"
+  }],
+  "ai": {"binding": "AI"},
+  "vectorize": [{"binding": "VEC", "index_name": "decision-cases-bge-m3${ENV_SUFFIX}"}],
+  "services": [
+    {"binding": "OBJECTS", "service": "object-graph${ENV_SUFFIX}", "entrypoint": "ObjectGraphRpc"},
+    {"binding": "SITUATION", "service": "situation-awareness${ENV_SUFFIX}", "entrypoint": "SituationRpc"},
+    {"binding": "ONTOLOGY", "service": "ontology-manager${ENV_SUFFIX}", "entrypoint": "OntologyRpc"}
+  ],
+  "queues": {
+    "producers": [{"binding": "DECISION_JOBS_QUEUE", "queue": "decision-jobs${ENV_SUFFIX}"}],
+    "consumers": [{
+      "queue": "decision-jobs${ENV_SUFFIX}",
+      "max_batch_size": 5,
+      "max_retries": 3,
+      "dead_letter_queue": "decision-jobs-dlq${ENV_SUFFIX}"
+    }]
+  },
+  "triggers": {"crons": ["0 1 * * *"]},
+  "vars": {
+    "ENVIRONMENT": "${ENVIRONMENT}",
+    "LLM_CHAIN": "workers-ai,gemini,groq",
+    "LLM_TENANT_DAILY_LIMIT": "50",
+    "LLM_USER_DAILY_LIMIT": "20",
+    "REC_EXPIRE_HOURS": "24"
+  },
+  "observability": {"enabled": true}
+}

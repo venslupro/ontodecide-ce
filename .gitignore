@@ -10,6 +10,9 @@ build/
 
 # Cloudflare / Wrangler
 .wrangler/
+# Rendered by scripts/gen_wrangler.mjs (the Pages config is hand-written).
+apps/*/wrangler.jsonc
+!apps/web/wrangler.jsonc
 .dev.vars
 .dev.vars.*
 
@@ -47,18 +50,18 @@ crash.log
 crash.*.log
 .terraformrc
 .terraform.rc
-# OntoDecide Terraform 精确路径忽略 (防止污染其它子项目)
-infrastructure/terraform/.terraform/
-terraform.tfvars
-terraform.tfvars.json
-infrastructure/terraform/terraform.tfvars
-infrastructure/terraform/terraform.tfvars.json
-infrastructure/terraform/override.tf
-infrastructure/terraform/override.tf.json
-infrastructure/terraform/*_override.tf
-infrastructure/terraform/*_override.tf.json
+# Terraform (infra/)
+infra/.terraform/
+infra/terraform.tfvars
+infra/terraform.tfvars.json
+infra/*_override.tf
+infra/*_override.tf.json
 # Note: .terraform.lock.hcl SHOULD be committed (pins provider hashes).
 #       DO NOT add it to .gitignore.
+
+# Test output
+test-results/
+playwright-report/
 
 # Test coverage
 coverage/

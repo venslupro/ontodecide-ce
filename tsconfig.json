@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "node"]
+  },
+  "include": [
+    "packages/**/*.ts",
+    "apps/api-gateway/src/**/*.ts",
+    "apps/identity-access/src/**/*.ts",
+    "apps/ontology-manager/src/**/*.ts",
+    "apps/data-integration/src/**/*.ts",
+    "apps/object-graph/src/**/*.ts",
+    "apps/situation-awareness/src/**/*.ts",
+    "apps/decision-engine/src/**/*.ts",
+    "tests/**/*.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["node_modules", "**/node_modules", "**/dist"]
+}

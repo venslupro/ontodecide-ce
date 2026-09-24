@@ -1,298 +1,67 @@
-# ============================================================================
-# Terraform · Infrastructure — manages Cloudflare resources (D1 / KV / Queues /
-# Worker Bindings / Cron / Domains) via Terraform declarative model.
-#
-# TRIGGERS:
-#   push/main          → fmt · validate · plan (READ-ONLY, apply skipped)
-#   pull_request/main  → fmt · validate · plan (READ-ONLY, apply skipped)
-#   workflow_dispatch  → fmt · validate · plan; apply runs on main branch
-#                        (manual trigger only) and requires production
-#                        Environment approval.
-#
-# REQUIRED SECRETS (Settings → Secrets and variables → Actions):
-#   CF_API_TOKEN      Cloudflare admin token (shared with deploy.yml)
-#   CF_ACCOUNT_ID     Cloudflare Account ID (32 hex chars)
-#   B2_MASTER_KEY_ID / B2_MASTER_KEY  B2 admin key for the B2 provider
-#                     (creates buckets + worker key). Prefer a revocable
-#                     non-master key with writeBuckets + writeKeys (+ list/
-#                     read) capabilities over the actual account master key.
-#   NEO4J_AURA_CLIENT_ID     Neo4j Aura API client ID
-#   NEO4J_AURA_CLIENT_SECRET Neo4j Aura API client secret
-# OPTIONAL SECRETS:
-#   B2_STATE_KEY_ID / B2_STATE_KEY  Key restricted to the state bucket
-#                     (ontodecide-prd-tf-state) for the S3 backend. Falls
-#                     back to B2_MASTER_KEY_ID / B2_MASTER_KEY when unset.
-# OPTIONAL VARS:
-#   TF_ZONE_ID        DNS Zone ID for custom domains
-#
-# SECRET HANDLING (public repository — every log and artifact is readable):
-#   • Terraform-generated credentials (B2 worker key, Neo4j password) stay
-#     in the SSE-encrypted remote state only. deploy.yml reads them from
-#     state (.github/actions/tf-outputs) and uploads them together with the
-#     Worker code — so bootstrap is two steps: this apply → deploy.yml.
-#     They never go to GitHub Secrets, logs, or artifacts.
-#   • Only the human-readable plan summary (sensitive values masked) is
-#     uploaded — never tfplan.binary / `terraform show -json`, which contain
-#     plaintext secrets.
-#   • Non-secret Neo4j connection details (URI / username) are shown in the
-#     apply job summary and patched into wrangler.toml by deploy.yml.
-# ============================================================================
-
-name: Terraform · Infrastructure
+# Terraform: plan on PRs (reviewed in the job summary), apply on main /
+# staging, and a nightly drift check (`plan -detailed-exitcode`).
+name: Terraform
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'infrastructure/terraform/**/*.tf'
-      - 'infrastructure/terraform/**/*.tfvars'
-      - '.github/workflows/terraform.yml'
-      - 'infrastructure/terraform/.terraform.lock.hcl'
   pull_request:
-    branches: [ main ]
-    paths:
-      - 'infrastructure/terraform/**/*.tf'
-      - 'infrastructure/terraform/**/*.tfvars'
-      - '.github/workflows/terraform.yml'
-      - 'infrastructure/terraform/.terraform.lock.hcl'
+    paths: ['infra/**', '.github/workflows/terraform.yml']
+  push:
+    branches: [main, staging]
+    paths: ['infra/**', '.github/workflows/terraform.yml']
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
-      environment:
-        description: 'Target environment (production→prd, staging→stg)'
+      env:
         type: choice
-        options: [production, staging]
-        default: production
+        options: [prod, staging]
+        default: prod
 
-# Least privilege for GITHUB_TOKEN — this workflow only reads the repo.
 permissions:
   contents: read
 
 concurrency:
-  group: terraform-${{ github.ref }}
+  # The B2 backend has no verified locking; serialize all runs.
+  group: terraform
   cancel-in-progress: false
 
-defaults:
-  run:
-    working-directory: infrastructure/terraform
-
-env:
-  # GitHub Actions Node 20 deprecation: force legacy actions to Node 24 runtime.
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-  # Cloudflare provider auth
-  CLOUDFLARE_API_TOKEN:    ${{ secrets.CF_API_TOKEN }}
-  # Backblaze B2 — S3 backend (AWS_* env vars) + B2 provider (B2_* env vars)
-  # Backend prefers a state-bucket-scoped key (B2_STATE_KEY_ID / B2_STATE_KEY)
-  # and falls back to the B2 admin key. The B2 provider uses the admin key to
-  # create buckets + a bucket-scoped worker key, which deploy.yml reads from
-  # state and uploads as Worker Secrets B2_KEY_ID / B2_KEY.
-  AWS_ACCESS_KEY_ID:       ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY:   ${{ secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
-  B2_APPLICATION_KEY_ID:   ${{ secrets.B2_MASTER_KEY_ID }}
-  B2_APPLICATION_KEY:      ${{ secrets.B2_MASTER_KEY }}
-  # Neo4j Aura provider auth
-  AURA_CLIENT_ID:          ${{ secrets.NEO4J_AURA_CLIENT_ID }}
-  AURA_CLIENT_SECRET:      ${{ secrets.NEO4J_AURA_CLIENT_SECRET }}
-  # Terraform input variables (TF_VAR_* convention)
-  TF_VAR_account_id:       ${{ secrets.CF_ACCOUNT_ID }}
-  TF_VAR_zone_id:          ${{ vars.TF_ZONE_ID }}
-  TF_VAR_project_name:     'ontodecide'
-  # Single-environment system: production only (→ prd).
-  # To add staging: declare workflow_dispatch.inputs.environment and
-  # reference it here; terraform main.tf env_short already derives
-  # staging→stg.
-  TF_VAR_environment:      'production'
-
 jobs:
-  # ── Phase 1: fmt + validate ────────────────────────────────────────────
-  validate:
-    name: Fmt · Validate
+  terraform:
     runs-on: ubuntu-latest
+    environment: ${{ (github.ref == 'refs/heads/staging' || inputs.env == 'staging') && 'staging' || 'production' }}
+    defaults:
+      run:
+        working-directory: infra
+    env:
+      TF_ENV: ${{ (github.ref == 'refs/heads/staging' || inputs.env == 'staging') && 'staging' || 'prod' }}
+      TF_VAR_account_id: ${{ secrets.CF_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
+      B2_APPLICATION_KEY_ID: ${{ secrets.B2_MASTER_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_MASTER_KEY }}
+      AURA_CLIENT_ID: ${{ secrets.NEO4J_AURA_CLIENT_ID }}
+      AURA_CLIENT_SECRET: ${{ secrets.NEO4J_AURA_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v5
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: '~> 1.9'
-          terraform_wrapper: true
-      - name: Purge stale cached providers (safety wipe before upgrade)
-        # Ensures no cached v4.x binaries survive the v5 major-version bump.
-        run: rm -rf infrastructure/terraform/.terraform/providers
-      - name: Init without backend
-        # v5 constraint (~> 5.19) resolved fresh from the registry.
-        run: terraform init -backend=false -input=false -upgrade
-      - name: Format check
-        id: fmt
-        run: terraform fmt -check -recursive -list=false
-      - name: Validate schema
-        id: validate
-        run: terraform validate
-
-  # ── Phase 2: plan (read-only, runs against real CF state) ──────────────
-  plan:
-    name: Plan
-    needs: validate
-    runs-on: ubuntu-latest
-    outputs:
-      plan_exit: ${{ steps.plan.outputs.exitcode }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: '~> 1.9'
-          terraform_wrapper: true
-      - name: Cache Terraform providers
-        uses: actions/cache@v6
-        with:
-          path: infrastructure/terraform/.terraform/providers
-          # Bumped salt (v3-) for the v4→v5 major-version upgrade so we
-          # intentionally miss any cached v4.x binaries.
-          key: v3-tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
-      - name: Purge stale cached providers (safety wipe before upgrade)
-        run: rm -rf infrastructure/terraform/.terraform/providers
-      - name: Diagnose B2 credentials (metadata only)
-        # Do NOT print secret values or any part of them (public repo logs)
-        # — only length + format checks.
-        # "Malformed Access Key Id" means AWS_ACCESS_KEY_ID is empty or
-        # has wrong format (B2 key IDs start with "00" or are numeric).
-        run: |
-          set -euo pipefail
-          KEY_ID="${AWS_ACCESS_KEY_ID:-}"
-          KEY="${AWS_SECRET_ACCESS_KEY:-}"
-          echo "AWS_ACCESS_KEY_ID raw length: ${#KEY_ID}"
-          echo "AWS_SECRET_ACCESS_KEY raw length: ${#KEY}"
-          if [ -z "${KEY_ID}" ]; then
-            echo "::error::AWS_ACCESS_KEY_ID is EMPTY — neither B2_STATE_KEY_ID nor B2_MASTER_KEY_ID found in secrets"
-            exit 1
-          fi
-          if [ -z "${KEY}" ]; then
-            echo "::error::AWS_SECRET_ACCESS_KEY is EMPTY — neither B2_STATE_KEY nor B2_MASTER_KEY found in secrets"
-            exit 1
-          fi
-          # Trim surrounding whitespace/newlines (common copy-paste artifact).
-          KEY_ID_TRIMMED="$(echo -n "${KEY_ID}" | tr -d '[:space:]')"
-          KEY_TRIMMED="$(echo -n "${KEY}" | tr -d '[:space:]')"
-          echo "After trim — key ID length: ${#KEY_ID_TRIMMED}, key length: ${#KEY_TRIMMED}"
-          if [ "${#KEY_ID}" -ne "${#KEY_ID_TRIMMED}" ]; then
-            echo "::warning::Key ID had surrounding whitespace (raw=${#KEY_ID}, trimmed=${#KEY_ID_TRIMMED}). Re-enter the secret without whitespace."
-          fi
-          # B2 application key IDs start with "00"; master key ID is the numeric account ID.
-          if [[ "${KEY_ID_TRIMMED}" =~ ^00[0-9a-fA-F]+$ ]]; then
-            echo "Key ID format: B2 Application Key (starts with 00, ${#KEY_ID_TRIMMED} chars) ✓"
-          elif [[ "${KEY_ID_TRIMMED}" =~ ^[0-9]+$ ]]; then
-            echo "Key ID format: B2 Master Key (account ID, ${#KEY_ID_TRIMMED} digits) ✓"
-          else
-            echo "::error::Key ID format invalid (not 00-prefixed hex, not numeric)."
-            echo "  - If using Master Key: keyID must be the numeric account ID (e.g. 123456789012)"
-            echo "  - If using Application Key: keyID must start with 00 (e.g. 00a1b2c3...)"
-            echo "  - Common mistake: swapped keyID and applicationKey values."
-          fi
-      - name: Init
-        # Re-resolve providers — cache key is lock-file based, so a fresh
-        # lock entry from -upgrade is persisted for subsequent steps.
-        run: terraform init -input=false -upgrade
-
-      # One-off: remove stale entries from remote state before plan.
-      # Safe no-op when keys are absent.
-      # - D1 databases: stale UUIDs from v4 state
-      # - Cron trigger: v4→v5 schedules schema mismatch (string[] → object[])
-      - name: Clean stale state entries
-        if: always()
-        run: |
-          set -u -o pipefail
-          STATE_KEYS="$(terraform state list 2>/dev/null || true)"
-
-          for KEY in cloudflare_d1_database.decision_db cloudflare_d1_database.shared_db; do
-            if echo "${STATE_KEYS}" | grep -Fxq "${KEY}"; then
-              terraform state rm "${KEY}"
-            fi
-          done
-
-          if echo "${STATE_KEYS}" | grep -Fq 'cloudflare_workers_cron_trigger.cleanup_daily'; then
-            if ! terraform state rm 'cloudflare_workers_cron_trigger.cleanup_daily["cleanup"]' 2>/dev/null; then
-              terraform state pull > /tmp/tfstate.json
-              jq '.resources |= map(select(.type != "cloudflare_workers_cron_trigger" or .name != "cleanup_daily"))' \
-                /tmp/tfstate.json > /tmp/tfstate-clean.json
-              terraform state push /tmp/tfstate-clean.json
-              rm -f /tmp/tfstate.json /tmp/tfstate-clean.json
-            fi
-          fi
-
+          terraform_version: 1.10.5
+      - run: terraform init -input=false -backend-config="key=${TF_ENV}/terraform.tfstate"
       - name: Plan
         id: plan
         run: |
-          if [ -f terraform.tfvars ]; then
-            terraform plan -input=false -out=tfplan.binary -var-file=terraform.tfvars
-          else
-            terraform plan -input=false -out=tfplan.binary
-          fi
-      # Only the human-readable summary is kept: `terraform show` masks
-      # sensitive values as (sensitive value). NEVER upload tfplan.binary or
-      # `terraform show -json` output — both embed plaintext secrets from
-      # state, and artifacts of a public repo are downloadable by anyone.
-      # (The apply job re-plans after approval, so the binary isn't needed.)
-      - run: terraform show -no-color tfplan.binary | tee tfplan-summary.txt
-      - uses: actions/upload-artifact@v7
-        with:
-          name: tfplan-summary-${{ github.sha }}
-          path: infrastructure/terraform/tfplan-summary.txt
-          retention-days: 30
-
-  # ── Phase 3: apply — manual dispatch + main only + env approval ────────
-  # Apply NEVER runs automatically on push/PR. Only workflow_dispatch
-  # (manual click) on main branch can trigger this job, gated by the
-  # production Environment required reviewers.
-  apply:
-    name: Apply (manual dispatch · main · env approval)
-    needs: plan
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-    steps:
-      - uses: actions/checkout@v5
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: '~> 1.9'
-          # Wrapper disabled: it mirrors every command's stdout into the log
-          # and step outputs — keep raw stdout for jq and avoid ever
-          # echoing an output value by accident.
-          terraform_wrapper: false
-      - name: Cache Terraform providers
-        uses: actions/cache@v6
-        with:
-          path: infrastructure/terraform/.terraform/providers
-          # Bumped salt (v3-) for the v4→v5 major-version upgrade.
-          key: v3-tf-providers-${{ runner.os }}-${{ hashFiles('infrastructure/terraform/.terraform.lock.hcl') }}
-      - name: Purge stale cached providers (safety wipe before upgrade)
-        run: rm -rf infrastructure/terraform/.terraform/providers
-      - name: Init
-        # Apply runner may be different from plan runner; re-resolve so the
-        # correct provider binary is available before applying the plan.
-        run: terraform init -input=false -upgrade
-      - name: Apply (fresh plan after approval)
-        run: |
-          if [ -f terraform.tfvars ]; then
-            terraform apply -input=false -auto-approve -var-file=terraform.tfvars
-          else
-            terraform apply -input=false -auto-approve
-          fi
-      - name: Show outputs (sensitive values masked)
-        # Text output masks sensitive values as (sensitive value).
-        # NEVER use `terraform output -json` in CI logs — JSON includes
-        # plaintext secrets.
-        run: terraform output || true
-      - name: Summarize Neo4j connection details (non-sensitive)
-        # URI / username are not secrets. deploy.yml reads them (and the
-        # credentials) from state and patches wrangler.toml [vars] itself;
-        # this summary is for human review only.
-        run: |
-          set -euo pipefail
-          terraform output -json neo4j_instance | jq -r '
-            "### Neo4j connection details",
-            "",
-            "Run **Deploy · Services** next — it picks these up from state.",
-            "",
-            "| Key | Value |", "|---|---|",
-            "| NEO4J_URI | `\(.connection_url)` |",
-            "| NEO4J_USERNAME | `\(.username)` |",
-            "| instance | `\(.name)` (`\(.type)`) |"
-          ' >> "${GITHUB_STEP_SUMMARY}"
+          set +e
+          VARFILE=""
+          [[ "$TF_ENV" == "staging" ]] && VARFILE="-var-file=staging.tfvars"
+          terraform plan -input=false -no-color -detailed-exitcode $VARFILE -out=tfplan > plan.txt
+          code=$?
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          { echo '### terraform plan'; echo '```'; tail -n 80 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [[ $code -eq 1 ]] && exit 1 || exit 0
+      - name: Drift detected
+        if: github.event_name == 'schedule' && steps.plan.outputs.exitcode == '2'
+        run: echo "::error::Infrastructure drift detected" && exit 1
+      - name: Apply
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: terraform apply -input=false -auto-approve tfplan

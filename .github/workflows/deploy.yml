@@ -1,570 +1,71 @@
-# Continuous Deployment (CD) — Worker Services + Frontend Pages
-#
-# Code + configuration deploys here. Long-lived resources (D1 / KV / Queues /
-# B2 / Neo4j) live in infrastructure/terraform via terraform.yml — run
-# Terraform apply BEFORE service deploys the first time so resolve-d1-ids.sh /
-# resolve-kv-ids.sh can look up the real resource IDs from the Cloudflare API.
-#
-# Bootstrap is two steps: terraform.yml apply → deploy.yml. Terraform-owned
-# credentials (B2 worker key, Neo4j password + URI/username) are read from
-# Terraform state by .github/actions/tf-outputs and uploaded with the code
-# via wrangler-action `secrets:` — deploy is the single writer of those
-# Worker Secrets. After rotating one in Terraform, re-run this workflow.
-#
-# Workers Scripts, Cron triggers, Service Bindings, Observability settings,
-# and the Cloudflare Pages Project (apps/web) are ALL created automatically
-# by `wrangler deploy` / `wrangler pages deploy` on first run (upsert / PUT
-# semantics) — no Terraform sentinel or pre-creation required.
-#
-# TRIGGERS:
-#   • push (any branch): detect-changes always; deploy all services on main.
-#   • workflow_dispatch: same as push; D1 migration still requires approval.
-#
-# DEPENDENCY ORDER (4-layer):
-#   L1 (parallel) → user · graph · ai · cleanup · web (Pages)
-#   L2            → ingestion (needs: graph)
-#   L3            → gateway   (needs: L1 + L2)
-#   L4 (approval) → migrate-d1 (needs: L3 + web; main-only; environment review)
-
-name: Deploy · Services
+# Deploy: main → prod, staging → staging. Renders Wrangler configs from
+# Terraform outputs, applies D1 migrations, deploys the 7 Workers leaf → root
+# with their secrets, then publishes the Pages project (Direct Upload).
+name: Deploy
 
 on:
-  push: {}
-  workflow_dispatch: {}
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main, staging]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
 
-# GitHub Actions runner Node runtime (20 deprecated 2025-09; default 24).
-# FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true opts Node 20 actions into Node 24
-# and suppresses the deprecation banner.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
-  detect-changes:
-    name: Detect changed services
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    outputs:
-      user:      ${{ steps.filter.outputs.user }}
-      graph:     ${{ steps.filter.outputs.graph }}
-      ai:        ${{ steps.filter.outputs.ai }}
-      cleanup:   ${{ steps.filter.outputs.cleanup }}
-      ingestion: ${{ steps.filter.outputs.ingestion }}
-      gateway:   ${{ steps.filter.outputs.gateway }}
-      web:       ${{ steps.filter.outputs.web }}
-      any:       ${{ steps.filter.outputs.any }}
-    steps:
-      - uses: actions/checkout@v5
-
-      # NOTE: paths are inlined per filter — YAML anchors would inject
-      # nested lists inside the | block scalar, causing silent mismatch.
-      - id: filter
-        uses: dorny/paths-filter@v4
-        with:
-          list-files: 'none'
-          filters: |
-            user:
-              - 'apps/shared/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'turbo.json'
-              - 'tsconfig.base.json'
-              - 'vitest.config.ts'
-              - '.github/workflows/deploy.yml'
-              - 'apps/api/user/**'
-            graph:
-              - 'apps/shared/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'turbo.json'
-              - 'tsconfig.base.json'
-              - 'vitest.config.ts'
-              - '.github/workflows/deploy.yml'
-              - 'apps/api/graph/**'
-            ai:
-              - 'apps/shared/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'turbo.json'
-              - 'tsconfig.base.json'
-              - 'vitest.config.ts'
-              - '.github/workflows/deploy.yml'
-              - 'apps/api/ai/**'
-            cleanup:
-              - 'apps/shared/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'turbo.json'
-              - 'tsconfig.base.json'
-              - 'vitest.config.ts'
-              - '.github/workflows/deploy.yml'
-              - 'apps/api/cleanup/**'
-            ingestion:
-              - 'apps/shared/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'turbo.json'
-              - 'tsconfig.base.json'
-              - 'vitest.config.ts'
-              - '.github/workflows/deploy.yml'
-              - 'apps/api/ingestion/**'
-            gateway:
-              - 'apps/shared/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'turbo.json'
-              - 'tsconfig.base.json'
-              - 'vitest.config.ts'
-              - '.github/workflows/deploy.yml'
-              - 'apps/api/gateway/**'
-            web:
-              - 'apps/shared/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'turbo.json'
-              - 'tsconfig.base.json'
-              - 'vitest.config.ts'
-              - '.github/workflows/deploy.yml'
-              - 'apps/web/**'
-            any:
-              - 'apps/shared/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'turbo.json'
-              - 'tsconfig.base.json'
-              - 'vitest.config.ts'
-              - '.github/workflows/deploy.yml'
-              - 'apps/api/user/**'
-              - 'apps/api/graph/**'
-              - 'apps/api/ai/**'
-              - 'apps/api/cleanup/**'
-              - 'apps/api/ingestion/**'
-              - 'apps/api/gateway/**'
-              - 'apps/web/**'
-
-      - name: Summary
-        run: |
-          echo "Changed:"
-          echo "  user      = ${{ steps.filter.outputs.user }}"
-          echo "  graph     = ${{ steps.filter.outputs.graph }}"
-          echo "  ai        = ${{ steps.filter.outputs.ai }}"
-          echo "  cleanup   = ${{ steps.filter.outputs.cleanup }}"
-          echo "  ingestion = ${{ steps.filter.outputs.ingestion }}"
-          echo "  gateway   = ${{ steps.filter.outputs.gateway }}"
-          echo "  web       = ${{ steps.filter.outputs.web }}"
-
-  # ── LAYER 1 — Independent services (parallel) ──────────────────────
-  # Leaves: user · graph · ai · cleanup · **web (Pages)**
-
-  deploy-user:
-    name: Deploy · user
-    needs: detect-changes
-    environment:
-      name: production
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: |
-          corepack enable
-          corepack prepare pnpm@9.12.0 --activate
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - name: Resolve KV namespace IDs
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: 'ontodecide'
-          # Single-environment system: production only (→ prd).
-          # To add staging: declare workflow_dispatch.inputs.environment and
-          # reference it here; terraform main.tf env_short already derives
-          # staging→stg.
-          ENVIRONMENT: production
-        run: ./scripts/resolve-kv-ids.sh apps/api/user
-      - name: Resolve D1 database IDs
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: 'ontodecide'
-          # Single-environment system: production only (→ prd).
-          # To add staging: declare workflow_dispatch.inputs.environment and
-          # reference it here; terraform main.tf env_short already derives
-          # staging→stg.
-          ENVIRONMENT: production
-        run: ./scripts/resolve-d1-ids.sh apps/api/user
-      - name: Deploy user worker
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          workingDirectory: apps/api/user
-          secrets: |
-            JWT_SECRET
-            EMAIL_API_KEY
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          EMAIL_API_KEY: ${{ secrets.EMAIL_API_KEY }}
-
-  deploy-graph:
-    name: Deploy · graph
-    needs: detect-changes
-    environment:
-      name: production
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: |
-          corepack enable
-          corepack prepare pnpm@9.12.0 --activate
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - name: Resolve KV namespace IDs
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: 'ontodecide'
-          # Single-environment system: production only (→ prd).
-          # To add staging: declare workflow_dispatch.inputs.environment and
-          # reference it here; terraform main.tf env_short already derives
-          # staging→stg.
-          ENVIRONMENT: production
-        run: ./scripts/resolve-kv-ids.sh apps/api/graph
-      - name: Read Neo4j credentials from Terraform state
-        uses: ./.github/actions/tf-outputs
-        with:
-          neo4j: 'true'
-          # Read-only state key preferred (deploy runs on every push);
-          # falls back to the Terraform state / admin key.
-          state-key-id: ${{ secrets.B2_STATE_READ_KEY_ID || secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
-          state-key: ${{ secrets.B2_STATE_READ_KEY || secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
-      - name: Patch Neo4j connection into wrangler.toml [vars]
-        run: |
-          sed -i \
-            -e "s|^NEO4J_URI .*=.*|NEO4J_URI      = \"${NEO4J_URI}\"|" \
-            -e "s|^NEO4J_USERNAME .*=.*|NEO4J_USERNAME = \"${NEO4J_USERNAME}\"|" \
-            apps/api/graph/wrangler.toml
-      - name: Deploy graph worker
-        # NEO4J_PASSWORD comes from Terraform state (step above) and is
-        # uploaded together with the code — no Worker has to pre-exist.
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          workingDirectory: apps/api/graph
-          secrets: |
-            NEO4J_PASSWORD
-
-  deploy-ai:
-    name: Deploy · ai
-    needs: detect-changes
-    environment:
-      name: production
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: |
-          corepack enable
-          corepack prepare pnpm@9.12.0 --activate
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - name: Resolve D1 database IDs
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: 'ontodecide'
-          # Single-environment system: production only (→ prd).
-          # To add staging: declare workflow_dispatch.inputs.environment and
-          # reference it here; terraform main.tf env_short already derives
-          # staging→stg.
-          ENVIRONMENT: production
-        run: ./scripts/resolve-d1-ids.sh apps/api/ai
-      - name: Deploy ai worker
-        # GOOGLE_API_KEY / GROQ_API_KEY are optional — configured directly
-        # on Cloudflare Dashboard Secrets so deploys never overwrite them.
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          workingDirectory: apps/api/ai
-
-  deploy-cleanup:
-    name: Deploy · cleanup
-    needs: detect-changes
-    environment:
-      name: production
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: |
-          corepack enable
-          corepack prepare pnpm@9.12.0 --activate
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - name: Resolve KV namespace IDs
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: 'ontodecide'
-          # Single-environment system: production only (→ prd).
-          # To add staging: declare workflow_dispatch.inputs.environment and
-          # reference it here; terraform main.tf env_short already derives
-          # staging→stg.
-          ENVIRONMENT: production
-        run: ./scripts/resolve-kv-ids.sh apps/api/cleanup
-      - name: Resolve D1 database IDs
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: 'ontodecide'
-          # Single-environment system: production only (→ prd).
-          # To add staging: declare workflow_dispatch.inputs.environment and
-          # reference it here; terraform main.tf env_short already derives
-          # staging→stg.
-          ENVIRONMENT: production
-        run: ./scripts/resolve-d1-ids.sh apps/api/cleanup
-      - name: Read B2 + Neo4j credentials from Terraform state
-        uses: ./.github/actions/tf-outputs
-        with:
-          b2: 'true'
-          neo4j: 'true'
-          # Read-only state key preferred (deploy runs on every push);
-          # falls back to the Terraform state / admin key.
-          state-key-id: ${{ secrets.B2_STATE_READ_KEY_ID || secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
-          state-key: ${{ secrets.B2_STATE_READ_KEY || secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
-      - name: Patch Neo4j connection into wrangler.toml [vars]
-        run: |
-          sed -i \
-            -e "s|^NEO4J_URI .*=.*|NEO4J_URI  = \"${NEO4J_URI}\"|" \
-            -e "s|^NEO4J_USERNAME .*=.*|NEO4J_USERNAME = \"${NEO4J_USERNAME}\"|" \
-            apps/api/cleanup/wrangler.toml
-      - name: Deploy cleanup worker
-        # NEO4J_PASSWORD / B2_KEY_ID / B2_KEY come from Terraform state
-        # (step above) and are uploaded together with the code.
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          workingDirectory: apps/api/cleanup
-          secrets: |
-            NEO4J_PASSWORD
-            B2_KEY_ID
-            B2_KEY
-
-  # web — Cloudflare Pages SPA. Deployed AFTER the Gateway so the
-  # GATEWAY_SERVICE Service Binding (used by the /api/* proxy Function)
-  # resolves to a real worker at invocation time.
-  deploy-web:
-    name: Deploy · web
-    needs: [detect-changes, deploy-gateway]
-    environment:
-      name: production
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: |
-          corepack enable
-          corepack prepare pnpm@9.12.0 --activate
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # Build with NO VITE_API_BASE — the SPA uses relative /api/* URLs.
-      # A Pages Function (functions/api/[[path]].ts) proxies them to the
-      # Gateway worker via the GATEWAY_SERVICE Service Binding declared in
-      # apps/web/wrangler.toml. This avoids workers.dev DNS + CORS issues.
-      - run: pnpm -r build
-      # wrangler pages CLI reads CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
-      # (not the CF_* aliases used by wrangler-action).
-      #
-      # NOTE on project create (Wrangler 4.x): `wrangler pages deploy` no longer
-      # auto-creates a missing Pages project — it fails with
-      # "The Pages project X does not exist." So we run `pages project create`
-      # first with || true. Idempotent: command errors out on duplicate name,
-      # which we suppress so subsequent deploys still succeed.
-      - name: Ensure Cloudflare Pages project exists
-        env:
-          CLOUDFLARE_API_TOKEN:  ${{ secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        run: |
-          PROJECT="ontodecide-ce"
-          echo "Ensuring Pages project: $PROJECT"
-          pnpm exec wrangler pages project create "$PROJECT" --production-branch main || true
-      - name: Deploy frontend to Cloudflare Pages
-        # IMPORTANT: `wrangler pages deploy` does NOT support --config (unlike
-        # Worker `wrangler deploy`).  So we set working-directory to apps/web
-        # so Wrangler auto-loads ./wrangler.toml from the cwd and the [assets]
-        # directory = "dist" resolves correctly.  Attempting to use --config
-        # here fails with: "Pages does not support custom paths for the
-        # Wrangler configuration file" (Wrangler 4.x).
-        working-directory: apps/web
-        env:
-          CLOUDFLARE_API_TOKEN:  ${{ secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        run: |
-          PROJECT="ontodecide-ce"
-          pnpm exec wrangler pages deploy dist \
-            --project-name "$PROJECT" \
-            --branch main
-
-  # ── LAYER 2 — ingestion (depends on graph) ──────────────────────────
-
-  deploy-ingestion:
-    name: Deploy · ingestion
-    needs: [detect-changes, deploy-graph]
-    if: |
-      always() &&
-      github.ref == 'refs/heads/main' &&
-      (needs.deploy-graph.result == 'success' || needs.deploy-graph.result == 'skipped')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: |
-          corepack enable
-          corepack prepare pnpm@9.12.0 --activate
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - name: Resolve KV namespace IDs
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: 'ontodecide'
-          # Single-environment system: production only (→ prd).
-          # To add staging: declare workflow_dispatch.inputs.environment and
-          # reference it here; terraform main.tf env_short already derives
-          # staging→stg.
-          ENVIRONMENT: production
-        run: ./scripts/resolve-kv-ids.sh apps/api/ingestion
-      - name: Read B2 credentials from Terraform state
-        uses: ./.github/actions/tf-outputs
-        with:
-          b2: 'true'
-          # Read-only state key preferred (deploy runs on every push);
-          # falls back to the Terraform state / admin key.
-          state-key-id: ${{ secrets.B2_STATE_READ_KEY_ID || secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
-          state-key: ${{ secrets.B2_STATE_READ_KEY || secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
-      - name: Deploy ingestion worker
-        # B2_KEY_ID / B2_KEY come from Terraform state (step above) and are
-        # uploaded together with the code.
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          workingDirectory: apps/api/ingestion
-          secrets: |
-            B2_KEY_ID
-            B2_KEY
-
-  # ── LAYER 3 — gateway (depends on all L1 + L2) ──────────────────────
-
-  deploy-gateway:
-    name: Deploy · gateway
-    needs: [detect-changes, deploy-user, deploy-graph, deploy-ai, deploy-cleanup, deploy-ingestion]
-    if: |
-      always() &&
-      github.ref == 'refs/heads/main' &&
-      (needs.deploy-user.result      == 'success' || needs.deploy-user.result      == 'skipped') &&
-      (needs.deploy-graph.result     == 'success' || needs.deploy-graph.result     == 'skipped') &&
-      (needs.deploy-ai.result        == 'success' || needs.deploy-ai.result        == 'skipped') &&
-      (needs.deploy-cleanup.result   == 'success' || needs.deploy-cleanup.result   == 'skipped') &&
-      (needs.deploy-ingestion.result == 'success' || needs.deploy-ingestion.result == 'skipped')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: |
-          corepack enable
-          corepack prepare pnpm@9.12.0 --activate
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - name: Resolve KV namespace IDs
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          PROJECT_NAME: 'ontodecide'
-          # Single-environment system: production only (→ prd).
-          # To add staging: declare workflow_dispatch.inputs.environment and
-          # reference it here; terraform main.tf env_short already derives
-          # staging→stg.
-          ENVIRONMENT: production
-        run: ./scripts/resolve-kv-ids.sh apps/api/gateway
-      - name: Deploy gateway worker
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          workingDirectory: apps/api/gateway
-          secrets: |
-            JWT_SECRET
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-
-  # ── LAYER 4 — migrate-d1 (Approval · main-only) ──────────────────────
-  # Waits for required reviewers on the production environment after deploy.
-
-  migrate-d1:
-    name: Migrate · D1 (Approval · main-only)
-    needs: [deploy-user, deploy-graph, deploy-ai, deploy-cleanup, deploy-ingestion, deploy-gateway, deploy-web]
-    if: |
-      always() &&
-      github.ref == 'refs/heads/main' &&
-      (needs.deploy-user.result      == 'success' || needs.deploy-user.result      == 'skipped') &&
-      (needs.deploy-graph.result     == 'success' || needs.deploy-graph.result     == 'skipped') &&
-      (needs.deploy-ai.result        == 'success' || needs.deploy-ai.result        == 'skipped') &&
-      (needs.deploy-cleanup.result   == 'success' || needs.deploy-cleanup.result   == 'skipped') &&
-      (needs.deploy-ingestion.result == 'success' || needs.deploy-ingestion.result == 'skipped') &&
-      (needs.deploy-gateway.result   == 'success' || needs.deploy-gateway.result   == 'skipped') &&
-      (needs.deploy-web.result       == 'success' || needs.deploy-web.result       == 'skipped')
-    runs-on: ubuntu-latest
+    environment: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'staging' && 'staging' || 'production' }}
     env:
-      # wrangler d1 CLI reads CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
-      # (not the CF_* aliases used by wrangler-action).
-      CLOUDFLARE_API_TOKEN:   ${{ secrets.CF_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CF_ACCOUNT_ID }}
-      CF_API_TOKEN:           ${{ secrets.CF_API_TOKEN }}
-      CF_ACCOUNT_ID:          ${{ secrets.CF_ACCOUNT_ID }}
-      PROJECT_NAME:           'ontodecide'
-      ENVIRONMENT:            'production'
+      ENV: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'staging' && 'staging' || 'prod' }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
+      BOOTSTRAP_ADMIN_EMAIL: ${{ vars.BOOTSTRAP_ADMIN_EMAIL }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      APPROVAL_SECRET: ${{ secrets.APPROVAL_SECRET }}
+      WRITEBACK_SECRET: ${{ secrets.WRITEBACK_SECRET }}
+      CONNECTOR_ENC_KEY: ${{ secrets.CONNECTOR_ENC_KEY }}
+      BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
     steps:
       - uses: actions/checkout@v5
-      - run: |
-          corepack enable
-          corepack prepare pnpm@9.12.0 --activate
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: pnpm
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+      - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
       - run: pnpm install --frozen-lockfile
-      - name: Apply D1 migrations --remote
+      - name: Read Terraform outputs
+        working-directory: infra
         run: |
-          export PROJECT_NAME ENVIRONMENT
-          ./scripts/migrate.sh --remote --ai
+          terraform init -input=false -backend-config="key=${ENV}/terraform.tfstate" > /dev/null
+          terraform output -json > ../tf-output.json
+          # Sensitive outputs → masked env for secret upload.
+          node -e '
+            const o = require("../tf-output.json");
+            const put = (k, v) => { if (!v) return; console.log(`::add-mask::${v}`); require("fs").appendFileSync(process.env.GITHUB_ENV, `${k}<<__EOF__\n${v}\n__EOF__\n`); };
+            put("B2_KEY_ID", o.b2_integration_key?.value?.key_id);
+            put("B2_APP_KEY", o.b2_integration_key?.value?.key);
+            put("NEO4J_URL", o.neo4j?.value?.url);
+            put("NEO4J_USER", o.neo4j?.value?.username);
+            put("NEO4J_PASSWORD", o.neo4j_password?.value);
+          '
+      - run: node scripts/gen_wrangler.mjs --env "$ENV" --tf-output tf-output.json
+      - run: rm tf-output.json
+      - run: ENV="$ENV" bash scripts/bootstrap.sh
+      - run: pnpm build:web
+      - run: bash scripts/deploy.sh

@@ -1,204 +1,55 @@
-# ============================================================
-# Continuous Integration (CI) Workflow
-#
-# Runs on every push and pull request to ensure the codebase
-# compiles, lints cleanly, all tests pass, AND the Terraform
-# infrastructure configuration is syntactically valid.
-#
-# This workflow is fully automated — no manual approval needed.
-#
-# SCOPES:
-#   • App code (TS/JS)   — typecheck · lint · build · test
-#   • IaC code (.tf)     — terraform fmt · terraform validate
-#                          (state-independent · no real Cloudflare
-#                           API calls — fast & safe on every PR)
-# ============================================================
-
+# CI: typecheck, lint (gts + architecture guard), unit/integration tests,
+# web build with bundle budget, Terraform fmt/validate. Runs on every PR.
 name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, staging]
   pull_request:
-    branches:
-      - main
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Node 20 deprecated by GitHub runners; force remaining Node 20 actions onto Node 24 runtime.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
-  # -----------------------------------------------------------
-  # Job 1 — App code quality (typecheck · lint · build · test)
-  # -----------------------------------------------------------
   build-test:
-    name: Build · Lint · Test
+    name: Typecheck · Lint · Test · Build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      # Install pnpm using the EXACT version declared in package.json
-      # ("packageManager" field, Node.js corepack standard).  This step
-      # deliberately uses corepack directly instead of pnpm/action-setup
-      # to stay byte-equivalent to Cloudflare Workers Builds images, which
-      # run exactly these two commands (see workers-builds.yaml and
-      # scripts/build-worker.sh).  DO NOT re-add pnpm/action-setup without
-      # a `with.version` — mixing it with corepack alone triggers a
-      # broken action step (it expects either version: or to read
-      # packageManager but its parser can't pick up corepack's override).
-      - name: Setup pnpm (corepack, workers-builds byte-equivalent)
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.12.0 --activate
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm -r typecheck
-
-      - name: Lint
-        run: pnpm -r lint
-
-      - name: Build
-        run: pnpm -r build
-
-      - name: Test
-        run: pnpm test
-
-  # -----------------------------------------------------------
-  # Job 2 — Terraform static validation (fmt + validate)
-  #         State-independent: no Cloudflare API calls.
-  #         Uses dorny/paths-filter to skip when no .tf changes.
-  # -----------------------------------------------------------
-  terraform-static:
-    name: Terraform · Fmt · Validate
-    runs-on: ubuntu-latest
-    # NOTE: init -backend=false + fmt + validate combine to <10 s.
-    #       We let paths-filter decide whether to skip the heavy
-    #       steps; the checkout + tool setup is always cheap.
-    outputs:
-      skipped: ${{ steps.filter.outputs.terraform != 'true' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Check for Terraform-relevant path changes
-        id: filter
-        uses: dorny/paths-filter@v4
-        with:
-          list-files: 'none'
-          filters: |
-            terraform:
-              - 'infrastructure/terraform/*.tf'
-              - 'infrastructure/terraform/**/*.tf'
-              - 'infrastructure/terraform/*.tfvars'
-              - 'infrastructure/terraform/**/*.tfvars'
-              - '.github/workflows/terraform.yml'
-              - '.github/workflows/ci.yml'
-              - 'infrastructure/terraform/.terraform.lock.hcl'
-
-      - name: Setup Terraform
-        if: steps.filter.outputs.terraform == 'true'
-        uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: '~> 1.9'
-          terraform_wrapper: true
-
-      - name: Init (backend=false — state-free validation)
-        if: steps.filter.outputs.terraform == 'true'
-        working-directory: infrastructure/terraform
-        run: terraform init -backend=false -input=false
-
-      - name: Format check (canonical HCL layout)
-        if: steps.filter.outputs.terraform == 'true'
-        working-directory: infrastructure/terraform
-        run: terraform fmt -check -recursive -list=false
-
-      - name: Validate schema + references
-        if: steps.filter.outputs.terraform == 'true'
-        working-directory: infrastructure/terraform
-        run: terraform validate
-
-      - name: Skip notice (no Terraform-relevant files changed)
-        if: steps.filter.outputs.terraform != 'true'
-        run: echo "✅ Skipped — this push/PR does not touch infrastructure/terraform/** or workflow YAML."
-
-  # -----------------------------------------------------------
-  # Job 3 — YAML workflow syntax lint (yamllint or actionlint)
-  #         Catches malformed GitHub Actions / Wrangler toml
-  #         early instead of at runtime.
-  # -----------------------------------------------------------
-  config-lint:
-    name: YAML · TOML Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install actionlint + yq (via Go toolchain)
-        uses: actions/setup-go@v6
-        with:
-          # NOTE: keep at 1.25+.  `go install @latest` for actionlint
-          # pulls from the tip of the release branch; as of Aug 2026 the
-          # latest actionlint (v1.7.12+) declares `go >= 1.25.0` in its
-          # go.mod.  Downgrading this pin below 1.25 will retrigger the
-          # "requires go >= 1.25.0 (running go 1.22; GOTOOLCHAIN=local)"
-          # hard failure from the YAML·TOML Lint job.
-          go-version: '1.25'
-          # This repo has no Go modules / go.sum — actionlint and yq are
-          # installed with "go install @latest" (no local module graph).
-          # Default cache: 'go' therefore emits the noisy warning:
-          #   "Restore cache failed: Dependencies file is not found
-          #    ... Supported file pattern: go.sum"
-          # Disable caching entirely; go install @latest is fast enough
-          # and nothing stable to key against anyway.
-          cache: false
-
-      - name: Install actionlint
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@latest
-
-      - name: actionlint — validate GitHub Actions YAML
+      - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - name: Build web
+        run: pnpm build:web
+      - name: Bundle budget (initial JS ≤ 250 KB gzip)
+        run: node scripts/check_bundle.mjs apps/web/dist 250
+      - name: Worker bundles (dry-run)
         run: |
-          GOPATH_BIN="$(go env GOPATH)/bin"
-          export PATH="$PATH:$GOPATH_BIN"
-          actionlint -color \
-            .github/workflows/ci.yml \
-            .github/workflows/deploy.yml \
-            .github/workflows/terraform.yml
-
-      - name: Validate all wrangler.toml files exist (smoke check)
-        run: |
-          expected=(
-            "apps/api/gateway/wrangler.toml"
-            "apps/api/user/wrangler.toml"
-            "apps/api/graph/wrangler.toml"
-            "apps/api/ingestion/wrangler.toml"
-            "apps/api/ai/wrangler.toml"
-            "apps/api/cleanup/wrangler.toml"
-            "apps/web/wrangler.toml"
-          )
-          missing=()
-          for f in "${expected[@]}"; do
-            if [ ! -f "$f" ]; then
-              missing+=("$f")
-            fi
+          node scripts/gen_wrangler.mjs --env local
+          for w in ontology-manager data-integration object-graph situation-awareness decision-engine identity-access api-gateway; do
+            npx wrangler deploy --dry-run --outdir "dist/$w" -c "apps/$w/wrangler.jsonc"
           done
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "ERROR: Missing wrangler.toml files:"
-            printf '  %s\n' "${missing[@]}"
-            exit 1
-          fi
-          echo "All 7 wrangler.toml files present."
+
+  terraform:
+    name: Terraform fmt · validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate

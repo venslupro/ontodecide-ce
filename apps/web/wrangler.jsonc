@@ -1,0 +1,14 @@
+// Cloudflare Pages project for the cockpit SPA.
+// Deploy: pnpm --filter @ontodecide/web build && wrangler pages deploy dist --project-name ontodecide-ce
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ontodecide-ce",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-09-01",
+  "services": [{"binding": "GATEWAY", "service": "api-gateway"}],
+  "env": {
+    "preview": {
+      "services": [{"binding": "GATEWAY", "service": "api-gateway-staging"}]
+    }
+  }
+}
