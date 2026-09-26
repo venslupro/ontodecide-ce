@@ -44,15 +44,17 @@ flowchart LR
 
 The system is 1 Pages project plus 7 Workers. Each business Worker owns exactly one D1 database, and every Worker has `workers_dev: false`: the only public entry point is the Pages domain.
 
+Every deployed resource is named `{project}-{env}-{service|module}`, e.g. `ontodecide-prd-api-gateway` or `ontodecide-prd-graphdb` (`local` for `wrangler dev`). Two exceptions keep their names: the Pages project `ontodecide-ce` (the URL is always https://ontodecide-ce.pages.dev) and the Terraform state bucket `ontodecide-ce-tfstate`. The table below uses the `<service>` part; the deployed name is `ontodecide-prd-<service>`.
+
 | Worker | Bounded context | Owns |
 | --- | --- | --- |
-| `api-gateway` | — (technical) | EdgeGuard DO (idempotency, precise rate limits), KV `api-gateway-config` |
-| `identity-access` | Identity (generic) | D1 `identity-access-db` |
-| `ontology-manager` | Ontology (core) | D1 `ontology-manager-db`, KV `ontology-schema-cache` |
-| `data-integration` | Integration (supporting) | D1 `data-integration-db`, B2 `ontodecide-ce-raw-*`, queue `ingest` |
-| `object-graph` | ObjectGraph (core) | D1 `object-graph-db`, Neo4j projection, queue `graph-sync` |
-| `situation-awareness` | Situation (supporting) | D1 `situation-awareness-db`, DOs `SituationRoom` + `UsageGuard`, all DLQs |
-| `decision-engine` | Decision (core) | D1 `decision-engine-db`, Workers AI, Vectorize `decision-cases-bge-m3` |
+| `api-gateway` | — (technical) | EdgeGuard DO (idempotency, precise rate limits), KV `ontodecide-prd-gateway-config` |
+| `identity-access` | Identity (generic) | D1 `ontodecide-prd-identity-access-db` |
+| `ontology-manager` | Ontology (core) | D1 `ontodecide-prd-ontology-manager-db`, KV `ontodecide-prd-schema-cache` |
+| `data-integration` | Integration (supporting) | D1 `ontodecide-prd-data-integration-db`, B2 `ontodecide-prd-raw`, queue `ontodecide-prd-ingest` |
+| `object-graph` | ObjectGraph (core) | D1 `ontodecide-prd-object-graph-db`, Neo4j `ontodecide-prd-graphdb`, queue `ontodecide-prd-graph-sync` |
+| `situation-awareness` | Situation (supporting) | D1 `ontodecide-prd-situation-awareness-db`, DOs `SituationRoom` + `UsageGuard`, all DLQs |
+| `decision-engine` | Decision (core) | D1 `ontodecide-prd-decision-engine-db`, Workers AI, Vectorize `ontodecide-prd-decision-cases-bge-m3` |
 
 ## Repository layout
 
@@ -100,7 +102,7 @@ There is a single environment, **production** (GitHub environment `production`);
 | --- | --- | --- |
 | D1, KV, Queues, B2 bucket + key, Pages project, Neo4j Aura | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
 | Worker bindings, vars, crons, DO migrations, queue consumers | `apps/*/wrangler.jsonc.tpl` | `scripts/gen_wrangler.mjs` renders ids from `terraform output -json` |
-| Pages binding (`GATEWAY` → `api-gateway`) | `apps/web/wrangler.jsonc` | `wrangler pages deploy` |
+| Pages binding (`GATEWAY` → `ontodecide-prd-api-gateway`) | `apps/web/wrangler.jsonc` | `wrangler pages deploy` |
 | D1 schema | `migrations/<db>/*.sql` | `wrangler d1 migrations apply` |
 | Secrets | GitHub Secrets | `wrangler secret bulk` |
 | Vectorize index | `scripts/bootstrap.sh` | wrangler (idempotent) |

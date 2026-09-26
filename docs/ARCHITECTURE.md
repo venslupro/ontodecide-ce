@@ -17,6 +17,15 @@ code and this guide disagree, fix one of them in the same change.
 | `situation-awareness` | Worker | `apps/situation-awareness` + `packages/situation` | situation | KPIs, automations, alerts, DOs, DLQ |
 | `decision-engine` | Worker | `apps/decision-engine` + `packages/decision` | decision | Simulation, recommendations, LLM |
 
+Workers are listed by their `<service>` part: every deployed resource (Workers,
+D1, KV, queues, B2, Neo4j, Vectorize) is named
+`{project}-{env}-{service|module}`, e.g. `ontodecide-prd-api-gateway`,
+`ontodecide-prd-graphdb`. Exceptions: the Pages project `ontodecide-ce` (its
+URL is always https://ontodecide-ce.pages.dev) and the Terraform state bucket
+`ontodecide-ce-tfstate`. Terraform builds names from `local.prefix`
+(`var.project`, `var.environment`); templates use `${PREFIX}`, rendered by
+`scripts/gen_wrangler.mjs`, which checks it against Terraform's `name_prefix`.
+
 Every Worker has `workers_dev: false`. Service bindings form a DAG, so
 deployment runs leaf → root:
 
@@ -36,6 +45,9 @@ ontology-manager → data-integration → object-graph → situation-awareness
 There is one deployed environment, production, applied and deployed only from `main`.
 
 Queues:
+
+Queues are listed by logical name (deployed as `ontodecide-prd-<queue>`;
+`baseQueueName` strips the prefix):
 
 | Queue | Producer | Consumer | batch / retries |
 | --- | --- | --- | --- |

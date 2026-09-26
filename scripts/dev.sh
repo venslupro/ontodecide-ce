@@ -14,9 +14,10 @@ WORKERS=(identity-access ontology-manager data-integration object-graph situatio
 node scripts/gen_wrangler.mjs --env local
 
 for w in "${WORKERS[@]}"; do
-  CI=true npx wrangler d1 migrations apply "${w}-db" --local \
+  # D1 names follow {project}-{env}-{service}-db (scripts/gen_wrangler.mjs).
+  CI=true npx wrangler d1 migrations apply "ontodecide-local-${w}-db" --local \
     --persist-to "$STATE" -c "apps/${w}/wrangler.jsonc" >/dev/null
-  echo "migrated ${w}-db"
+  echo "migrated ontodecide-local-${w}-db"
 done
 
 configs=(-c apps/api-gateway/wrangler.jsonc)

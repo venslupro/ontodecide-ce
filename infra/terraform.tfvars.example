@@ -1,3 +1,6 @@
 # Copy to terraform.tfvars (gitignored) or pass TF_VAR_* in CI.
 account_id = "your-cloudflare-account-id"
 b2_region  = "us-east-005"
+# Resource names are {project}-{environment}-{service}; defaults shown.
+# project     = "ontodecide"
+# environment = "prd"
