@@ -2,8 +2,13 @@
 # not secret; the B2 key and Neo4j password are sensitive and are only read
 # by the deploy workflow to upload Worker secrets.
 
+output "name_prefix" {
+  description = "{project}-{env} prefix of every resource name."
+  value       = local.prefix
+}
+
 output "d1" {
-  description = "D1 databases keyed by name: {id, name}."
+  description = "D1 databases keyed by <service>-db: {id, name}."
   value       = { for k, v in cloudflare_d1_database.db : k => { id = v.id, name = v.name } }
 }
 

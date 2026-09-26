@@ -1,9 +1,11 @@
 // Cloudflare Pages project for the cockpit SPA (production only; deployed
-// from main by .github/workflows/deploy.yml via Direct Upload).
+// from main by .github/workflows/deploy.yml via Direct Upload). The project
+// name is exempt from {project}-{env}-{service}: it fixes the public URL
+// https://ontodecide-ce.pages.dev. The gateway binding follows the rule.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "ontodecide-ce",
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-09-01",
-  "services": [{"binding": "GATEWAY", "service": "api-gateway"}]
+  "services": [{"binding": "GATEWAY", "service": "ontodecide-prd-api-gateway"}]
 }

@@ -78,6 +78,14 @@ describe('misc helpers', () => {
       dlq: true,
     });
     expect(baseQueueName('ingest')).toEqual({name: 'ingest', dlq: false});
+    expect(baseQueueName('ontodecide-prd-object-writes-dlq')).toEqual({
+      name: 'object-writes',
+      dlq: true,
+    });
+    expect(baseQueueName('ontodecide-prd-graph-sync')).toEqual({
+      name: 'graph-sync',
+      dlq: false,
+    });
     expect([1, 2, 3, 10].map(backoffSeconds)).toEqual([2, 4, 8, 60]);
   });
 
