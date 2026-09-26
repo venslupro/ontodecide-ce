@@ -41,11 +41,11 @@ variable "enable_neo4j" {
 variable "neo4j_cloud_provider" {
   description = "Aura cloud provider (gcp, aws, azure)."
   type        = string
-  default     = "aws"
+  default     = "gcp"
 }
 
 variable "neo4j_region" {
   description = "Aura region matching the provider."
   type        = string
-  default     = "us-east-1"
+  default     = "us-central1"
 }
