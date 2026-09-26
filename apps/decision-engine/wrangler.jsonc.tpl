@@ -1,6 +1,6 @@
 // decision-engine: simulation, AI recommendations, approval, outcome evaluation, LLM gateway.
 {
-  "name": "decision-engine",
+  "name": "${PREFIX}-decision-engine",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -12,19 +12,19 @@
     "migrations_dir": "../../migrations/decision"
   }],
   "ai": {"binding": "AI"},
-  "vectorize": [{"binding": "VEC", "index_name": "decision-cases-bge-m3"}],
+  "vectorize": [{"binding": "VEC", "index_name": "${PREFIX}-decision-cases-bge-m3"}],
   "services": [
-    {"binding": "OBJECTS", "service": "object-graph", "entrypoint": "ObjectGraphRpc"},
-    {"binding": "SITUATION", "service": "situation-awareness", "entrypoint": "SituationRpc"},
-    {"binding": "ONTOLOGY", "service": "ontology-manager", "entrypoint": "OntologyRpc"}
+    {"binding": "OBJECTS", "service": "${PREFIX}-object-graph", "entrypoint": "ObjectGraphRpc"},
+    {"binding": "SITUATION", "service": "${PREFIX}-situation-awareness", "entrypoint": "SituationRpc"},
+    {"binding": "ONTOLOGY", "service": "${PREFIX}-ontology-manager", "entrypoint": "OntologyRpc"}
   ],
   "queues": {
-    "producers": [{"binding": "DECISION_JOBS_QUEUE", "queue": "decision-jobs"}],
+    "producers": [{"binding": "DECISION_JOBS_QUEUE", "queue": "${PREFIX}-decision-jobs"}],
     "consumers": [{
-      "queue": "decision-jobs",
+      "queue": "${PREFIX}-decision-jobs",
       "max_batch_size": 5,
       "max_retries": 3,
-      "dead_letter_queue": "decision-jobs-dlq"
+      "dead_letter_queue": "${PREFIX}-decision-jobs-dlq"
     }]
   },
   "triggers": {"crons": ["0 1 * * *"]},

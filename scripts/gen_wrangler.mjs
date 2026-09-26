@@ -17,6 +17,10 @@
  *
  * There is a single deployed environment (production, from main); `local`
  * only renders configs for `wrangler dev` on a developer machine.
+ *
+ * Every resource is named {project}-{env}-{service|module} (`${PREFIX}-…` in
+ * the templates), e.g. ontodecide-prd-api-gateway. The prod prefix must match
+ * Terraform's `name_prefix` output.
  */
 
 import {execFileSync} from 'node:child_process';
@@ -25,6 +29,17 @@ import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/** Project segment of every resource name. */
+export const PROJECT = 'ontodecide';
+
+/** --env value → environment segment of resource names. */
+export const ENV_CODES = {prod: 'prd', local: 'local'};
+
+/** `{project}-{env}` prefix of every resource name. */
+export function namePrefix(env) {
+  return `${PROJECT}-${ENV_CODES[env]}`;
+}
 
 /** Workers in deployment order (leaf → root). */
 export const WORKERS = [
@@ -104,7 +119,14 @@ function tfValue(value, label, allowMissing) {
 
 /** Builds the substitution map for an environment. */
 export function buildVars(env, tf, allowMissing = false) {
+  const prefix = namePrefix(env);
+  if (env !== 'local' && tf.name_prefix && tf.name_prefix !== prefix) {
+    throw new Error(
+      `Terraform name_prefix ${tf.name_prefix} does not match ${prefix}`,
+    );
+  }
   const vars = {
+    PREFIX: prefix,
     ENVIRONMENT: env,
     APP_VERSION: process.env.APP_VERSION ?? gitVersion(),
     COOKIE_SECURE: env === 'local' ? 'false' : 'true',
@@ -113,22 +135,22 @@ export function buildVars(env, tf, allowMissing = false) {
     FEATURE_NEO4J: 'false',
   };
   for (const [key, service] of Object.entries(D1_KEYS)) {
+    const name = `${prefix}-${service}-db`;
     if (env === 'local') {
-      vars[`D1_${key}_NAME`] = `${service}-db`;
+      vars[`D1_${key}_NAME`] = name;
       vars[`D1_${key}_ID`] = `local-${service}-db`;
     } else {
-      const name = `${service}-db`;
-      const db = tf.d1?.[name];
-      if (!db) tfValue(undefined, `d1["${name}"]`, allowMissing);
+      const db = tf.d1?.[`${service}-db`];
+      if (!db) tfValue(undefined, `d1["${service}-db"]`, allowMissing);
       vars[`D1_${key}_NAME`] = db?.name ?? name;
-      vars[`D1_${key}_ID`] = db?.id ?? `pending-${name}`;
+      vars[`D1_${key}_ID`] = db?.id ?? `pending-${service}-db`;
     }
   }
   if (env === 'local') {
     Object.assign(vars, {
       KV_SCHEMA_CACHE_ID: 'local-schema-cache',
       KV_GATEWAY_CONFIG_ID: 'local-gateway-config',
-      B2_RAW_BUCKET: 'ontodecide-ce-raw-local',
+      B2_RAW_BUCKET: `${prefix}-raw`,
       B2_REGION: 'us-east-005',
       B2_ENDPOINT: 's3.us-east-005.backblazeb2.com',
     });

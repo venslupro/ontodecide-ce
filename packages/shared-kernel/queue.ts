@@ -29,7 +29,10 @@ export interface QueueBatch<T> {
   retryAll(opts?: {delaySeconds?: number}): void;
 }
 
-/** Queue names without environment suffix. */
+/**
+ * Logical queue names. Deployed queues are named {project}-{env}-<name>
+ * (e.g. ontodecide-prd-ingest); `baseQueueName` maps them back.
+ */
 export const QUEUES = {
   ingest: 'ingest',
   objectWrites: 'object-writes',
@@ -41,12 +44,19 @@ export const QUEUES = {
 /** Logical queue name. */
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
-/** Splits a queue name into its base name and whether it is a DLQ. */
+const LOGICAL_QUEUES: readonly string[] = Object.values(QUEUES);
+
+/**
+ * Splits a deployed queue name into its logical name (without the
+ * `{project}-{env}-` prefix) and whether it is a DLQ. Unknown names are
+ * returned without the `-dlq` suffix only.
+ */
 export function baseQueueName(name: string): {name: string; dlq: boolean} {
   let n = name;
   const dlq = n.endsWith('-dlq');
   if (dlq) n = n.slice(0, -4);
-  return {name: n, dlq};
+  const logical = LOGICAL_QUEUES.find(q => n === q || n.endsWith(`-${q}`));
+  return {name: logical ?? n, dlq};
 }
 
 /** Retry delay for attempt n (1-based): 2^n seconds, capped at 60. */

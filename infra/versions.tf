@@ -20,7 +20,7 @@ terraform {
   }
 
   # State lives in the private B2 bucket ontodecide-ce-tfstate (S3 API,
-  # SSE-B2, versioning). There is a single environment (production).
+  # SSE-B2, versioning; kept outside the {project}-{env}-{service} naming). There is a single environment (production).
   # No secrets are ever written to state except the bucket-scoped B2 worker
   # key and the Neo4j password, which are marked sensitive.
   backend "s3" {

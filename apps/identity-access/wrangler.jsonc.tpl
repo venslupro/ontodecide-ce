@@ -1,6 +1,6 @@
 // identity-access: accounts, roles, markings, token issuance.
 {
-  "name": "identity-access",
+  "name": "${PREFIX}-identity-access",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],

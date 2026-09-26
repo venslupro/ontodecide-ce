@@ -9,7 +9,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-INDEX="decision-cases-bge-m3"
+# {project}-{env}-{module}; must match apps/decision-engine/wrangler.jsonc.tpl.
+INDEX="ontodecide-prd-decision-cases-bge-m3"
 
 if npx wrangler vectorize get "$INDEX" >/dev/null 2>&1; then
   echo "vectorize index $INDEX exists"

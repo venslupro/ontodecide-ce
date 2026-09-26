@@ -1,6 +1,6 @@
 // data-integration: connectors, dataset transactions, mapping, quality.
 {
-  "name": "data-integration",
+  "name": "${PREFIX}-data-integration",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -12,18 +12,18 @@
     "migrations_dir": "../../migrations/integration"
   }],
   "services": [
-    {"binding": "ONTOLOGY", "service": "ontology-manager", "entrypoint": "OntologyRpc"}
+    {"binding": "ONTOLOGY", "service": "${PREFIX}-ontology-manager", "entrypoint": "OntologyRpc"}
   ],
   "queues": {
     "producers": [
-      {"binding": "INGEST_QUEUE", "queue": "ingest"},
-      {"binding": "OBJECT_WRITES_QUEUE", "queue": "object-writes"}
+      {"binding": "INGEST_QUEUE", "queue": "${PREFIX}-ingest"},
+      {"binding": "OBJECT_WRITES_QUEUE", "queue": "${PREFIX}-object-writes"}
     ],
     "consumers": [{
-      "queue": "ingest",
+      "queue": "${PREFIX}-ingest",
       "max_batch_size": 4,
       "max_retries": 3,
-      "dead_letter_queue": "ingest-dlq"
+      "dead_letter_queue": "${PREFIX}-ingest-dlq"
     }]
   },
   "triggers": {"crons": ["*/15 * * * *"]},
