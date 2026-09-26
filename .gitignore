@@ -20,6 +20,7 @@ apps/*/wrangler.jsonc
 .env
 .env.local
 .env.*.local
+*.env
 *.secrets
 
 # Editors

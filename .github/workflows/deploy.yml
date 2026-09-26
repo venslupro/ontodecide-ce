@@ -29,7 +29,7 @@
 #   decision-engine     → ontology-manager, object-graph, situation-awareness,
 #                         Vectorize index
 #   api-gateway         → all six services above
-#   web (Pages)         → api-gateway
+#   web (Pages)         → api-gateway (creates the Pages project if missing)
 name: Deploy
 
 on:
@@ -274,6 +274,19 @@ jobs:
       - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:web
+      # Terraform does not manage the Pages project; the first deploy (or the
+      # first one after scripts/reset.sh) creates it.
+      - name: Create Pages project if missing
+        working-directory: apps/web
+        run: |
+          status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/ontodecide-ce")"
+          case "${status}" in
+            200) echo "Pages project ontodecide-ce exists" ;;
+            404) npx wrangler pages project create ontodecide-ce --production-branch main ;;
+            *) echo "::error::Pages project lookup failed (HTTP ${status})"; exit 1 ;;
+          esac
       - name: Deploy Pages
         working-directory: apps/web
         run: npx wrangler pages deploy dist --project-name ontodecide-ce --branch main
