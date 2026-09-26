@@ -93,7 +93,7 @@ packages/shared-kernel/  CallCtx, Rid, DomainEvent, AppError/Problem, FilterExpr
 packages/testing/        Node fakes: D1 over node:sqlite, DO SqlStorage, KV, QueueBus (retries + DLQ), rpcBinding
 migrations/<db>/         D1 migrations, one directory per database (file names are globally unique)
 infra/                   Terraform (resources only)
-scripts/                 gen_wrangler.mjs, bootstrap.sh, dev.sh, smoke.mjs
+scripts/                 gen_wrangler.mjs, bootstrap.sh, dev.sh, smoke.mjs, reset.sh
 tests/e2e/               in-process full-loop test wiring all services through the gateway
 samples/supply-chain/    demo CSVs for the built-in pack
 ```

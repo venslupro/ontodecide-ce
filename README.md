@@ -68,7 +68,7 @@ packages/<context>/     contract/ domain/ application/ infrastructure/ interface
 packages/testing/       D1 over node:sqlite, DO SQL storage, KV, queues with DLQ, RPC binding fakes
 migrations/<db>/        D1 migrations (one directory per database)
 infra/                  Terraform: D1, KV, Queues, B2, Pages project, Neo4j Aura
-scripts/                gen_wrangler.mjs, dev.sh, smoke.mjs, bootstrap.sh
+scripts/                gen_wrangler.mjs, dev.sh, smoke.mjs, bootstrap.sh, reset.sh
 samples/supply-chain/   demo CSVs for the built-in pack
 tests/e2e/              in-process full-loop test through the gateway
 ```
