@@ -112,8 +112,8 @@ push to main → CI → Terraform → Deploy
 ```
 
 * **`ci.yml`** runs typecheck, lint (gts + dependency-cruiser), tests, the web build with the 250 KB bundle budget, and Worker dry-run bundles.
-* **`terraform.yml`** runs Format → Validate → Lint → Plan → Apply. On PRs it runs only for `infra/` changes and stops at Plan; on `main` it runs after every green CI run. Apply runs **only on `main`**, only when the plan has changes, and only after a reviewer approves the `production` environment. A nightly run checks for drift.
-* **`deploy.yml`** runs **only on `main`**, after Terraform succeeds (or manually). After one approval on the `production` environment, each service deploys (migrations → deploy → secrets) in its own job, and a job waits for the services it binds to:
+* **`terraform.yml`** runs Format → Validate → Lint → Plan → Apply. Format, Validate, Lint and Plan run on every PR and on `main` (after every green CI run). Apply runs **only on `main`**, only when the plan has changes, and only after a reviewer approves the `production` environment. A nightly run checks for drift.
+* **`deploy.yml`** runs Build (production configs rendered from Terraform outputs, Worker dry-run bundles, web build) on every PR and on `main`. Deploying happens **only on `main`**, after Terraform succeeds (or manually): after one approval on the `production` environment, each service deploys (migrations → deploy → secrets) in its own job, and a job waits for the services it binds to:
 
   ```
   ontology-manager ──► data-integration ──► object-graph ──► situation-awareness ──► decision-engine ──► api-gateway ──► Pages

@@ -2,24 +2,20 @@
 #
 #   Format → Validate → Lint → Plan → Apply
 #
+# Format, Validate, Lint and Plan run on every branch (pull requests) and on
+# main. Apply runs only on main, only when Plan found changes, and only
+# after a reviewer approves the `production` environment.
+#
 # On main it is the middle link of the release chain
 #
 #   push to main → CI → Terraform → Deploy
 #
-# so it runs for every green CI run on main (not only infra changes) and
-# Deploy always follows it for the same commit.
-#
-#   pull_request (infra/**) → Format · Validate · Lint · Plan
-#   CI green on main /      → all stages; Apply runs only when Plan found
-#   workflow_dispatch         changes and waits for a reviewer on `production`
-#   schedule (nightly)      → up to Plan, as a drift check
-#
-# Resources are never changed from any branch other than main.
+# so Deploy always follows Terraform for the same commit. A nightly run on
+# main goes up to Plan as a drift check.
 name: Terraform
 
 on:
   pull_request:
-    paths: ['infra/**', '.github/workflows/terraform.yml']
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -32,9 +28,10 @@ permissions:
   contents: read
 
 concurrency:
-  # The B2 backend has no verified locking; serialize all runs.
-  group: terraform
-  cancel-in-progress: false
+  # The B2 backend has no verified locking; serialize runs on main. Pull
+  # requests only plan (no lock) and supersede their own older runs.
+  group: terraform-${{ github.event_name == 'pull_request' && github.ref || 'production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -105,6 +102,10 @@ jobs:
   plan:
     name: Plan
     needs: lint
+    # Fork PRs get no secrets, so they stop after the static checks.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
