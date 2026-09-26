@@ -2,7 +2,7 @@
 # production, applied only from the main branch.
 #
 # 6 D1 databases (one per business service), 2 KV namespaces, 5 queues +
-# 5 DLQs, B2 raw bucket + scoped key, Pages project, Neo4j AuraDB Free.
+# 5 DLQs, B2 raw bucket + scoped key, Neo4j AuraDB Free.
 #
 # Not managed here (no provider): Vectorize index (scripts/bootstrap.sh).
 #
@@ -71,20 +71,6 @@ resource "b2_application_key" "integration" {
   key_name     = "${local.prefix}-data-integration"
   capabilities = ["listFiles", "readFiles", "writeFiles"]
   bucket_ids   = [b2_bucket.raw.bucket_id]
-}
-
-# The Pages project is created by Terraform only; bindings and variables are
-# owned by apps/web/wrangler.jsonc (Wrangler becomes the source of truth).
-# Exception to the naming rule: the project name fixes the public URL,
-# which is always https://ontodecide-ce.pages.dev.
-resource "cloudflare_pages_project" "web" {
-  account_id        = var.account_id
-  name              = "ontodecide-ce"
-  production_branch = "main"
-
-  lifecycle {
-    ignore_changes = [deployment_configs, build_config, source]
-  }
 }
 
 data "neo4jaura_projects" "this" {

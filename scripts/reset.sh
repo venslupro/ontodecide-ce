@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
+#
 # Deletes every deployed OntoDecide resource and service so the next
-# Terraform → Deploy run starts from zero. Irreversible: back up or migrate
-# data before running it. Never run by CI.
+# deploy starts from zero. Irreversible: back up or migrate data before
+# running it. Never run by CI.
 #
 #   scripts/reset.sh [--dry-run] [--yes] [--legacy] [--env-file FILE]
 #
@@ -11,310 +12,676 @@
 #              (api-gateway, identity-access-db, ingest, ontodecide-ce-raw,
 #              …). Exact names only; make sure nothing else in the account
 #              uses them.
-#   --env-file Local credentials file (default .env.local). It must be
-#              gitignored; the script refuses a file tracked by git.
+#   --env-file Local credentials file (default .env.local), relative to the
+#              current directory. The script needs no checkout and runs from
+#              anywhere.
+#
+# Output is colored on a terminal; NO_COLOR=1 turns colors off and
+# FORCE_COLOR=1 keeps them when piped.
 #
 # Deleted, in dependency order: Pages project, 7 Workers, queues, D1, KV,
 # Vectorize index, B2 raw bucket (emptied first) and its key, Neo4j Aura
-# instance. Afterwards every resource is removed from the Terraform state.
-# The state bucket ontodecide-ce-tfstate itself is never touched.
+# instance, then the deployment state file (earlier versions are kept).
 #
-# Requires curl, jq, terraform and these variables, from the local
-# credentials file (KEY=value lines, chmod 600) or the environment:
+# Requires curl, jq and these variables, from the local credentials file
+# (KEY=value lines, chmod 600) or the environment:
 #   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
 #   B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY      (B2 master key)
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY       (state bucket key)
 #   AURA_CLIENT_ID, AURA_CLIENT_SECRET
 # The CI secret names (CF_API_TOKEN, B2_MASTER_KEY, …) are accepted too.
+
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
-PROJECT="ontodecide"
-ENVIRONMENT="prd"
-PREFIX="${PROJECT}-${ENVIRONMENT}"
-PAGES_PROJECT="ontodecide-ce" # exempt from the naming rule (fixed URL)
-STATE_BUCKET="ontodecide-ce-tfstate"
+readonly PROJECT="ontodecide"
+readonly ENVIRONMENT="prd"
+readonly PREFIX="${PROJECT}-${ENVIRONMENT}"
+readonly PAGES_PROJECT="ontodecide-ce" # exempt from the naming rule
+readonly STATE_BUCKET="ontodecide-ce-tfstate"
+readonly STATE_KEY="terraform.tfstate" # infra/versions.tf backend key
+readonly CF_API="https://api.cloudflare.com/client/v4"
+readonly AURA_API="https://api.neo4j.io"
+readonly TOTAL_STEPS=10
 
-SERVICES="identity-access ontology-manager data-integration object-graph situation-awareness decision-engine"
+readonly -a SERVICES=(
+  identity-access ontology-manager data-integration object-graph
+  situation-awareness decision-engine
+)
 # Root → leaf, so no Worker is deleted while another still binds to it.
-WORKERS="api-gateway identity-access decision-engine situation-awareness object-graph data-integration ontology-manager"
-QUEUES="ingest object-writes graph-sync situation-events decision-jobs"
+readonly -a WORKERS=(
+  api-gateway identity-access decision-engine situation-awareness
+  object-graph data-integration ontology-manager
+)
+readonly -a QUEUES=(
+  ingest object-writes graph-sync situation-events decision-jobs
+)
 
-DRY_RUN=false
-ASSUME_YES=false
-LEGACY=false
-ENV_FILE=".env.local"
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --dry-run) DRY_RUN=true ;;
-    --yes) ASSUME_YES=true ;;
-    --legacy) LEGACY=true ;;
-    --env-file) ENV_FILE="${2:?--env-file needs a path}"; shift ;;
-    -h | --help) sed -n '2,28p' "$0"; exit 0 ;;
-    *) echo "unknown option: $1" >&2; exit 2 ;;
-  esac
-  shift
-done
+# Progress counters, updated by step() and act().
+step_num=0
+step_items=0
+deleted_count=0
+planned_count=0
+failure_count=0
 
-# Credentials stay local: never read a file that is (or would be) committed.
-if [[ -f "$ENV_FILE" ]]; then
-  if git ls-files --error-unmatch "$ENV_FILE" >/dev/null 2>&1 ||
-    ! git check-ignore -q "$ENV_FILE"; then
-    echo "$ENV_FILE is not gitignored; refusing to read credentials from it" >&2
+#######################################
+# Sets the color codes: on a terminal or with FORCE_COLOR, never with
+# NO_COLOR (https://no-color.org).
+# Globals:
+#   BOLD DIM RED GREEN YELLOW CYAN RESET (set, readonly)
+# Arguments:
+#   None
+#######################################
+setup_colors() {
+  if [[ -z "${NO_COLOR:-}" ]] \
+    && { [[ -n "${FORCE_COLOR:-}" ]] \
+      || [[ -t 1 && "${TERM:-}" != dumb ]]; }; then
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    RED=$'\033[31m'
+    GREEN=$'\033[32m'
+    YELLOW=$'\033[33m'
+    CYAN=$'\033[36m'
+    RESET=$'\033[0m'
+  else
+    BOLD="" DIM="" RED="" GREEN="" YELLOW="" CYAN="" RESET=""
+  fi
+  readonly BOLD DIM RED GREEN YELLOW CYAN RESET
+}
+
+# Prints an error message to STDERR.
+err() {
+  printf '%s✗ error:%s %s\n' "${RED}${BOLD}" "${RESET}" "$*" >&2
+}
+
+# Prints a warning message to STDERR.
+warn() {
+  printf '%s! warning:%s %s\n' "${YELLOW}${BOLD}" "${RESET}" "$*" >&2
+}
+
+# Prints the header comment of this file as help text.
+usage() {
+  awk 'NR > 2 && /^#/ { sub(/^# ?/, ""); print; next } NR > 2 { exit }' \
+    "$0"
+}
+
+#######################################
+# Parses the command-line options.
+# Globals:
+#   DRY_RUN ASSUME_YES LEGACY ENV_FILE (set, readonly)
+# Arguments:
+#   The script's arguments.
+#######################################
+parse_args() {
+  DRY_RUN=false
+  ASSUME_YES=false
+  LEGACY=false
+  ENV_FILE=".env.local"
+  while (($# > 0)); do
+    case "$1" in
+      --dry-run) DRY_RUN=true ;;
+      --yes) ASSUME_YES=true ;;
+      --legacy) LEGACY=true ;;
+      --env-file)
+        if (($# < 2)); then
+          err "--env-file needs a path"
+          exit 2
+        fi
+        ENV_FILE="$2"
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        err "unknown option: $1 (see --help)"
+        exit 2
+        ;;
+    esac
+    shift
+  done
+  readonly DRY_RUN ASSUME_YES LEGACY ENV_FILE
+}
+
+#######################################
+# Loads the credentials file (if any) and checks every required setting.
+# Globals:
+#   ENV_FILE
+#   CONFIG_SOURCE CF_TOKEN CF_ACCOUNT B2_ID B2_KEY AURA_ID AURA_SECRET
+#   (set, readonly)
+# Arguments:
+#   None
+# Outputs:
+#   Writes missing settings to STDERR and exits 1 if any.
+#######################################
+load_config() {
+  CONFIG_SOURCE="environment variables"
+  if [[ -f "${ENV_FILE}" ]]; then
+    CONFIG_SOURCE="${ENV_FILE}"
+    if [[ -n "$(find "${ENV_FILE}" -perm -004)" ]]; then
+      warn "${ENV_FILE} is world-readable (run: chmod 600 ${ENV_FILE})"
+    fi
+    set -a
+    # shellcheck disable=SC1090
+    source "${ENV_FILE}"
+    set +a
+  elif [[ "${ENV_FILE}" != ".env.local" ]]; then
+    err "config file ${ENV_FILE} not found"
     exit 1
   fi
-  if [[ -n "$(find "$ENV_FILE" -perm -004)" ]]; then
-    echo "warning: $ENV_FILE is world-readable (chmod 600 $ENV_FILE)" >&2
+
+  CF_TOKEN="${CLOUDFLARE_API_TOKEN:-${CF_API_TOKEN:-}}"
+  CF_ACCOUNT="${CLOUDFLARE_ACCOUNT_ID:-${CF_ACCOUNT_ID:-}}"
+  B2_ID="${B2_APPLICATION_KEY_ID:-${B2_MASTER_KEY_ID:-}}"
+  B2_KEY="${B2_APPLICATION_KEY:-${B2_MASTER_KEY:-}}"
+  AURA_ID="${AURA_CLIENT_ID:-${NEO4J_AURA_CLIENT_ID:-}}"
+  AURA_SECRET="${AURA_CLIENT_SECRET:-${NEO4J_AURA_CLIENT_SECRET:-}}"
+  readonly CONFIG_SOURCE CF_TOKEN CF_ACCOUNT B2_ID B2_KEY AURA_ID \
+    AURA_SECRET
+
+  local -a missing=()
+  local pair var bin item
+  for pair in CF_TOKEN:CLOUDFLARE_API_TOKEN \
+    CF_ACCOUNT:CLOUDFLARE_ACCOUNT_ID \
+    B2_ID:B2_APPLICATION_KEY_ID \
+    B2_KEY:B2_APPLICATION_KEY \
+    AURA_ID:AURA_CLIENT_ID \
+    AURA_SECRET:AURA_CLIENT_SECRET; do
+    var="${pair%%:*}"
+    [[ -n "${!var}" ]] || missing+=("${pair#*:}")
+  done
+  for bin in curl jq; do
+    command -v "${bin}" >/dev/null || missing+=("command:${bin}")
+  done
+  if ((${#missing[@]} > 0)); then
+    err "missing configuration in ${CONFIG_SOURCE} (see --help):"
+    for item in "${missing[@]}"; do
+      printf '    %s•%s %s\n' "${RED}" "${RESET}" "${item}" >&2
+    done
+    exit 1
   fi
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
-elif [[ "$ENV_FILE" != ".env.local" ]]; then
-  echo "$ENV_FILE not found" >&2
-  exit 1
-fi
-CF_TOKEN="${CLOUDFLARE_API_TOKEN:-${CF_API_TOKEN:-}}"
-CF_ACCOUNT="${CLOUDFLARE_ACCOUNT_ID:-${CF_ACCOUNT_ID:-}}"
-B2_ID="${B2_APPLICATION_KEY_ID:-${B2_MASTER_KEY_ID:-}}"
-B2_KEY="${B2_APPLICATION_KEY:-${B2_MASTER_KEY:-}}"
-export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-${B2_STATE_KEY_ID:-$B2_ID}}"
-export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-${B2_STATE_KEY:-$B2_KEY}}"
-export TF_VAR_account_id="${TF_VAR_account_id:-$CF_ACCOUNT}"
-AURA_ID="${AURA_CLIENT_ID:-${NEO4J_AURA_CLIENT_ID:-}}"
-AURA_SECRET="${AURA_CLIENT_SECRET:-${NEO4J_AURA_CLIENT_SECRET:-}}"
+}
 
-missing=""
-for v in CF_TOKEN CF_ACCOUNT B2_ID B2_KEY AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AURA_ID AURA_SECRET; do
-  [[ -n "${!v}" ]] || missing="$missing $v"
-done
-for bin in curl jq terraform; do
-  command -v "$bin" >/dev/null || missing="$missing $bin"
-done
-if [[ -n "$missing" ]]; then
-  echo "missing:$missing (set them in $ENV_FILE; see scripts/reset.sh --help)" >&2
-  exit 1
-fi
-
-# ---- names ----------------------------------------------------------------
-
+#######################################
 # Prints the names of one resource kind: current names, plus legacy ones
 # with --legacy.
+# Globals:
+#   PREFIX LEGACY SERVICES WORKERS QUEUES
+# Arguments:
+#   Resource kind: worker, queue, d1, kv, vectorize, b2-bucket, b2-key or
+#   neo4j.
+# Outputs:
+#   One name per line to STDOUT.
+#######################################
 names() {
-  local kind="$1" set pre s q
+  local kind="$1"
+  local set pre name
   for set in current legacy; do
-    [[ "$set" == legacy && "$LEGACY" == false ]] && continue
-    pre="${PREFIX}-"
-    [[ "$set" == legacy ]] && pre=""
-    case "$kind" in
-      worker) for s in $WORKERS; do echo "${pre}${s}"; done ;;
-      queue) for q in $QUEUES; do echo "${pre}${q}"; echo "${pre}${q}-dlq"; done ;;
-      d1) for s in $SERVICES; do echo "${pre}${s}-db"; done ;;
+    if [[ "${set}" == legacy ]]; then
+      [[ "${LEGACY}" == true ]] || continue
+      pre=""
+    else
+      pre="${PREFIX}-"
+    fi
+    case "${kind}" in
+      worker)
+        for name in "${WORKERS[@]}"; do
+          echo "${pre}${name}"
+        done
+        ;;
+      queue)
+        for name in "${QUEUES[@]}"; do
+          echo "${pre}${name}"
+          echo "${pre}${name}-dlq"
+        done
+        ;;
+      d1)
+        for name in "${SERVICES[@]}"; do
+          echo "${pre}${name}-db"
+        done
+        ;;
       kv)
-        if [[ "$set" == legacy ]]; then
-          echo ontology-schema-cache; echo api-gateway-config
+        if [[ "${set}" == legacy ]]; then
+          echo "ontology-schema-cache"
+          echo "api-gateway-config"
         else
-          echo "${pre}schema-cache"; echo "${pre}gateway-config"
+          echo "${pre}schema-cache"
+          echo "${pre}gateway-config"
         fi
         ;;
       vectorize) echo "${pre}decision-cases-bge-m3" ;;
-      b2-bucket) if [[ "$set" == legacy ]]; then echo ontodecide-ce-raw; else echo "${pre}raw"; fi ;;
+      b2-bucket)
+        if [[ "${set}" == legacy ]]; then
+          echo "ontodecide-ce-raw"
+        else
+          echo "${pre}raw"
+        fi
+        ;;
       b2-key) echo "${pre}data-integration" ;;
-      neo4j) if [[ "$set" == legacy ]]; then echo ontodecide-ce-graph; else echo "${pre}graphdb"; fi ;;
+      neo4j)
+        if [[ "${set}" == legacy ]]; then
+          echo "ontodecide-ce-graph"
+        else
+          echo "${pre}graphdb"
+        fi
+        ;;
+      *)
+        err "unknown resource kind: ${kind}"
+        return 1
+        ;;
     esac
   done
 }
 
-# Prints the id of name $1 from "name id" lines on stdin.
-id_of() { awk -v n="$1" '$1 == n {print $2}'; }
+# Prints the ids of name $1 from "name id" lines on STDIN.
+id_of() {
+  awk -v n="$1" '$1 == n { print $2 }'
+}
 
-# ---- helpers --------------------------------------------------------------
-
-FAILURES=0
-log() { printf '%s\n' "$*"; }
-
-# act DESCRIPTION CMD…: runs CMD unless --dry-run and records failures.
-act() {
-  local what="$1"; shift
-  if [[ "$DRY_RUN" == true ]]; then
-    log "  would delete $what"
-  elif "$@"; then
-    log "  deleted $what"
-  else
-    log "  FAILED  $what" >&2
-    FAILURES=$((FAILURES + 1))
+# Closes the current step, noting when it found nothing.
+step_end() {
+  if ((step_num > 0 && step_items == 0)); then
+    printf '  %s– nothing to delete%s\n' "${DIM}" "${RESET}"
   fi
 }
 
-# Cloudflare API: cf METHOD PATH; prints the JSON body.
+# Starts the next numbered step, titled $1.
+step() {
+  step_end
+  ((step_num += 1))
+  step_items=0
+  printf '\n%sStep %d/%d%s  %s%s%s\n' "${CYAN}${BOLD}" "${step_num}" \
+    "${TOTAL_STEPS}" "${RESET}" "${BOLD}" "$1" "${RESET}"
+}
+
+# Prints informational text $2 in color $1 inside the current step.
+note() {
+  ((step_items += 1))
+  printf '  %s%s%s\n' "$1" "$2" "${RESET}"
+}
+
+#######################################
+# Deletes one resource by running a command, unless --dry-run.
+# Globals:
+#   DRY_RUN step_items deleted_count planned_count failure_count
+# Arguments:
+#   Resource description, then the command and its arguments.
+# Outputs:
+#   The outcome to STDOUT (failures to STDERR).
+#######################################
+act() {
+  local what="$1"
+  shift
+  ((step_items += 1))
+  if [[ "${DRY_RUN}" == true ]]; then
+    printf '  %s○ would delete%s %s\n' "${YELLOW}" "${RESET}" "${what}"
+    ((planned_count += 1))
+  elif "$@"; then
+    printf '  %s✓ deleted%s      %s\n' "${GREEN}" "${RESET}" "${what}"
+    ((deleted_count += 1))
+  else
+    printf '  %s✗ failed%s       %s\n' "${RED}${BOLD}" "${RESET}" \
+      "${what}" >&2
+    ((failure_count += 1))
+  fi
+}
+
+# Calls the Cloudflare account API: cf METHOD PATH; prints the JSON body.
 cf() {
   curl -sS -X "$1" -H "Authorization: Bearer ${CF_TOKEN}" \
-    "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT}$2"
+    "${CF_API}/accounts/${CF_ACCOUNT}$2"
 }
-cf_ok() { cf "$@" | jq -e '.success == true' >/dev/null; }
 
-# Prints jq filter $2 over every page of Cloudflare collection $1.
+# Succeeds if the Cloudflare call cf METHOD PATH reports success.
+cf_ok() {
+  cf "$@" | jq -e '.success == true' >/dev/null
+}
+
+#######################################
+# Prints a jq filter over every page of a Cloudflare collection.
+# Arguments:
+#   Collection path, jq filter applied to each item.
+# Outputs:
+#   The filter results to STDOUT.
+#######################################
 cf_list() {
-  local path="$1" filter="$2" page=1 sep='?' body
-  [[ "$path" == *\?* ]] && sep='&'
-  while :; do
+  local path="$1"
+  local filter="$2"
+  local page=1
+  local sep='?'
+  local body
+  [[ "${path}" != *\?* ]] || sep='&'
+  while true; do
     body="$(cf GET "${path}${sep}page=${page}&per_page=100")"
-    jq -r ".result[]? | ${filter}" <<<"$body"
-    [[ "$(jq '.result | length' <<<"$body")" -lt 100 ]] && break
-    page=$((page + 1))
+    jq -r ".result[]? | ${filter}" <<<"${body}"
+    (($(jq '.result | length' <<<"${body}") < 100)) && break
+    ((page += 1))
   done
 }
 
-# Backblaze B2 native API: b2 CALL JSON.
-b2() { curl -sS -H "Authorization: ${B2_TOKEN}" -d "$2" "${B2_API}/b2api/v3/$1"; }
+# Calls the Backblaze B2 native API: b2 CALL JSON; prints the JSON body.
+b2() {
+  curl -sS -H "Authorization: ${B2_TOKEN}" -d "$2" \
+    "${B2_API}/b2api/v3/$1"
+}
 
-# ---- confirmation ---------------------------------------------------------
+# Prints the id of B2 bucket $1, or nothing if it does not exist.
+b2_bucket_id() {
+  local request
+  request="$(jq -nc --arg a "${B2_ACCOUNT}" --arg n "$1" \
+    '{accountId: $a, bucketName: $n}')"
+  b2 b2_list_buckets "${request}" | jq -r '.buckets[0]?.bucketId // empty'
+}
 
-log "Reset ${PREFIX}$([[ "$LEGACY" == true ]] && echo ' (including legacy names)')$([[ "$DRY_RUN" == true ]] && echo ' — dry run')"
-if [[ "$DRY_RUN" == false && "$ASSUME_YES" == false ]]; then
-  log "This permanently deletes all ${PREFIX} resources, services and data."
+#######################################
+# Authorizes the B2 master key.
+# Globals:
+#   B2_ID B2_KEY
+#   B2_TOKEN B2_API B2_ACCOUNT (set, readonly)
+# Arguments:
+#   None
+#######################################
+b2_authorize() {
+  local auth
+  auth="$(curl -sS -u "${B2_ID}:${B2_KEY}" \
+    https://api.backblazeb2.com/b2api/v3/b2_authorize_account)"
+  B2_TOKEN="$(jq -r '.authorizationToken // empty' <<<"${auth}")"
+  B2_API="$(jq -r '.apiInfo.storageApi.apiUrl // empty' <<<"${auth}")"
+  B2_ACCOUNT="$(jq -r '.accountId // empty' <<<"${auth}")"
+  readonly B2_TOKEN B2_API B2_ACCOUNT
+  if [[ -z "${B2_TOKEN}" ]]; then
+    err "B2 authorization failed" \
+      "(check B2_APPLICATION_KEY_ID / B2_APPLICATION_KEY)"
+    exit 1
+  fi
+}
+
+#######################################
+# Authorizes the Aura API client.
+# Globals:
+#   AURA_ID AURA_SECRET
+#   AURA_TOKEN (set, readonly)
+# Arguments:
+#   None
+#######################################
+aura_authorize() {
+  AURA_TOKEN="$(curl -sS -u "${AURA_ID}:${AURA_SECRET}" \
+    -d grant_type=client_credentials "${AURA_API}/oauth/token" \
+    | jq -r '.access_token // empty')"
+  readonly AURA_TOKEN
+  if [[ -z "${AURA_TOKEN}" ]]; then
+    err "Aura authorization failed" \
+      "(check AURA_CLIENT_ID / AURA_CLIENT_SECRET)"
+    exit 1
+  fi
+}
+
+# Prints the target, mode and config source.
+print_banner() {
+  local legacy_note=""
+  [[ "${LEGACY}" != true ]] || legacy_note=" + legacy names"
+  printf '%sOntoDecide reset%s\n' "${BOLD}" "${RESET}"
+  printf '  %starget%s   %s%s\n' "${DIM}" "${RESET}" "${PREFIX}" \
+    "${legacy_note}"
+  if [[ "${DRY_RUN}" == true ]]; then
+    printf '  %smode%s     %sdry run%s (nothing is deleted)\n' \
+      "${DIM}" "${RESET}" "${YELLOW}${BOLD}" "${RESET}"
+  else
+    printf '  %smode%s     %sLIVE%s (resources are deleted)\n' \
+      "${DIM}" "${RESET}" "${RED}${BOLD}" "${RESET}"
+  fi
+  printf '  %sconfig%s   %s\n' "${DIM}" "${RESET}" "${CONFIG_SOURCE}"
+}
+
+# Asks for the prefix before a live run unless --yes; exits 1 otherwise.
+confirm() {
+  local answer
+  [[ "${DRY_RUN}" == false && "${ASSUME_YES}" == false ]] || return 0
+  printf '\n%sThis permanently deletes all %s resources, services and' \
+    "${RED}${BOLD}" "${PREFIX}"
+  printf ' data.%s\n' "${RESET}"
   read -r -p "Type ${PREFIX} to continue: " answer
-  [[ "$answer" == "$PREFIX" ]] || { log "aborted"; exit 1; }
-fi
+  if [[ "${answer}" != "${PREFIX}" ]]; then
+    warn "aborted; nothing was deleted"
+    exit 1
+  fi
+}
 
-# ---- Cloudflare -----------------------------------------------------------
-
-log "Pages"
-delete_pages() {
-  cf_ok DELETE "/pages/projects/${PAGES_PROJECT}" && return 0
-  # Projects with many deployments must be emptied first.
+# Deletes the Pages project, emptying it first if it has many deployments.
+delete_pages_project() {
+  local path="/pages/projects/${PAGES_PROJECT}"
   local id
-  for id in $(cf_list "/pages/projects/${PAGES_PROJECT}/deployments" '.id'); do
-    cf DELETE "/pages/projects/${PAGES_PROJECT}/deployments/${id}?force=true" >/dev/null
-  done
-  cf_ok DELETE "/pages/projects/${PAGES_PROJECT}"
+  cf_ok DELETE "${path}" && return 0
+  while IFS= read -r id; do
+    cf DELETE "${path}/deployments/${id}?force=true" >/dev/null
+  done < <(cf_list "${path}/deployments" '.id')
+  cf_ok DELETE "${path}"
 }
-if cf_ok GET "/pages/projects/${PAGES_PROJECT}"; then
-  act "pages project ${PAGES_PROJECT}" delete_pages
-fi
 
-log "Workers"
-existing="$(cf GET /workers/scripts | jq -r '.result[]?.id')"
-for w in $(names worker); do
-  grep -qxF "$w" <<<"$existing" || continue
-  act "worker $w" cf_ok DELETE "/workers/scripts/${w}?force=true"
-done
+reset_pages() {
+  step "Delete Pages project"
+  if cf_ok GET "/pages/projects/${PAGES_PROJECT}"; then
+    act "${PAGES_PROJECT}" delete_pages_project
+  fi
+}
 
-log "Queues"
-existing="$(cf_list /queues '"\(.queue_name) \(.queue_id)"')"
-for q in $(names queue); do
-  id="$(id_of "$q" <<<"$existing")"
-  [[ -n "$id" ]] && act "queue $q" cf_ok DELETE "/queues/${id}"
-done
+reset_workers() {
+  local existing name
+  step "Delete Workers"
+  existing="$(cf GET /workers/scripts | jq -r '.result[]?.id')"
+  while IFS= read -r name; do
+    grep -qxF "${name}" <<<"${existing}" || continue
+    act "${name}" cf_ok DELETE "/workers/scripts/${name}?force=true"
+  done < <(names worker)
+}
 
-log "D1"
-existing="$(cf_list /d1/database '"\(.name) \(.uuid)"')"
-for d in $(names d1); do
-  id="$(id_of "$d" <<<"$existing")"
-  [[ -n "$id" ]] && act "d1 $d" cf_ok DELETE "/d1/database/${id}"
-done
+#######################################
+# Deletes the Cloudflare resources of one kind that are listed by id.
+# Arguments:
+#   Step title, names() kind, collection path, jq filter printing
+#   "name id" for each item.
+#######################################
+reset_listed() {
+  local title="$1"
+  local kind="$2"
+  local path="$3"
+  local filter="$4"
+  local existing name id
+  step "${title}"
+  existing="$(cf_list "${path}" "${filter}")"
+  while IFS= read -r name; do
+    id="$(id_of "${name}" <<<"${existing}")"
+    [[ -n "${id}" ]] || continue
+    act "${name}" cf_ok DELETE "${path}/${id}"
+  done < <(names "${kind}")
+}
 
-log "KV"
-existing="$(cf_list /storage/kv/namespaces '"\(.title) \(.id)"')"
-for k in $(names kv); do
-  id="$(id_of "$k" <<<"$existing")"
-  [[ -n "$id" ]] && act "kv $k" cf_ok DELETE "/storage/kv/namespaces/${id}"
-done
+reset_vectorize() {
+  local name
+  step "Delete Vectorize index"
+  while IFS= read -r name; do
+    cf_ok GET "/vectorize/v2/indexes/${name}" || continue
+    act "${name}" cf_ok DELETE "/vectorize/v2/indexes/${name}"
+  done < <(names vectorize)
+}
 
-log "Vectorize"
-for v in $(names vectorize); do
-  cf_ok GET "/vectorize/v2/indexes/${v}" || continue
-  act "vectorize $v" cf_ok DELETE "/vectorize/v2/indexes/${v}"
-done
-
-# ---- Backblaze B2 ---------------------------------------------------------
-
-log "B2"
-auth="$(curl -sS -u "${B2_ID}:${B2_KEY}" https://api.backblazeb2.com/b2api/v3/b2_authorize_account)"
-B2_TOKEN="$(jq -r '.authorizationToken // empty' <<<"$auth")"
-B2_API="$(jq -r '.apiInfo.storageApi.apiUrl // empty' <<<"$auth")"
-B2_ACCOUNT="$(jq -r '.accountId // empty' <<<"$auth")"
-[[ -n "$B2_TOKEN" ]] || { echo "B2 authorization failed" >&2; exit 1; }
-
-# Deletes every file version and unfinished upload of bucket $1, then the
-# bucket.
+#######################################
+# Deletes every file version and unfinished upload of a B2 bucket, then
+# the bucket.
+# Globals:
+#   B2_ACCOUNT
+# Arguments:
+#   Bucket id.
+# Returns:
+#   0 if the bucket was deleted, non-zero otherwise.
+#######################################
 delete_bucket() {
-  local bucket="$1" body next_name="" next_id="" f id
-  while :; do
-    body="$(b2 b2_list_file_versions "$(jq -nc --arg b "$bucket" --arg n "$next_name" --arg i "$next_id" \
-      '{bucketId: $b, maxFileCount: 1000} + (if $n != "" then {startFileName: $n, startFileId: $i} else {} end)')")"
-    while read -r f; do
-      [[ -n "$f" ]] && b2 b2_delete_file_version "$(jq -c '. + {bypassGovernance: true}' <<<"$f")" >/dev/null
-    done < <(jq -c '.files[]? | {fileName, fileId}' <<<"$body")
-    next_name="$(jq -r '.nextFileName // empty' <<<"$body")"
-    next_id="$(jq -r '.nextFileId // empty' <<<"$body")"
-    [[ -z "$next_name" ]] && break
+  local bucket="$1"
+  local next_name=""
+  local next_id=""
+  local request body file id
+  while true; do
+    request="$(jq -nc --arg b "${bucket}" --arg n "${next_name}" \
+      --arg i "${next_id}" '{bucketId: $b, maxFileCount: 1000}
+        + (if $n != "" then {startFileName: $n, startFileId: $i}
+           else {} end)')"
+    body="$(b2 b2_list_file_versions "${request}")"
+    while IFS= read -r file; do
+      b2 b2_delete_file_version \
+        "$(jq -c '. + {bypassGovernance: true}' <<<"${file}")" >/dev/null
+    done < <(jq -c '.files[]? | {fileName, fileId}' <<<"${body}")
+    next_name="$(jq -r '.nextFileName // empty' <<<"${body}")"
+    next_id="$(jq -r '.nextFileId // empty' <<<"${body}")"
+    [[ -n "${next_name}" ]] || break
   done
-  for id in $(b2 b2_list_unfinished_large_files "$(jq -nc --arg b "$bucket" '{bucketId: $b}')" | jq -r '.files[]?.fileId'); do
-    b2 b2_cancel_large_file "$(jq -nc --arg i "$id" '{fileId: $i}')" >/dev/null
-  done
-  b2 b2_delete_bucket "$(jq -nc --arg a "$B2_ACCOUNT" --arg b "$bucket" '{accountId: $a, bucketId: $b}')" |
-    jq -e '.bucketId' >/dev/null
+
+  request="$(jq -nc --arg b "${bucket}" '{bucketId: $b}')"
+  while IFS= read -r id; do
+    b2 b2_cancel_large_file "$(jq -nc --arg i "${id}" '{fileId: $i}')" \
+      >/dev/null
+  done < <(b2 b2_list_unfinished_large_files "${request}" \
+    | jq -r '.files[]?.fileId')
+
+  request="$(jq -nc --arg a "${B2_ACCOUNT}" --arg b "${bucket}" \
+    '{accountId: $a, bucketId: $b}')"
+  b2 b2_delete_bucket "${request}" | jq -e '.bucketId' >/dev/null
 }
 
+reset_b2_buckets() {
+  local name id
+  step "Delete B2 raw bucket and its files"
+  b2_authorize
+  while IFS= read -r name; do
+    [[ "${name}" != "${STATE_BUCKET}" ]] || continue
+    id="$(b2_bucket_id "${name}")"
+    [[ -n "${id}" ]] || continue
+    act "${name} (with all files)" delete_bucket "${id}"
+  done < <(names b2-bucket)
+}
+
+# Deletes the B2 application key with id $1.
 delete_b2_key() {
-  b2 b2_delete_key "$(jq -nc --arg i "$1" '{applicationKeyId: $i}')" | jq -e '.applicationKeyId' >/dev/null
+  b2 b2_delete_key "$(jq -nc --arg i "$1" '{applicationKeyId: $i}')" \
+    | jq -e '.applicationKeyId' >/dev/null
 }
 
-for name in $(names b2-bucket); do
-  [[ "$name" == "$STATE_BUCKET" ]] && continue
-  id="$(b2 b2_list_buckets "$(jq -nc --arg a "$B2_ACCOUNT" --arg n "$name" '{accountId: $a, bucketName: $n}')" |
-    jq -r '.buckets[0]?.bucketId // empty')"
-  [[ -n "$id" ]] && act "b2 bucket $name (with all files)" delete_bucket "$id"
-done
-
-existing="$(b2 b2_list_keys "$(jq -nc --arg a "$B2_ACCOUNT" '{accountId: $a, maxKeyCount: 1000}')" |
-  jq -r '.keys[]? | "\(.keyName) \(.applicationKeyId)"')"
-for k in $(names b2-key); do
-  for id in $(id_of "$k" <<<"$existing"); do
-    act "b2 key $k" delete_b2_key "$id"
-  done
-done
-
-# ---- Neo4j Aura -----------------------------------------------------------
-
-log "Neo4j Aura"
-AURA_TOKEN="$(curl -sS -u "${AURA_ID}:${AURA_SECRET}" -d grant_type=client_credentials \
-  https://api.neo4j.io/oauth/token | jq -r '.access_token // empty')"
-[[ -n "$AURA_TOKEN" ]] || { echo "Aura authorization failed" >&2; exit 1; }
-
-delete_aura() {
-  curl -sS -f -o /dev/null -X DELETE -H "Authorization: Bearer ${AURA_TOKEN}" \
-    "https://api.neo4j.io/v1/instances/$1"
+reset_b2_keys() {
+  local request existing name id
+  step "Delete B2 application key"
+  request="$(jq -nc --arg a "${B2_ACCOUNT}" \
+    '{accountId: $a, maxKeyCount: 1000}')"
+  existing="$(b2 b2_list_keys "${request}" \
+    | jq -r '.keys[]? | "\(.keyName) \(.applicationKeyId)"')"
+  while IFS= read -r name; do
+    while IFS= read -r id; do
+      act "${name}" delete_b2_key "${id}"
+    done < <(id_of "${name}" <<<"${existing}")
+  done < <(names b2-key)
 }
 
-existing="$(curl -sS -H "Authorization: Bearer ${AURA_TOKEN}" https://api.neo4j.io/v1/instances |
-  jq -r '.data[]? | "\(.name) \(.id)"')"
-for n in $(names neo4j); do
-  for id in $(id_of "$n" <<<"$existing"); do
-    act "neo4j instance $n ($id)" delete_aura "$id"
-  done
-done
+# Deletes the Aura instance with id $1.
+delete_aura_instance() {
+  curl -sS -f -o /dev/null -X DELETE \
+    -H "Authorization: Bearer ${AURA_TOKEN}" \
+    "${AURA_API}/v1/instances/$1"
+}
 
-# ---- Terraform state ------------------------------------------------------
+reset_neo4j() {
+  local existing name id
+  step "Delete Neo4j Aura instance"
+  aura_authorize
+  existing="$(curl -sS -H "Authorization: Bearer ${AURA_TOKEN}" \
+    "${AURA_API}/v1/instances" \
+    | jq -r '.data[]? | "\(.name) \(.id)"')"
+  while IFS= read -r name; do
+    while IFS= read -r id; do
+      act "${name} (${id})" delete_aura_instance "${id}"
+    done < <(id_of "${name}" <<<"${existing}")
+  done < <(names neo4j)
+}
 
-log "Terraform state (${STATE_BUCKET})"
-terraform -chdir=infra init -input=false -reconfigure >/dev/null
-addresses="$(terraform -chdir=infra state list | grep -v '^data\.' || true)"
-if [[ -z "$addresses" ]]; then
-  log "  already empty"
-elif [[ "$DRY_RUN" == true ]]; then
-  while read -r a; do log "  would remove $a"; done <<<"$addresses"
-elif [[ "$FAILURES" -gt 0 ]]; then
-  log "  kept: some deletions failed; rerun after fixing them"
-else
-  # shellcheck disable=SC2086  # addresses is a whitespace-separated list.
-  terraform -chdir=infra state rm $addresses >/dev/null
-  log "  removed $(wc -l <<<"$addresses" | tr -d ' ') resources"
-fi
+# Hides the state file in bucket id $1; a hidden B2 file (delete marker)
+# reads as an empty state, and earlier versions stay for recovery.
+hide_state() {
+  local request
+  request="$(jq -nc --arg b "$1" --arg n "${STATE_KEY}" \
+    '{bucketId: $b, fileName: $n}')"
+  b2 b2_hide_file "${request}" | jq -e '.action == "hide"' >/dev/null
+}
 
-if [[ "$FAILURES" -gt 0 ]]; then
-  log "Done with ${FAILURES} failure(s); rerun to retry (the script is idempotent)."
-  exit 1
-fi
-log "Done. The next Terraform → Deploy run recreates everything."
+reset_state() {
+  local bucket_id request
+  local action=""
+  step "Reset deployment state"
+  bucket_id="$(b2_bucket_id "${STATE_BUCKET}")"
+  if [[ -n "${bucket_id}" ]]; then
+    request="$(jq -nc --arg b "${bucket_id}" --arg n "${STATE_KEY}" \
+      '{bucketId: $b, startFileName: $n, maxFileCount: 1}')"
+    action="$(b2 b2_list_file_names "${request}" \
+      | jq -r --arg n "${STATE_KEY}" \
+        '.files[0]? | select(.fileName == $n) | .action')"
+  fi
+
+  if [[ "${action}" != upload ]]; then
+    note "${DIM}" "– already empty"
+  elif ((failure_count > 0)) && [[ "${DRY_RUN}" == false ]]; then
+    note "${YELLOW}" "! kept: some deletions failed; rerun after fixing them"
+  else
+    act "state file (earlier versions kept)" hide_state "${bucket_id}"
+  fi
+}
+
+#######################################
+# Prints the totals and exits 1 if any deletion failed.
+# Globals:
+#   DRY_RUN deleted_count planned_count failure_count SECONDS
+# Arguments:
+#   None
+#######################################
+print_summary() {
+  step_end
+  printf '\n%sSummary%s  %s(%ds)%s\n' "${BOLD}" "${RESET}" "${DIM}" \
+    "${SECONDS}" "${RESET}"
+  if [[ "${DRY_RUN}" == true ]]; then
+    printf '  %s○ %d to delete%s\n' "${YELLOW}" "${planned_count}" \
+      "${RESET}"
+    printf '\n%sDry run: nothing was deleted.%s' "${YELLOW}${BOLD}" \
+      "${RESET}"
+    printf ' Run without --dry-run to delete.\n'
+    return 0
+  fi
+  printf '  %s✓ %d deleted%s\n' "${GREEN}" "${deleted_count}" "${RESET}"
+  if ((failure_count > 0)); then
+    printf '  %s✗ %d failed%s\n' "${RED}${BOLD}" "${failure_count}" \
+      "${RESET}"
+    printf '\n%sFinished with failures.%s' "${RED}${BOLD}" "${RESET}"
+    printf ' Fix them and rerun (the script is idempotent).\n'
+    exit 1
+  fi
+  printf '\n%sDone.%s The next deploy recreates everything.\n' \
+    "${GREEN}${BOLD}" "${RESET}"
+}
+
+main() {
+  setup_colors
+  parse_args "$@"
+  load_config
+  print_banner
+  confirm
+
+  reset_pages
+  reset_workers
+  reset_listed "Delete queues" queue /queues \
+    '"\(.queue_name) \(.queue_id)"'
+  reset_listed "Delete D1 databases" d1 /d1/database '"\(.name) \(.uuid)"'
+  reset_listed "Delete KV namespaces" kv /storage/kv/namespaces \
+    '"\(.title) \(.id)"'
+  reset_vectorize
+  reset_b2_buckets
+  reset_b2_keys
+  reset_neo4j
+  reset_state
+
+  print_summary
+}
+
+main "$@"
