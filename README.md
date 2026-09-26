@@ -67,7 +67,7 @@ packages/shared-kernel/ CallCtx, Rid, DomainEvent, AppError/Problem, FilterExpr,
 packages/<context>/     contract/ domain/ application/ infrastructure/ interface/
 packages/testing/       D1 over node:sqlite, DO SQL storage, KV, queues with DLQ, RPC binding fakes
 migrations/<db>/        D1 migrations (one directory per database)
-infra/                  Terraform: D1, KV, Queues, B2, Pages project, Neo4j Aura
+infra/                  Terraform: D1, KV, Queues, B2, Neo4j Aura
 scripts/                gen_wrangler.mjs, dev.sh, smoke.mjs, bootstrap.sh, reset.sh
 samples/supply-chain/   demo CSVs for the built-in pack
 tests/e2e/              in-process full-loop test through the gateway
@@ -100,7 +100,8 @@ There is a single environment, **production** (GitHub environment `production`);
 
 | What | Source of truth | Tool |
 | --- | --- | --- |
-| D1, KV, Queues, B2 bucket + key, Pages project, Neo4j Aura | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
+| D1, KV, Queues, B2 bucket + key, Neo4j Aura | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
+| Pages project `ontodecide-ce` | `.github/workflows/deploy.yml` (web job) | Deploy workflow (created if missing) |
 | Worker bindings, vars, crons, DO migrations, queue consumers | `apps/*/wrangler.jsonc.tpl` | `scripts/gen_wrangler.mjs` renders ids from `terraform output -json` |
 | Pages binding (`GATEWAY` → `ontodecide-prd-api-gateway`) | `apps/web/wrangler.jsonc` | `wrangler pages deploy` |
 | D1 schema | `migrations/<db>/*.sql` | `wrangler d1 migrations apply` |
