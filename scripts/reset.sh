@@ -16,14 +16,15 @@
 #
 # Deleted, in dependency order: Pages project, 7 Workers, queues, D1, KV,
 # Vectorize index, B2 raw bucket (emptied first) and its key, Neo4j Aura
-# instance. Afterwards every resource is removed from the Terraform state.
-# The state bucket ontodecide-ce-tfstate itself is never touched.
+# instance. Afterwards the Terraform state object (terraform.tfstate) is
+# hidden through the B2 API, so the next run starts from an empty state;
+# its earlier versions stay in the bucket for recovery. The state bucket
+# ontodecide-ce-tfstate itself is never deleted. Terraform is not needed.
 #
-# Requires curl, jq, terraform and these variables, from the local
-# credentials file (KEY=value lines, chmod 600) or the environment:
+# Requires curl, jq and these variables, from the local credentials file
+# (KEY=value lines, chmod 600) or the environment:
 #   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
 #   B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY      (B2 master key)
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY       (state bucket key)
 #   AURA_CLIENT_ID, AURA_CLIENT_SECRET
 # The CI secret names (CF_API_TOKEN, B2_MASTER_KEY, …) are accepted too.
 set -euo pipefail
@@ -34,6 +35,7 @@ ENVIRONMENT="prd"
 PREFIX="${PROJECT}-${ENVIRONMENT}"
 PAGES_PROJECT="ontodecide-ce" # exempt from the naming rule (fixed URL)
 STATE_BUCKET="ontodecide-ce-tfstate"
+STATE_KEY="terraform.tfstate" # infra/versions.tf backend "s3" key
 
 SERVICES="identity-access ontology-manager data-integration object-graph situation-awareness decision-engine"
 # Root → leaf, so no Worker is deleted while another still binds to it.
@@ -50,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     --yes) ASSUME_YES=true ;;
     --legacy) LEGACY=true ;;
     --env-file) ENV_FILE="${2:?--env-file needs a path}"; shift ;;
-    -h | --help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,29p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -78,17 +80,14 @@ CF_TOKEN="${CLOUDFLARE_API_TOKEN:-${CF_API_TOKEN:-}}"
 CF_ACCOUNT="${CLOUDFLARE_ACCOUNT_ID:-${CF_ACCOUNT_ID:-}}"
 B2_ID="${B2_APPLICATION_KEY_ID:-${B2_MASTER_KEY_ID:-}}"
 B2_KEY="${B2_APPLICATION_KEY:-${B2_MASTER_KEY:-}}"
-export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-${B2_STATE_KEY_ID:-$B2_ID}}"
-export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-${B2_STATE_KEY:-$B2_KEY}}"
-export TF_VAR_account_id="${TF_VAR_account_id:-$CF_ACCOUNT}"
 AURA_ID="${AURA_CLIENT_ID:-${NEO4J_AURA_CLIENT_ID:-}}"
 AURA_SECRET="${AURA_CLIENT_SECRET:-${NEO4J_AURA_CLIENT_SECRET:-}}"
 
 missing=""
-for v in CF_TOKEN CF_ACCOUNT B2_ID B2_KEY AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AURA_ID AURA_SECRET; do
+for v in CF_TOKEN CF_ACCOUNT B2_ID B2_KEY AURA_ID AURA_SECRET; do
   [[ -n "${!v}" ]] || missing="$missing $v"
 done
-for bin in curl jq terraform; do
+for bin in curl jq; do
   command -v "$bin" >/dev/null || missing="$missing $bin"
 done
 if [[ -n "$missing" ]]; then
@@ -298,19 +297,28 @@ done
 
 # ---- Terraform state ------------------------------------------------------
 
-log "Terraform state (${STATE_BUCKET})"
-terraform -chdir=infra init -input=false -reconfigure >/dev/null
-addresses="$(terraform -chdir=infra state list | grep -v '^data\.' || true)"
-if [[ -z "$addresses" ]]; then
+# The S3 backend reads a hidden B2 file (a delete marker) as "no state".
+log "Terraform state (${STATE_BUCKET}/${STATE_KEY})"
+state_bucket_id="$(b2 b2_list_buckets "$(jq -nc --arg a "$B2_ACCOUNT" --arg n "$STATE_BUCKET" '{accountId: $a, bucketName: $n}')" |
+  jq -r '.buckets[0]?.bucketId // empty')"
+state_action=""
+if [[ -n "$state_bucket_id" ]]; then
+  state_action="$(b2 b2_list_file_names "$(jq -nc --arg b "$state_bucket_id" --arg n "$STATE_KEY" \
+    '{bucketId: $b, startFileName: $n, maxFileCount: 1}')" |
+    jq -r --arg n "$STATE_KEY" '.files[0]? | select(.fileName == $n) | .action')"
+fi
+
+hide_state() {
+  b2 b2_hide_file "$(jq -nc --arg b "$state_bucket_id" --arg n "$STATE_KEY" '{bucketId: $b, fileName: $n}')" |
+    jq -e '.action == "hide"' >/dev/null
+}
+
+if [[ "$state_action" != upload ]]; then
   log "  already empty"
-elif [[ "$DRY_RUN" == true ]]; then
-  while read -r a; do log "  would remove $a"; done <<<"$addresses"
-elif [[ "$FAILURES" -gt 0 ]]; then
+elif [[ "$FAILURES" -gt 0 && "$DRY_RUN" == false ]]; then
   log "  kept: some deletions failed; rerun after fixing them"
 else
-  # shellcheck disable=SC2086  # addresses is a whitespace-separated list.
-  terraform -chdir=infra state rm $addresses >/dev/null
-  log "  removed $(wc -l <<<"$addresses" | tr -d ' ') resources"
+  act "state ${STATE_KEY} (earlier versions kept)" hide_state
 fi
 
 if [[ "$FAILURES" -gt 0 ]]; then
