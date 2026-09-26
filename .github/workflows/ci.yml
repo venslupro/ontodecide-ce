@@ -1,5 +1,7 @@
 # CI: typecheck, lint (gts + architecture guard), unit/integration tests,
-# web build with bundle budget, Terraform fmt/validate. Runs on every PR.
+# web build with bundle budget, Worker dry-run bundles. Runs on every PR and
+# push to main; Deploy starts from a green run on main. Terraform checks live
+# in terraform.yml.
 name: CI
 
 on:
@@ -18,9 +20,10 @@ jobs:
   build-test:
     name: Typecheck · Lint · Test · Build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           # pnpm is installed by corepack in the next step, so setup-node
@@ -41,18 +44,3 @@ jobs:
           for w in ontology-manager data-integration object-graph situation-awareness decision-engine identity-access api-gateway; do
             npx wrangler deploy --dry-run --outdir "dist/$w" -c "apps/$w/wrangler.jsonc"
           done
-
-  terraform:
-    name: Terraform fmt · validate
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: infra
-    steps:
-      - uses: actions/checkout@v5
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.10.5
-      - run: terraform fmt -check -recursive
-      - run: terraform init -backend=false -input=false
-      - run: terraform validate

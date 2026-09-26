@@ -1,79 +1,279 @@
-# Deploy (production only). Runs after a successful CI run for a push to
-# main, or manually on main. Renders Wrangler configs from Terraform outputs,
-# applies D1 migrations, deploys the 7 Workers leaf → root with their
-# secrets, then publishes the Pages project (Direct Upload).
+# Deploy (production only). Stages:
+#
+#   Build → Approve → services (dependency order) → web
+#
+# Build runs on every branch (pull requests) and on main: it renders the
+# production Wrangler configs from Terraform outputs, dry-runs every Worker
+# bundle and builds the web app. Approve and everything after it run only on
+# main: one approval (environment `production`), then every service is
+# redeployed, each in its own job.
+#
+# On main it is the last link of the release chain
+#
+#   push to main → CI → Terraform → Deploy
+#
+# so services always deploy after the infrastructure for the same commit is
+# applied. Also runnable manually (deploys only when run on main).
+#
+# `needs:` mirrors the service bindings in apps/*/wrangler.jsonc.tpl: a
+# service starts only after everything it binds to is live, and services
+# without a dependency between them deploy in parallel. If any service fails,
+# no further service starts and the rollout stops.
+#
+# Service bindings:
+#   ontology-manager    → (none)
+#   identity-access     → (none)
+#   data-integration    → ontology-manager
+#   object-graph        → ontology-manager, data-integration
+#   situation-awareness → object-graph
+#   decision-engine     → ontology-manager, object-graph, situation-awareness,
+#                         Vectorize index
+#   api-gateway         → all six services above
+#   web (Pages)         → api-gateway
 name: Deploy
 
 on:
+  pull_request:
   workflow_run:
-    workflows: [CI]
+    workflows: [Terraform]
     types: [completed]
     branches: [main]
   workflow_dispatch:
 
 permissions:
+  actions: read # fail-fast check in .github/actions/deploy-worker
   contents: read
 
 concurrency:
-  group: deploy-production
-  cancel-in-progress: false
+  # Pull requests only build and supersede their own older runs.
+  group: deploy-${{ github.event_name == 'pull_request' && github.ref || 'production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  SHA: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
+  JWT_SECRET: ${{ secrets.JWT_SECRET }}
+  APPROVAL_SECRET: ${{ secrets.APPROVAL_SECRET }}
+  WRITEBACK_SECRET: ${{ secrets.WRITEBACK_SECRET }}
+  CONNECTOR_ENC_KEY: ${{ secrets.CONNECTOR_ENC_KEY }}
+  BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
 jobs:
-  deploy:
+  build:
+    name: Build (prod configs · dry-run)
+    # Any branch: pull requests from this repo (forks get no secrets), manual
+    # runs, and the main release chain (Terraform started by CI).
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main')
+       github.event.workflow_run.event == 'workflow_run')
     runs-on: ubuntu-latest
-    environment: production
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
-      BOOTSTRAP_ADMIN_EMAIL: ${{ vars.BOOTSTRAP_ADMIN_EMAIL }}
-      JWT_SECRET: ${{ secrets.JWT_SECRET }}
-      APPROVAL_SECRET: ${{ secrets.APPROVAL_SECRET }}
-      WRITEBACK_SECRET: ${{ secrets.WRITEBACK_SECRET }}
-      CONNECTOR_ENC_KEY: ${{ secrets.CONNECTOR_ENC_KEY }}
-      BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - name: CI passed for this commit
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ci="$(gh run list --workflow ci.yml --commit "${SHA}" --event push \
+            --limit 1 --json conclusion --jq '.[0].conclusion // "none"')"
+          echo "CI for ${SHA}: ${ci}" >> "$GITHUB_STEP_SUMMARY"
+          [[ "${ci}" == 'success' ]]
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: actions/setup-node@v5
+          ref: ${{ env.SHA }}
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
-          # pnpm is installed by corepack in the next step, so setup-node
-          # must not try to cache it before it exists.
           package-manager-cache: false
-      - uses: hashicorp/setup-terraform@v3
+      - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
+      - name: Render production Wrangler configs
+        # On a PR, resources the change adds are not applied yet; render
+        # placeholders for them (with a warning) instead of failing.
+        env:
+          ALLOW_MISSING: ${{ github.event_name == 'pull_request' && '--allow-missing' || '' }}
+        run: |
+          terraform -chdir=infra init -input=false > /dev/null
+          # shellcheck disable=SC2086  # ALLOW_MISSING is empty or one flag.
+          node scripts/gen_wrangler.mjs --env prod ${ALLOW_MISSING}
+      - name: Worker bundles (dry-run)
+        run: |
+          for w in ontology-manager identity-access data-integration object-graph \
+                   situation-awareness decision-engine api-gateway; do
+            npx wrangler deploy --dry-run --outdir "dist/${w}" -c "apps/${w}/wrangler.jsonc"
+          done
+      - run: pnpm build:web
+
+  approve:
+    name: Approve (production)
+    needs: build
+    # Never on pull requests: from here on only main deploys.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The single approval for the whole rollout (required reviewers are set
+    # on this environment).
+    environment: production
+    outputs:
+      admin-email: ${{ vars.BOOTSTRAP_ADMIN_EMAIL }}
+    steps:
+      - run: echo "Deploying ${SHA} to production." >> "$GITHUB_STEP_SUMMARY"
+
+  vectorize:
+    name: Vectorize index
+    needs: approve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
       - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
       - run: pnpm install --frozen-lockfile
-      - name: Read Terraform outputs
-        working-directory: infra
-        run: |
-          terraform init -input=false > /dev/null
-          terraform output -json > ../tf-output.json
-          # Sensitive outputs → masked env for secret upload.
-          node -e '
-            const o = require("../tf-output.json");
-            const put = (k, v) => { if (!v) return; console.log(`::add-mask::${v}`); require("fs").appendFileSync(process.env.GITHUB_ENV, `${k}<<__EOF__\n${v}\n__EOF__\n`); };
-            put("B2_KEY_ID", o.b2_integration_key?.value?.key_id);
-            put("B2_APP_KEY", o.b2_integration_key?.value?.key);
-            put("NEO4J_URL", o.neo4j?.value?.url);
-            put("NEO4J_USER", o.neo4j?.value?.username);
-            put("NEO4J_PASSWORD", o.neo4j_password?.value);
-          '
-      - run: node scripts/gen_wrangler.mjs --env prod --tf-output tf-output.json
-      - run: rm tf-output.json
       - run: bash scripts/bootstrap.sh
+
+  ontology-manager:
+    needs: [approve]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: ./.github/actions/deploy-worker
+        with:
+          worker: ontology-manager
+          admin-email: ${{ needs.approve.outputs.admin-email }}
+
+  identity-access:
+    needs: [approve]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: ./.github/actions/deploy-worker
+        with:
+          worker: identity-access
+          admin-email: ${{ needs.approve.outputs.admin-email }}
+          secrets: JWT_SECRET BOOTSTRAP_ADMIN_PASSWORD
+
+  data-integration:
+    needs: [approve, ontology-manager]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: ./.github/actions/deploy-worker
+        with:
+          worker: data-integration
+          admin-email: ${{ needs.approve.outputs.admin-email }}
+          secrets: B2_KEY_ID B2_APP_KEY CONNECTOR_ENC_KEY
+
+  object-graph:
+    needs: [approve, ontology-manager, data-integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: ./.github/actions/deploy-worker
+        with:
+          worker: object-graph
+          admin-email: ${{ needs.approve.outputs.admin-email }}
+          secrets: APPROVAL_SECRET WRITEBACK_SECRET NEO4J_URL NEO4J_USER NEO4J_PASSWORD
+
+  situation-awareness:
+    needs: [approve, object-graph]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: ./.github/actions/deploy-worker
+        with:
+          worker: situation-awareness
+          admin-email: ${{ needs.approve.outputs.admin-email }}
+
+  decision-engine:
+    needs:
+      - approve
+      - vectorize
+      - ontology-manager
+      - object-graph
+      - situation-awareness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: ./.github/actions/deploy-worker
+        with:
+          worker: decision-engine
+          admin-email: ${{ needs.approve.outputs.admin-email }}
+          secrets: APPROVAL_SECRET GEMINI_API_KEY GROQ_API_KEY
+
+  api-gateway:
+    needs:
+      - approve
+      - identity-access
+      - ontology-manager
+      - data-integration
+      - object-graph
+      - situation-awareness
+      - decision-engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: ./.github/actions/deploy-worker
+        with:
+          worker: api-gateway
+          admin-email: ${{ needs.approve.outputs.admin-email }}
+          secrets: JWT_SECRET
+
+  web:
+    name: web (Pages)
+    needs: api-gateway
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
+      - run: pnpm install --frozen-lockfile
       - run: pnpm build:web
-      - run: bash scripts/deploy.sh
+      - name: Deploy Pages
+        working-directory: apps/web
+        run: npx wrangler pages deploy dist --project-name ontodecide-ce --branch main
