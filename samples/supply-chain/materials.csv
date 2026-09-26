@@ -1,0 +1,5 @@
+materialId,name,category,unitCost,products
+M-100,Aluminium housing,Mechanical,42.5,P-900;P-901
+M-101,Controller PCB,Electronics,88,P-900
+M-102,Power IC,Electronics,12.3,P-900;P-902
+M-103,Li-ion cell,Energy,31,P-901;P-902

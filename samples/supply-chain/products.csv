@@ -1,0 +1,4 @@
+productId,name,dailyDemand,inventoryDays,safetyStockDays,revenuePerUnit
+P-900,Edge Gateway X1,320,12,5,1299
+P-901,Handheld Scanner S2,180,6,4,899
+P-902,Smart Sensor Hub,450,9,5,459

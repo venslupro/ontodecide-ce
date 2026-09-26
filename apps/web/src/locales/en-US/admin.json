@@ -1,0 +1,168 @@
+{
+  "fields": {
+    "user": "User",
+    "email": "Email",
+    "name": "Name",
+    "role": "Role",
+    "markings": "Markings",
+    "markingsInput": "Add marking",
+    "status": "Status",
+    "lastLogin": "Last sign-in",
+    "createdAt": "Created",
+    "actions": "Actions",
+    "password": "Initial password (optional)"
+  },
+  "errors": {
+    "email": "Enter a valid email address",
+    "name": "Enter a name of 1–100 characters",
+    "password": "At least 10 characters with upper- and lowercase letters and a digit"
+  },
+  "users": {
+    "title": "Users & permissions",
+    "description": "Manage accounts, roles and markings: roles grant actions, markings reveal sensitive properties.",
+    "listTitle": "Users",
+    "search": "Filter by name or email",
+    "create": "New user",
+    "created": "Created user {name}",
+    "you": "You",
+    "mustChange": "Must change password",
+    "roleAria": "Role of {name}",
+    "roleChanged": "{name} is now {role}",
+    "updateFailed": "Could not update the user",
+    "selfRole": "You cannot change your own role",
+    "selfDisable": "You cannot disable yourself",
+    "selfDelete": "You cannot delete yourself",
+    "noMarkings": "None",
+    "editMarkings": "Edit markings of {name}",
+    "enabledAria": "Enable {name}",
+    "statusActive": "Active",
+    "statusDisabled": "Disabled",
+    "enabled": "Enabled {name}",
+    "disabled": "Disabled {name}",
+    "never": "Never",
+    "resetAria": "Reset password of {name}",
+    "deleteAria": "Delete {name}"
+  },
+  "create": {
+    "description": "Without an initial password a one-time temporary password is generated; the user must change it on first sign-in.",
+    "roleHint": "Viewer < Operator < Modeler < Admin",
+    "passwordHint": "Leave empty to generate a temporary password"
+  },
+  "secret": {
+    "createdTitle": "User created",
+    "resetTitle": "Password reset",
+    "description": "Temporary password for {email}:",
+    "passwordLabel": "Temporary password",
+    "copy": "Copy temporary password",
+    "warning": "This password is shown only once and cannot be viewed again after closing. Share it through a secure channel.",
+    "done": "I've saved it, close"
+  },
+  "markings": {
+    "title": "Edit markings of {name}",
+    "description": "Saving replaces all of the user's current markings.",
+    "hint": "Users need a marking to see properties tagged with it, e.g. PII, FINANCE",
+    "placeholder": "Type and press Enter",
+    "remove": "Remove marking {value}",
+    "saved": "Updated markings of {name}"
+  },
+  "reset": {
+    "title": "Reset the password of {name}?",
+    "description": "A one-time temporary password is generated and the user's sessions are revoked.",
+    "confirm": "Reset password",
+    "failed": "Could not reset the password"
+  },
+  "delete": {
+    "title": "Delete user {name}?",
+    "description": "The account can no longer sign in. This cannot be undone.",
+    "typeLabel": "Type {email} to confirm",
+    "confirm": "Delete user",
+    "done": "Deleted {name}",
+    "failed": "Could not delete the user"
+  },
+  "health": {
+    "title": "System health",
+    "description": "Free-tier usage, degraded dependencies, dead-letter queues and graph projection maintenance.",
+    "usageTitle": "Today's free-tier usage",
+    "usageSubtitle": "{day} (UTC) · 80% warning line",
+    "usageChartAria": "Bar chart of today's free-tier usage per resource; dashed line marks 80%",
+    "usageTableAria": "Free-tier usage details",
+    "usageOk": "Normal",
+    "warnLine": "80% warning",
+    "resource": "Resource",
+    "usedLimit": "Used / limit",
+    "ratio": "Ratio",
+    "degradedTitle": "Degraded states",
+    "degradedCount": "{count, plural, one {# dependency} other {# dependencies}} degraded",
+    "allHealthy": "All dependencies healthy",
+    "noDegraded": "No dependency status reported",
+    "statusOk": "Healthy",
+    "statusDegraded": "Degraded",
+    "okExplanation": "Operating normally.",
+    "genericDegraded": "This dependency is unavailable; related features run in degraded mode.",
+    "genericFallback": "Switched to the fallback {value}.",
+    "deps": {
+      "neo4j": {
+        "name": "Neo4j graph database",
+        "degraded": "Deep traversal (3+ hops) is unavailable; exploration falls back to D1 (up to 2 hops).",
+        "fallback": "Graph queries fall back to {value}."
+      },
+      "llm": {
+        "name": "LLM provider",
+        "degraded": "AI recommendations are unavailable; rule-based suggestions only.",
+        "fallback": "The primary model is unavailable; AI recommendations use the fallback {value}."
+      },
+      "realtime": {
+        "name": "Realtime stream",
+        "degraded": "Realtime push is unavailable; clients poll instead.",
+        "fallback": "Realtime push uses {value}."
+      },
+      "kv": {
+        "name": "KV cache",
+        "degraded": "Cache unavailable; reads hit the database and may be slower.",
+        "fallback": "Cache uses {value}."
+      },
+      "queues": {
+        "name": "Queues",
+        "degraded": "Queues unavailable; background jobs are delayed.",
+        "fallback": "Queues use {value}."
+      }
+    }
+  },
+  "dlq": {
+    "title": "Dead-letter queues",
+    "subtitle": "Messages that failed after retries; replay once the cause is fixed",
+    "queueFilter": "Filter by queue",
+    "allQueues": "All queues",
+    "queues": "Dead letters per queue",
+    "replayAll": "Replay all",
+    "replayAllAria": "Replay all of {queue}",
+    "replaySelected": "Replay selected ({count, number})",
+    "selectAll": "Select all",
+    "select": "Select {id}",
+    "id": "ID",
+    "queue": "Queue",
+    "attempts": "Attempts",
+    "receivedAt": "Received",
+    "body": "Body",
+    "replayedAt": "Replayed",
+    "notReplayed": "Not replayed",
+    "empty": "No dead letters",
+    "emptyHint": "All messages were processed successfully.",
+    "confirmSelectedTitle": "Replay {count, plural, one {# selected message} other {# selected messages}}?",
+    "confirmAllTitle": "Replay all {count, plural, one {# message} other {# messages}} in {queue}?",
+    "confirmDescription": "Messages are re-delivered to their original queue; unresolved failures may dead-letter again.",
+    "confirm": "Replay",
+    "replayed": "Replayed {count, plural, one {# message} other {# messages}}",
+    "replayFailed": "Replay failed"
+  },
+  "graph": {
+    "title": "Graph projection",
+    "subtitle": "Objects and links mirrored into Neo4j",
+    "description": "If Neo4j diverges from D1 (e.g. after restoring the instance), rebuild the projection from D1. The rebuild runs in the background.",
+    "rebuild": "Rebuild graph projection",
+    "confirmTitle": "Rebuild the graph projection?",
+    "confirmDescription": "All projected objects are re-queued into Neo4j; deep traversal may be incomplete meanwhile.",
+    "queued": "Queued {count, plural, one {# object} other {# objects}} for projection",
+    "failed": "Could not rebuild the projection"
+  }
+}

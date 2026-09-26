@@ -1,0 +1,12 @@
+{
+  "name": "@ontodecide/testing",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@ontodecide/shared-kernel": "workspace:*"
+  }
+}

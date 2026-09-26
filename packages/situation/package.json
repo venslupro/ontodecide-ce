@@ -1,0 +1,22 @@
+{
+  "name": "@ontodecide/situation",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./contract": "./contract/index.ts",
+    "./domain": "./domain/index.ts",
+    "./application": "./application/index.ts",
+    "./infrastructure": "./infrastructure/index.ts",
+    "./interface": "./interface/index.ts"
+  },
+  "dependencies": {
+    "@ontodecide/shared-kernel": "workspace:*",
+    "@ontodecide/object-graph": "workspace:*",
+    "@ontodecide/integration": "workspace:*",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@ontodecide/testing": "workspace:*"
+  }
+}

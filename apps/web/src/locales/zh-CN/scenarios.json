@@ -1,0 +1,115 @@
+{
+  "list": {
+    "title": "情景推演",
+    "description": "设置扰动与候选动作，对比基线、情景与情景 + 动作三档结果。",
+    "new": "新建推演",
+    "more": "另有 {count, plural, other {# 项扰动}}",
+    "notRun": "尚未运行",
+    "openAria": "打开推演：{name}",
+    "empty": "还没有推演",
+    "emptyHint": "从告警或对象详情发起，或新建一个推演来评估扰动的影响。",
+    "name": "名称",
+    "perturbations": "扰动",
+    "risk": "风险等级",
+    "created": "创建时间"
+  },
+  "page": {
+    "newTitle": "新建推演",
+    "description": "设置扰动与候选动作，对比三档结果，并可一键生成 AI 建议。",
+    "defaultName": "推演 {time}",
+    "notFound": "推演不存在或已被删除",
+    "backToList": "返回推演列表",
+    "fromAlert": "来自告警 {id}",
+    "run": "运行推演",
+    "running": "推演中…",
+    "name": "推演名称",
+    "namePlaceholder": "例如：Hanoi 产能 −60%"
+  },
+  "perturbation": {
+    "title": "扰动设置",
+    "subtitle": "选择对象与数值属性，设置相对变化（−100% 到 +100%）",
+    "row": "扰动 {n}",
+    "remove": "删除扰动 {n}",
+    "object": "对象",
+    "objectAria": "扰动 {n} 的对象",
+    "selected": "已选：",
+    "property": "属性",
+    "propertyAria": "扰动 {n} 的属性",
+    "chooseProperty": "选择数值属性",
+    "pickObjectFirst": "请先选择对象",
+    "change": "相对变化",
+    "sliderAria": "扰动 {n} 的相对变化，当前 {value}",
+    "percentAria": "扰动 {n} 的相对变化（百分比）",
+    "add": "添加扰动",
+    "count": "{count, number} / {max, number}"
+  },
+  "validation": {
+    "rid": "请选择对象",
+    "property": "请选择属性",
+    "change": "相对变化须在 −100% 到 +100% 之间",
+    "name": "名称不能超过 100 个字符",
+    "perturbations": "请设置 1–10 项扰动",
+    "generic": "输入不合法，请检查后重试"
+  },
+  "candidates": {
+    "title": "候选动作",
+    "subtitle": "来自本体的可执行动作；勾选后参与「情景 + 动作」推演",
+    "empty": "暂无候选动作",
+    "emptyHint": "完成扰动设置后，将根据受影响对象列出可执行动作。",
+    "requiresApproval": "需审批",
+    "ineligible": "前置条件未满足",
+    "noParams": "无参数",
+    "selectedCount": "已选 {count, number} / {max, number}"
+  },
+  "result": {
+    "title": "三档对比",
+    "simulatorNote": "数值来自推演器，不经过 LLM",
+    "risk": "风险 {level}",
+    "degraded": "图数据库不可用，推演基于降级子图",
+    "tooLargeHint": "请减少扰动对象或缩小影响范围后重试。",
+    "nodeCount": "涉及 {count, plural, other {# 个节点}}",
+    "computedAt": "计算于 {time}",
+    "actionSet": "对比动作",
+    "actionSetSingle": "对比动作：{action}",
+    "empty": "尚无推演结果",
+    "emptyHint": "设置扰动并点击「运行推演」查看基线、情景与情景 + 动作的 KPI 对比。"
+  },
+  "kpi": {
+    "baseline": "基线",
+    "scenario": "情景",
+    "withAction": "情景 + 动作",
+    "name": "指标",
+    "unit": "单位",
+    "deltaBaseline": "较基线",
+    "deltaScenario": "较情景",
+    "tableAria": "KPI 对比表",
+    "chartAria": "KPI 三档对比柱状图（相对基线百分比）：{kpis}",
+    "trend": {
+      "good": "改善",
+      "bad": "恶化",
+      "flat": "持平"
+    }
+  },
+  "impact": {
+    "title": "影响范围",
+    "subtitle": "受影响节点按影响程度单色阶着色，节点大小表示影响量",
+    "graphAria": "影响范围图，共 {count, plural, other {# 个受影响节点}}",
+    "legend": "颜色越深、节点越大表示影响越大",
+    "listTitle": "受影响对象排名",
+    "hop": "{hop, plural, =0 {扰动源} other {# 跳}}",
+    "empty": "没有受影响的对象",
+    "degraded": "图数据库不可用，已显示降级结果"
+  },
+  "ai": {
+    "title": "AI 建议",
+    "subtitle": "基于本次推演与证据生成处置建议，须人工审批后执行",
+    "generate": "生成 AI 建议",
+    "hint": "生成后将跳转到建议详情页。",
+    "saveFirst": "请先运行推演以保存情景，再生成 AI 建议。",
+    "needPerturbation": "请先设置至少一项扰动。",
+    "exhausted": "今日 AI 次数已用完，明日 0 点重置；仍可运行推演。",
+    "rateLimited": "请求过于频繁，请 {seconds} 秒后重试",
+    "offline": "网络已断开，暂不可生成。",
+    "failed": "生成 AI 建议失败"
+  }
+}

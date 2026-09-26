@@ -1,0 +1,6 @@
+supplierId,name,country,riskScore,capacity,onTimeRate,status,contactEmail,materials,share
+S-001,Shenzhen Precision Parts,CN,35,1200,0.96,active,ops@szpp.example,M-100;M-101,0.7
+S-002,Hanoi Circuit Works,VN,58,800,0.91,active,sales@hcw.example,M-101;M-102,0.3
+S-003,Penang Semicon,MY,22,1500,0.98,active,contact@penang.example,M-102,0.7
+S-004,Osaka Battery Co,JP,41,600,0.94,active,info@osakabat.example,M-103,1
+S-005,Bangkok Metal Forming,TH,18,900,0.97,active,hello@bmf.example,M-100,0.3
