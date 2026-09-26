@@ -9,6 +9,11 @@
  *
  * Usage:
  *   node scripts/gen_wrangler.mjs --env prod|local [--tf-output out.json]
+ *       [--allow-missing]
+ *
+ * --allow-missing (pull-request builds only) renders a `pending-…`
+ * placeholder, with a warning, for an output whose resource is added by the
+ * change but not applied yet. Deploys never pass it.
  *
  * There is a single deployed environment (production, from main); `local`
  * only renders configs for `wrangler dev` on a developer machine.
@@ -52,10 +57,11 @@ export const LOCAL_SECRETS = {
 };
 
 function parseArgs(argv) {
-  const args = {env: 'local', tfOutput: undefined};
+  const args = {env: 'local', tfOutput: undefined, allowMissing: false};
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--env') args.env = argv[++i];
     else if (argv[i] === '--tf-output') args.tfOutput = argv[++i];
+    else if (argv[i] === '--allow-missing') args.allowMissing = true;
   }
   if (!['prod', 'local'].includes(args.env)) {
     throw new Error(`Unknown env: ${args.env}`);
@@ -83,8 +89,21 @@ function readTfOutputs(file) {
   return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.value]));
 }
 
+/**
+ * Returns a Terraform output value, or a placeholder when it is missing and
+ * `allowMissing` is set.
+ */
+function tfValue(value, label, allowMissing) {
+  if (value !== undefined && value !== null) return value;
+  if (!allowMissing) throw new Error(`Terraform output ${label} is missing`);
+  console.warn(
+    `::warning::Terraform output ${label} is missing (not applied yet)`,
+  );
+  return `pending-${label.replace(/[^A-Za-z0-9-]+/g, '-')}`;
+}
+
 /** Builds the substitution map for an environment. */
-export function buildVars(env, tf) {
+export function buildVars(env, tf, allowMissing = false) {
   const vars = {
     ENVIRONMENT: env,
     APP_VERSION: process.env.APP_VERSION ?? gitVersion(),
@@ -100,9 +119,9 @@ export function buildVars(env, tf) {
     } else {
       const name = `${service}-db`;
       const db = tf.d1?.[name];
-      if (!db) throw new Error(`Terraform output d1["${name}"] is missing`);
-      vars[`D1_${key}_NAME`] = db.name;
-      vars[`D1_${key}_ID`] = db.id;
+      if (!db) tfValue(undefined, `d1["${name}"]`, allowMissing);
+      vars[`D1_${key}_NAME`] = db?.name ?? name;
+      vars[`D1_${key}_ID`] = db?.id ?? `pending-${name}`;
     }
   }
   if (env === 'local') {
@@ -115,11 +134,19 @@ export function buildVars(env, tf) {
     });
   } else {
     Object.assign(vars, {
-      KV_SCHEMA_CACHE_ID: tf.kv.schema_cache,
-      KV_GATEWAY_CONFIG_ID: tf.kv.gateway_config,
-      B2_RAW_BUCKET: tf.b2.bucket,
-      B2_REGION: tf.b2.region,
-      B2_ENDPOINT: tf.b2.endpoint,
+      KV_SCHEMA_CACHE_ID: tfValue(
+        tf.kv?.schema_cache,
+        'kv.schema_cache',
+        allowMissing,
+      ),
+      KV_GATEWAY_CONFIG_ID: tfValue(
+        tf.kv?.gateway_config,
+        'kv.gateway_config',
+        allowMissing,
+      ),
+      B2_RAW_BUCKET: tfValue(tf.b2?.bucket, 'b2.bucket', allowMissing),
+      B2_REGION: tfValue(tf.b2?.region, 'b2.region', allowMissing),
+      B2_ENDPOINT: tfValue(tf.b2?.endpoint, 'b2.endpoint', allowMissing),
       FEATURE_NEO4J: tf.neo4j ? 'true' : 'false',
     });
   }
@@ -170,9 +197,9 @@ export function render(template, vars, env) {
 }
 
 function main() {
-  const {env, tfOutput} = parseArgs(process.argv.slice(2));
+  const {env, tfOutput, allowMissing} = parseArgs(process.argv.slice(2));
   const tf = env === 'local' ? {} : readTfOutputs(tfOutput);
-  const vars = buildVars(env, tf);
+  const vars = buildVars(env, tf, allowMissing);
   for (const worker of WORKERS) {
     const tpl = join(ROOT, 'apps', worker, 'wrangler.jsonc.tpl');
     if (!existsSync(tpl)) throw new Error(`Missing ${tpl}`);
