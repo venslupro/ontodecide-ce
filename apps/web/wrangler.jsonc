@@ -1,0 +1,9 @@
+// Cloudflare Pages project for the cockpit SPA (production only; deployed
+// from main by .github/workflows/deploy.yml via Direct Upload).
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ontodecide-ce",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-09-01",
+  "services": [{"binding": "GATEWAY", "service": "api-gateway"}]
+}

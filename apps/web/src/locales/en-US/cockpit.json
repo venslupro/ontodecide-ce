@@ -1,0 +1,202 @@
+{
+  "title": "Situation overview",
+  "description": "Key metrics, alerts and pending recommendations in real time",
+  "updatedAt": "Updated {time}",
+  "wallMode": "Wall mode",
+  "wall": {
+    "brand": "OntoDecide Operations Cockpit",
+    "exitHint": "Press Esc to exit wall mode",
+    "group": "KPI group {current} / {total}",
+    "groupDot": "Group {n}"
+  },
+  "realtimeLabel": "Realtime connection: {state}",
+  "loadFailed": "Failed to load the situation overview",
+  "kpi": {
+    "title": "Key metrics",
+    "empty": "No KPIs yet",
+    "emptyHint": "Install an industry pack or define KPIs in the ontology workbench",
+    "vsYesterday": "{change} vs yesterday",
+    "up": "Up",
+    "down": "Down",
+    "flat": "Flat",
+    "better": "improving",
+    "worse": "worsening",
+    "target": "Target {value}",
+    "offTarget": "Off target",
+    "spark": "{name}, last 24 hours"
+  },
+  "trend": {
+    "title": "Metric trend",
+    "kpi": "Metric",
+    "range": "Time range",
+    "aria": "{name} {range} trend chart with {count, plural, one {# alert marker} other {# alert markers}}",
+    "empty": "No trend data",
+    "alertMarker": "Alert"
+  },
+  "alerts": {
+    "title": "Live alerts",
+    "filterOpen": "Open",
+    "filterAll": "All",
+    "filter": "Alert filter",
+    "empty": "No alerts",
+    "emptyOpen": "No open alerts",
+    "hits": "{count, plural, one {# hit} other {# hits}}",
+    "ack": "Acknowledge",
+    "ackLabel": "Acknowledge alert: {title}",
+    "ackFailed": "Failed to acknowledge the alert",
+    "acked": "Alert acknowledged",
+    "noObject": "No linked object",
+    "count": "{count, plural, one {# alert} other {# alerts}}"
+  },
+  "recs": {
+    "title": "Pending recommendations",
+    "empty": "No pending recommendations",
+    "confidence": "Confidence {value}",
+    "impact": "Expected impact {value}",
+    "view": "View",
+    "viewLabel": "View recommendation: {summary}"
+  },
+  "impacted": {
+    "title": "Impacted objects",
+    "subtitle": "From the latest recommendation's simulation",
+    "empty": "No simulated impact yet",
+    "hop": "{hop, plural, =0 {Focus} one {# hop} other {# hops}}",
+    "delta": "Impact {value}",
+    "col": {
+      "object": "Object",
+      "type": "Type",
+      "hop": "Hops",
+      "delta": "Change"
+    }
+  },
+  "health": {
+    "title": "Data health",
+    "empty": "No data sources connected",
+    "quality": "Quality",
+    "qualityLabel": "{name} quality score",
+    "lastUpdate": "Updated {time}",
+    "never": "Never updated",
+    "stale": "Stale",
+    "disabled": "Disabled",
+    "kinds": {
+      "file": "File",
+      "rest": "REST API",
+      "webhook": "Webhook"
+    }
+  },
+  "objectTable": {
+    "title": "Object set",
+    "empty": "The object set is empty",
+    "failed": "Failed to load the object set",
+    "object": "Object"
+  },
+  "automations": {
+    "title": "Automations",
+    "description": "Raise alerts, generate recommendations or run approval-free actions when objects match conditions",
+    "create": "New rule",
+    "empty": "No automation rules yet",
+    "emptyHint": "Create a rule so risks are flagged the moment they appear",
+    "col": {
+      "name": "Name",
+      "trigger": "Trigger",
+      "condition": "Condition",
+      "effects": "Effects",
+      "severity": "Severity",
+      "cooldown": "Cooldown",
+      "lastFired": "Last fired",
+      "enabled": "Enabled",
+      "actions": "Actions"
+    },
+    "trigger": {
+      "threshold": "On object change",
+      "schedule": "Hourly",
+      "objectSetCount": "Count {op} {value}"
+    },
+    "triggerHint": {
+      "threshold": "Evaluated for each object when it is written or updated",
+      "schedule": "Evaluated hourly over every object of the type"
+    },
+    "effect": {
+      "alert": "Alert",
+      "recommend": "Recommend",
+      "action": "Approval-free action"
+    },
+    "effectHint": {
+      "alert": "Pushed to the cockpit live alert stream",
+      "recommend": "Queues an AI recommendation (requires human approval)",
+      "action": "Runs an action that does not require approval"
+    },
+    "and": "and",
+    "or": "or",
+    "not": "not",
+    "exists": "{prop} has a value",
+    "noCondition": "No condition (all objects)",
+    "never": "Never",
+    "cooldown": {
+      "none": "None",
+      "hours": "{n, plural, one {# hour} other {# hours}}",
+      "minutes": "{n, plural, one {# minute} other {# minutes}}",
+      "seconds": "{n, plural, one {# second} other {# seconds}}"
+    },
+    "toggleLabel": "Enable rule: {name}",
+    "editLabel": "Edit rule: {name}",
+    "deleteLabel": "Delete rule: {name}",
+    "toggleFailed": "Failed to update the rule",
+    "enabledToast": "Rule enabled",
+    "disabledToast": "Rule disabled",
+    "saved": "Rule saved",
+    "deleted": "Rule deleted",
+    "deleteTitle": "Delete rule",
+    "deleteConfirm": "Delete \"{name}\"? It will stop firing; past alerts are kept.",
+    "dialog": {
+      "createTitle": "New automation rule",
+      "editTitle": "Edit automation rule",
+      "description": "Object type → property → operator → threshold; a dry run on recent data runs before saving",
+      "confirmTitle": "Confirm save",
+      "back": "Back to edit",
+      "confirmSave": "Confirm and save"
+    },
+    "form": {
+      "basics": "Basics",
+      "nameZh": "Name (Chinese)",
+      "nameEn": "Name (English, optional)",
+      "nameEnHint": "Falls back to the Chinese name when empty",
+      "nameRequired": "Enter a rule name",
+      "triggerSection": "Trigger",
+      "triggerKind": "Trigger",
+      "objectType": "Object type",
+      "chooseType": "Choose an object type",
+      "typeRequired": "Choose an object type",
+      "unsupportedTrigger": "This rule's trigger cannot be edited here and will be kept as is",
+      "condition": "Condition",
+      "conditionLabel": "Trigger condition",
+      "conditionNeedsType": "Choose an object type before adding conditions",
+      "effects": "Effects",
+      "effectsRequired": "Choose at least one effect",
+      "perturbation": "Seed the simulation with a perturbation (optional)",
+      "perturbProperty": "Property",
+      "chooseProperty": "Choose a numeric property",
+      "perturbChange": "Change",
+      "perturbRequired": "Choose the property to perturb",
+      "noNumeric": "This object type has no numeric properties",
+      "actionType": "Action",
+      "chooseAction": "Choose an action",
+      "actionRequired": "Choose an approval-free action",
+      "noActions": "This object type has no approval-free actions",
+      "severity": "Severity",
+      "cooldown": "Cooldown (seconds)",
+      "cooldownHint": "Minimum interval between two firings for one object, 0–86400, default 3600",
+      "cooldownRange": "Cooldown must be between 0 and 86400 seconds",
+      "enabled": "Enable after saving",
+      "invalid": "Invalid rule definition: {detail}"
+    },
+    "dryRun": {
+      "run": "Dry run",
+      "running": "Running…",
+      "result": "{count, plural, =0 {Recent data would not trigger this rule} one {Recent data would trigger it # time} other {Recent data would trigger it # times}}",
+      "sample": "Sample objects",
+      "failed": "Dry run failed: {message}",
+      "hint": "Evaluated over the last 24 hours of data; no alerts or writes are produced"
+    }
+  }
+}

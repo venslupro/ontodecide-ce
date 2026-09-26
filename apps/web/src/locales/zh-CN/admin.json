@@ -1,0 +1,168 @@
+{
+  "fields": {
+    "user": "用户",
+    "email": "邮箱",
+    "name": "姓名",
+    "role": "角色",
+    "markings": "Markings",
+    "markingsInput": "添加 Marking",
+    "status": "状态",
+    "lastLogin": "最近登录",
+    "createdAt": "创建时间",
+    "actions": "操作",
+    "password": "初始密码（可选）"
+  },
+  "errors": {
+    "email": "请输入有效的邮箱地址",
+    "name": "请输入 1–100 个字符的姓名",
+    "password": "密码至少 10 位，且包含大写字母、小写字母和数字"
+  },
+  "users": {
+    "title": "用户与权限",
+    "description": "管理账号、角色与 Markings；角色决定可执行的操作，Markings 决定可见的敏感属性。",
+    "listTitle": "用户",
+    "search": "按姓名或邮箱筛选",
+    "create": "新建用户",
+    "created": "已创建用户 {name}",
+    "you": "你",
+    "mustChange": "待改密码",
+    "roleAria": "{name} 的角色",
+    "roleChanged": "{name} 的角色已改为{role}",
+    "updateFailed": "更新用户失败",
+    "selfRole": "不能修改自己的角色",
+    "selfDisable": "不能停用自己",
+    "selfDelete": "不能删除自己",
+    "noMarkings": "无",
+    "editMarkings": "编辑 {name} 的 Markings",
+    "enabledAria": "启用 {name}",
+    "statusActive": "启用",
+    "statusDisabled": "已停用",
+    "enabled": "已启用 {name}",
+    "disabled": "已停用 {name}",
+    "never": "从未登录",
+    "resetAria": "重置 {name} 的密码",
+    "deleteAria": "删除 {name}"
+  },
+  "create": {
+    "description": "未填写初始密码时，系统会生成一次性临时密码，用户首次登录后须修改。",
+    "roleHint": "查看者 < 操作员 < 建模者 < 管理员",
+    "passwordHint": "留空则生成临时密码"
+  },
+  "secret": {
+    "createdTitle": "用户已创建",
+    "resetTitle": "密码已重置",
+    "description": "{email} 的临时密码：",
+    "passwordLabel": "临时密码",
+    "copy": "复制临时密码",
+    "warning": "此密码只显示这一次，关闭后将无法再次查看。请通过安全渠道发送给用户。",
+    "done": "我已保存，关闭"
+  },
+  "markings": {
+    "title": "编辑 {name} 的 Markings",
+    "description": "保存后将替换该用户现有的全部 Markings。",
+    "hint": "持有对应 Marking 才能看到带该 Marking 的属性，如 PII、FINANCE",
+    "placeholder": "输入后回车添加",
+    "remove": "移除 Marking {value}",
+    "saved": "已更新 {name} 的 Markings"
+  },
+  "reset": {
+    "title": "重置 {name} 的密码？",
+    "description": "将生成一次性临时密码，用户当前的登录会话将失效。",
+    "confirm": "重置密码",
+    "failed": "重置密码失败"
+  },
+  "delete": {
+    "title": "删除用户 {name}？",
+    "description": "删除后该账号无法登录，此操作不可撤销。",
+    "typeLabel": "输入邮箱 {email} 以确认",
+    "confirm": "删除用户",
+    "done": "已删除 {name}",
+    "failed": "删除用户失败"
+  },
+  "health": {
+    "title": "系统健康",
+    "description": "免费额度占用、依赖降级状态、死信队列与图投影维护。",
+    "usageTitle": "今日免费额度占用",
+    "usageSubtitle": "{day}（UTC）· 80% 告警线",
+    "usageChartAria": "各资源今日免费额度占用柱状图，虚线为 80% 告警线",
+    "usageTableAria": "免费额度占用明细",
+    "usageOk": "正常",
+    "warnLine": "80% 告警线",
+    "resource": "资源",
+    "usedLimit": "已用 / 上限",
+    "ratio": "占比",
+    "degradedTitle": "降级状态",
+    "degradedCount": "{count, plural, other {# 项依赖}}处于降级",
+    "allHealthy": "全部依赖正常",
+    "noDegraded": "未报告依赖状态",
+    "statusOk": "正常",
+    "statusDegraded": "已降级",
+    "okExplanation": "运行正常，无需处理。",
+    "genericDegraded": "该依赖暂不可用，相关功能以降级模式运行。",
+    "genericFallback": "已切换至备用实现 {value}。",
+    "deps": {
+      "neo4j": {
+        "name": "Neo4j 图数据库",
+        "degraded": "深度遍历（3 跳以上）不可用，关系探索已回退到 D1（最多 2 跳）。",
+        "fallback": "图查询已回退到 {value}。"
+      },
+      "llm": {
+        "name": "大模型服务",
+        "degraded": "AI 建议暂不可用，仅提供基于规则的建议。",
+        "fallback": "主模型不可用，AI 建议已切换至备用模型 {value}。"
+      },
+      "realtime": {
+        "name": "实时推送",
+        "degraded": "实时推送不可用，客户端改为轮询。",
+        "fallback": "实时推送已切换至 {value}。"
+      },
+      "kv": {
+        "name": "KV 缓存",
+        "degraded": "缓存不可用，读取直接访问数据库，响应可能变慢。",
+        "fallback": "缓存已切换至 {value}。"
+      },
+      "queues": {
+        "name": "消息队列",
+        "degraded": "队列不可用，异步任务将延迟执行。",
+        "fallback": "队列已切换至 {value}。"
+      }
+    }
+  },
+  "dlq": {
+    "title": "死信队列",
+    "subtitle": "多次重试仍失败的消息；修复原因后可重放",
+    "queueFilter": "按队列筛选",
+    "allQueues": "全部队列",
+    "queues": "各队列死信数量",
+    "replayAll": "全部重放",
+    "replayAllAria": "全部重放 {queue}",
+    "replaySelected": "重放选中（{count, number}）",
+    "selectAll": "全选",
+    "select": "选择 {id}",
+    "id": "ID",
+    "queue": "队列",
+    "attempts": "尝试次数",
+    "receivedAt": "进入时间",
+    "body": "消息内容",
+    "replayedAt": "重放时间",
+    "notReplayed": "未重放",
+    "empty": "死信队列为空",
+    "emptyHint": "所有消息均已成功处理。",
+    "confirmSelectedTitle": "重放选中的 {count, plural, other {# 条}}消息？",
+    "confirmAllTitle": "重放 {queue} 中的全部 {count, plural, other {# 条}}消息？",
+    "confirmDescription": "消息将重新投递到原队列；若问题未修复，可能再次进入死信队列。",
+    "confirm": "重放",
+    "replayed": "已重放 {count, plural, other {# 条}}消息",
+    "replayFailed": "重放失败"
+  },
+  "graph": {
+    "title": "图投影",
+    "subtitle": "Neo4j 中的对象与关系副本",
+    "description": "当 Neo4j 数据与 D1 不一致（例如恢复实例后）时，可从 D1 全量重建图投影。重建在后台排队执行。",
+    "rebuild": "重建图投影",
+    "confirmTitle": "重建图投影？",
+    "confirmDescription": "将所有投影对象重新排队写入 Neo4j，期间深度遍历结果可能不完整。",
+    "queued": "已排队 {count, plural, other {# 个对象}}重建投影",
+    "failed": "重建图投影失败"
+  }
+}

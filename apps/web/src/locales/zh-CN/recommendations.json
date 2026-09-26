@@ -1,0 +1,137 @@
+{
+  "rulesBadge": "规则",
+  "rulesHint": "由规则引擎生成（AI 不可用时的兜底）",
+  "degradedHint": "部分依赖不可用，建议基于降级数据生成",
+  "confidence": "置信度 {value, number, ::percent}",
+  "noSummary": "（无摘要）",
+  "topAction": "首选动作",
+  "focus": "关注对象",
+  "createdAgo": "生成于 {time}",
+  "expiredAt": "已于 {time}过期",
+  "expiresIn": "{time}过期",
+  "viewAria": "查看建议：{summary}",
+  "list": {
+    "title": "建议中心",
+    "description": "集中处理 AI 与规则生成的建议，审批后执行动作并跟踪效果。",
+    "filterAria": "按状态筛选",
+    "all": "全部",
+    "empty": {
+      "Proposed": "暂无待审批建议",
+      "Approved": "暂无已批准的建议",
+      "Executed": "暂无已执行的建议",
+      "Evaluated": "暂无已评估的建议",
+      "Rejected": "暂无已驳回的建议",
+      "Expired": "暂无已过期的建议",
+      "All": "暂无建议"
+    },
+    "emptyHint": {
+      "Proposed": "告警出现或在情景推演中点击「生成 AI 建议」后，新的建议会出现在这里。",
+      "other": "切换到其他状态查看更多建议。"
+    }
+  },
+  "detail": {
+    "expiresOn": "有效期至 {time}",
+    "expiresCountdown": "剩余 {time} 过期",
+    "expired": "已过期",
+    "notFound": "建议不存在或已被删除",
+    "backToList": "返回建议中心",
+    "generatingTitle": "正在生成建议",
+    "generating": "AI 正在分析证据并生成建议…",
+    "generatingHint": "通常需要数秒；页面每 3 秒自动刷新，完成后会显示摘要、动作与证据链。",
+    "failedTitle": "建议生成失败",
+    "failed": "建议生成失败",
+    "failedHint": "AI 与规则兜底均未能生成建议，请稍后重试或重新发起推演。",
+    "statusAria": "建议状态",
+    "model": "模型",
+    "alert": "关联告警",
+    "scenario": "关联推演",
+    "localeHint": "该摘要与理由以 {locale} 生成，切换语言不会改变 AI 内容；数字与证据保持不变。",
+    "rejectReason": "驳回原因：",
+    "decided": "由 {by} 于 {time} 处理",
+    "rationale": "理由"
+  },
+  "actions": {
+    "title": "推荐动作",
+    "subtitle": "按预期收益排序；预期收益来自推演器",
+    "empty": "该建议没有推荐动作",
+    "rank": "排名",
+    "action": "动作",
+    "target": "目标对象",
+    "params": "参数",
+    "impact": "预期收益",
+    "requiresApproval": "需审批",
+    "execution": "执行结果",
+    "executed": "已执行",
+    "execFailed": "执行失败",
+    "executing": "执行中"
+  },
+  "approve": {
+    "open": "批准并执行",
+    "title": "确认批准并执行",
+    "description": "批准后将立即执行以下 {count, plural, other {# 个动作}}，操作会记入审计日志。",
+    "confirm": "确认执行",
+    "writebackTitle": "动作与外部回写",
+    "listAria": "将要执行的动作",
+    "auditHint": "执行结果与操作人会写入动作日志，可在对象详情中查看。",
+    "writeback": {
+      "webhook": "外部系统（Webhook）",
+      "none": "无外部回写"
+    },
+    "success": "已批准，动作执行完成",
+    "execFailed": "已批准，但部分动作执行失败",
+    "failed": "批准失败，已恢复原状态"
+  },
+  "reject": {
+    "open": "驳回",
+    "title": "驳回建议",
+    "description": "请说明驳回原因，便于改进后续建议。",
+    "confirm": "确认驳回",
+    "reason": "驳回原因",
+    "required": "请填写驳回原因",
+    "tooLong": "驳回原因不能超过 500 字",
+    "counter": "{count, number} / 500",
+    "placeholder": "例如：替代供应商尚未完成认证",
+    "success": "建议已驳回",
+    "failed": "驳回失败，已恢复原状态"
+  },
+  "evidence": {
+    "title": "证据链",
+    "subtitle": "点击证据跳转到对象属性与血缘",
+    "empty": "暂无证据",
+    "itemAria": "证据 {n}：{object} 的 {property} 为 {value}，查看属性与血缘",
+    "source": "来源 {source}",
+    "ingested": "导入于 {time}",
+    "confidence": "可信度 {value, number, ::percent}",
+    "lineage": "血缘"
+  },
+  "risks": {
+    "title": "风险",
+    "empty": "未识别到额外风险"
+  },
+  "simulation": {
+    "title": "推演摘要",
+    "subtitle": "数值来自推演器，不经过 LLM",
+    "risk": "风险 {level}"
+  },
+  "feedback": {
+    "title": "效果反馈",
+    "rating": "评分",
+    "yours": "你的评分",
+    "stars": "{count, plural, other {# 星}}",
+    "comment": "补充说明（可选）",
+    "commentHint": "最多 1000 字",
+    "submit": "提交反馈",
+    "thanks": "感谢反馈，已用于改进后续建议。",
+    "ratingRequired": "请选择 1–5 星评分",
+    "commentTooLong": "补充说明不能超过 1000 字",
+    "saved": "反馈已提交",
+    "failed": "反馈提交失败"
+  },
+  "outcome": {
+    "title": "效果评估",
+    "expected": "预期",
+    "actual": "实际",
+    "achievement": "达成率",
+    "evaluatedAt": "评估于 {time}"
+  }
+}

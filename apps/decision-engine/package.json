@@ -1,0 +1,21 @@
+{
+  "name": "@ontodecide/decision-engine-worker",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev -c wrangler.jsonc",
+    "deploy": "wrangler deploy -c wrangler.jsonc"
+  },
+  "dependencies": {
+    "@ontodecide/shared-kernel": "workspace:*",
+    "@ontodecide/decision": "workspace:*",
+    "@ontodecide/object-graph": "workspace:*",
+    "@ontodecide/situation": "workspace:*",
+    "@ontodecide/ontology": "workspace:*",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@ontodecide/testing": "workspace:*"
+  }
+}

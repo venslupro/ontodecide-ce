@@ -1,0 +1,24 @@
+{
+  "name": "@ontodecide/api-gateway-worker",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev -c wrangler.jsonc",
+    "deploy": "wrangler deploy -c wrangler.jsonc"
+  },
+  "dependencies": {
+    "@ontodecide/shared-kernel": "workspace:*",
+    "@ontodecide/identity": "workspace:*",
+    "@ontodecide/ontology": "workspace:*",
+    "@ontodecide/integration": "workspace:*",
+    "@ontodecide/object-graph": "workspace:*",
+    "@ontodecide/situation": "workspace:*",
+    "@ontodecide/decision": "workspace:*",
+    "zod": "^4.1.12",
+    "hono": "^4.10.0"
+  },
+  "devDependencies": {
+    "@ontodecide/testing": "workspace:*"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@ontodecide/shared-kernel",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.1.12"
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "list": {
+    "title": "Scenarios",
+    "description": "Set perturbations and candidate actions, then compare baseline, scenario and scenario + action.",
+    "new": "New scenario",
+    "more": "{count, plural, one {# more perturbation} other {# more perturbations}}",
+    "notRun": "Not run yet",
+    "openAria": "Open scenario: {name}",
+    "empty": "No scenarios yet",
+    "emptyHint": "Start from an alert or an object, or create a scenario to assess the impact of a perturbation.",
+    "name": "Name",
+    "perturbations": "Perturbations",
+    "risk": "Risk level",
+    "created": "Created"
+  },
+  "page": {
+    "newTitle": "New scenario",
+    "description": "Set perturbations and candidate actions, compare three outcomes and generate an AI recommendation.",
+    "defaultName": "Scenario {time}",
+    "notFound": "Scenario not found or deleted",
+    "backToList": "Back to scenarios",
+    "fromAlert": "From alert {id}",
+    "run": "Run simulation",
+    "running": "Simulating…",
+    "name": "Scenario name",
+    "namePlaceholder": "e.g. Hanoi capacity −60%"
+  },
+  "perturbation": {
+    "title": "Perturbations",
+    "subtitle": "Pick an object and a numeric property, then set the relative change (−100% to +100%)",
+    "row": "Perturbation {n}",
+    "remove": "Remove perturbation {n}",
+    "object": "Object",
+    "objectAria": "Object of perturbation {n}",
+    "selected": "Selected:",
+    "property": "Property",
+    "propertyAria": "Property of perturbation {n}",
+    "chooseProperty": "Choose a numeric property",
+    "pickObjectFirst": "Pick an object first",
+    "change": "Relative change",
+    "sliderAria": "Relative change of perturbation {n}, currently {value}",
+    "percentAria": "Relative change of perturbation {n} (percent)",
+    "add": "Add perturbation",
+    "count": "{count, number} / {max, number}"
+  },
+  "validation": {
+    "rid": "Pick an object",
+    "property": "Choose a property",
+    "change": "The change must be between −100% and +100%",
+    "name": "The name must be at most 100 characters",
+    "perturbations": "Set 1–10 perturbations",
+    "generic": "Invalid input; please check and retry"
+  },
+  "candidates": {
+    "title": "Candidate actions",
+    "subtitle": "Executable actions from the ontology; checked ones join the scenario + action run",
+    "empty": "No candidate actions",
+    "emptyHint": "Once perturbations are set, executable actions for the affected objects are listed here.",
+    "requiresApproval": "Approval required",
+    "ineligible": "Preconditions not met",
+    "noParams": "No parameters",
+    "selectedCount": "{count, number} / {max, number} selected"
+  },
+  "result": {
+    "title": "Three-way comparison",
+    "simulatorNote": "Numbers come from the simulator, not the LLM",
+    "risk": "Risk {level}",
+    "degraded": "Graph database unavailable; simulated on a degraded subgraph",
+    "tooLargeHint": "Reduce the perturbed objects or the impact scope and retry.",
+    "nodeCount": "{count, plural, one {# node} other {# nodes}} involved",
+    "computedAt": "Computed {time}",
+    "actionSet": "Compare action",
+    "actionSetSingle": "Compared action: {action}",
+    "empty": "No results yet",
+    "emptyHint": "Set perturbations and click \"Run simulation\" to compare KPIs for baseline, scenario and scenario + action."
+  },
+  "kpi": {
+    "baseline": "Baseline",
+    "scenario": "Scenario",
+    "withAction": "Scenario + action",
+    "name": "KPI",
+    "unit": "Unit",
+    "deltaBaseline": "vs baseline",
+    "deltaScenario": "vs scenario",
+    "tableAria": "KPI comparison table",
+    "chartAria": "Three-way KPI bar chart (percent of baseline): {kpis}",
+    "trend": {
+      "good": "Better",
+      "bad": "Worse",
+      "flat": "Flat"
+    }
+  },
+  "impact": {
+    "title": "Impact",
+    "subtitle": "Affected nodes shaded by impact on a single hue; node size encodes impact",
+    "graphAria": "Impact graph with {count, plural, one {# affected node} other {# affected nodes}}",
+    "legend": "Darker and larger nodes are more affected",
+    "listTitle": "Affected objects ranked",
+    "hop": "{hop, plural, =0 {source} one {# hop} other {# hops}}",
+    "empty": "No affected objects",
+    "degraded": "Graph database unavailable; showing degraded results"
+  },
+  "ai": {
+    "title": "AI recommendation",
+    "subtitle": "Drafts a recommendation from this scenario and its evidence; requires human approval",
+    "generate": "Generate AI recommendation",
+    "hint": "You will be taken to the recommendation once it is queued.",
+    "saveFirst": "Run the simulation first to save the scenario, then generate a recommendation.",
+    "needPerturbation": "Set at least one perturbation first.",
+    "exhausted": "Today's AI quota is used up; it resets at midnight. You can still run simulations.",
+    "rateLimited": "Too many requests; retry in {seconds} s",
+    "offline": "You are offline; generation is unavailable.",
+    "failed": "Could not generate an AI recommendation"
+  }
+}

@@ -1,0 +1,407 @@
+{
+  "kinds": {
+    "file": {
+      "title": "文件上传",
+      "desc": "上传 CSV、XLSX 或 JSON 文件，在浏览器中解析后分批导入。",
+      "meta": "CSV · XLSX · JSON · ≤ 20 MB / 1 万行"
+    },
+    "rest": {
+      "title": "REST 拉取",
+      "desc": "定时从业务系统的 REST 接口增量拉取记录。",
+      "meta": "每 15 分钟 · 游标增量 · 每次 ≤ 500 条"
+    },
+    "webhook": {
+      "title": "Webhook 推送",
+      "desc": "由外部系统主动推送记录，使用 HMAC 签名校验。",
+      "meta": "HMAC-SHA256 签名 · 5 分钟重放窗口"
+    }
+  },
+  "list": {
+    "title": "数据接入",
+    "description": "管理数据源、查看导入作业与数据质量。",
+    "newSource": "新建数据源",
+    "empty": "还没有数据源",
+    "emptyHint": "新建一个数据源，把业务数据接入到本体对象中。",
+    "cols": {
+      "name": "名称",
+      "kind": "类型",
+      "target": "目标对象类型",
+      "state": "状态",
+      "lastJob": "最近作业",
+      "quality": "质量",
+      "actions": "操作"
+    },
+    "state": {
+      "enabled": "已启用",
+      "disabled": "已停用",
+      "paused": "本体变更已暂停",
+      "pausedHint": "本体发布了破坏性变更，映射可能失效。请更新映射后重新启用。",
+      "stale": "数据过期"
+    },
+    "never": "尚未运行",
+    "quality": "质量 {value}",
+    "txn": {
+      "APPEND": "追加",
+      "SNAPSHOT": "快照"
+    },
+    "jobs": {
+      "title": "导入作业",
+      "show": "展开 {name} 的作业",
+      "hide": "收起 {name} 的作业",
+      "empty": "暂无作业",
+      "counts": "接收 {received, number} · 写入 {upserted, number} · 拒绝 {rejected, number}"
+    },
+    "toggle": {
+      "enable": "启用 {name}",
+      "disable": "停用 {name}"
+    },
+    "delete": {
+      "label": "删除 {name}",
+      "title": "删除数据源",
+      "body": "确定删除数据源「{name}」吗？已导入的对象不会被删除，但该数据源将停止接入。",
+      "confirm": "删除",
+      "done": "已删除「{name}」",
+      "failed": "删除失败"
+    }
+  },
+  "wizard": {
+    "title": "新建数据源",
+    "description": "五步完成接入：选择来源 → 上传或连接 → 字段映射 → 质量规则 → 预览与运行。",
+    "stepperLabel": "向导步骤",
+    "steps": {
+      "kind": "来源类型",
+      "upload": "上传或连接",
+      "mapping": "字段映射",
+      "quality": "质量规则",
+      "preview": "预览与运行"
+    },
+    "createFailed": "保存数据源失败"
+  },
+  "upload": {
+    "title": {
+      "file": "上传文件",
+      "rest": "连接 REST 接口",
+      "webhook": "Webhook 推送"
+    },
+    "subtitle": {
+      "file": "文件在浏览器的后台线程中解析，不会阻塞页面。",
+      "rest": "填写接口地址与记录所在路径；敏感请求头加密保存。",
+      "webhook": "创建后获得推送地址与签名密钥。"
+    },
+    "dropTitle": "拖放文件到此处，或点击选择",
+    "dropHint": "支持 CSV（首行为表头）、XLSX、JSON 数组；单个文件不超过 {maxMb} MB 且不超过 {maxRows, number} 行",
+    "choose": "选择文件",
+    "fileInput": "选择要上传的文件",
+    "parsing": "正在解析 {name}… 已读取 {rows, number} 行",
+    "summary": "文件信息",
+    "fileName": "文件名",
+    "size": "大小",
+    "rows": "行数",
+    "rowsValue": "{count, number} 行",
+    "parseTime": "解析耗时",
+    "ms": "{ms, number} ms",
+    "fieldsDetected": "识别到 {count, plural, other {# 个字段}}（{format}）",
+    "replace": "更换文件",
+    "sample": "样例数据",
+    "fileRequired": "请先上传并解析一个文件。",
+    "errors": {
+      "FILE_TOO_LARGE": "文件超过 {maxMb} MB，请拆分文件后分别导入。",
+      "TOO_MANY_ROWS": "文件超过 {maxRows, number} 行，请拆分文件后分别导入。",
+      "UNSUPPORTED_FORMAT": "不支持的文件格式，请上传 CSV、XLSX 或 JSON 文件。",
+      "EMPTY_FILE": "文件中没有可导入的数据行。",
+      "INVALID_JSON": "JSON 格式不正确：需要对象数组（或包含 items / data 数组的对象）。",
+      "PARSE_FAILED": "文件解析失败，请检查文件内容与编码（UTF-8）。"
+    }
+  },
+  "settings": {
+    "title": "数据源设置",
+    "subtitle": "记录将写入所选对象类型。",
+    "name": "数据源名称",
+    "nameRequired": "请输入数据源名称",
+    "targetType": "目标对象类型",
+    "targetTypeRequired": "请选择目标对象类型",
+    "targetTypeChangeHint": "更换目标类型会重置字段映射与质量规则。",
+    "chooseType": "选择对象类型",
+    "txnType": "事务类型",
+    "txn": {
+      "APPEND": "追加（APPEND）",
+      "SNAPSHOT": "快照（SNAPSHOT）"
+    },
+    "txnHint": {
+      "APPEND": "新增或更新记录，不影响本次未出现的对象。",
+      "SNAPSHOT": "本次导入代表该来源的完整数据集。"
+    },
+    "conflictPolicy": "冲突策略",
+    "conflict": {
+      "latest-wins": "最新优先",
+      "source-priority": "来源优先级",
+      "max-confidence": "置信度最高"
+    },
+    "conflictHint": {
+      "latest-wins": "多个来源写同一属性时，以时间戳最新的值为准。",
+      "source-priority": "以优先级更高的数据源为准。",
+      "max-confidence": "以置信度最高的值为准。"
+    }
+  },
+  "rest": {
+    "url": "接口地址",
+    "method": "请求方法",
+    "itemsPath": "记录路径",
+    "itemsPathHint": "JSONPath，如 $.data.items",
+    "cursorParam": "游标参数",
+    "cursorParamHint": "携带增量游标的查询参数（可选）",
+    "cursorPath": "下一游标路径",
+    "cursorPathHint": "响应中下一游标的 JSONPath（可选）",
+    "headers": "请求头",
+    "addHeader": "添加请求头",
+    "noHeaders": "未设置请求头",
+    "headerKey": "请求头 {n} 名称",
+    "headerValue": "请求头 {n} 值",
+    "removeHeader": "删除请求头 {n}",
+    "secret": "敏感",
+    "secretHint": "标记为敏感的请求头（如 Authorization）加密保存，创建后不再返回。",
+    "issues": {
+      "url": "请输入有效的 http(s) 地址",
+      "itemsPath": "记录路径需为以 $ 开头的 JSONPath，如 $.data.items"
+    }
+  },
+  "webhook": {
+    "noticeTitle": "签名密钥只显示一次",
+    "notice": "创建数据源后将生成推送地址和 HMAC 签名密钥。密钥仅在创建后显示一次，请妥善保存；外部系统需在请求头 X-OD-Timestamp 与 X-OD-Signature 中签名。",
+    "secretTitle": "推送地址与密钥",
+    "secretOnce": "密钥仅显示一次，离开本页后无法再次查看",
+    "endpoint": "推送地址",
+    "secret": "签名密钥",
+    "copyEndpoint": "复制推送地址",
+    "copySecret": "复制签名密钥",
+    "secretGone": "密钥已在创建时发放，无法再次查看。",
+    "signHint": "签名 = HEX(HMAC-SHA256(密钥, 时间戳 + \".\" + 请求体))，时间戳需在 5 分钟内。"
+  },
+  "mapping": {
+    "title": "字段映射",
+    "subtitle": "把源字段映射到「{type}」的属性，并配置转换链。",
+    "tableLabel": "字段映射表",
+    "autoMatch": "按名称自动匹配",
+    "primaryKey": "主键",
+    "primaryKeyHint": "用于识别对象（对应属性：{prop}）",
+    "primaryKeySource": "主键来源字段",
+    "chooseField": "选择字段",
+    "pkTag": "主键",
+    "cols": {
+      "source": "源字段与样例",
+      "target": "目标属性",
+      "transform": "转换链"
+    },
+    "skip": "不导入",
+    "targetFor": "{field} 的目标属性",
+    "samples": "{field} 的样例值",
+    "noFields": "暂无源字段",
+    "newField": "新增源字段",
+    "newFieldPlaceholder": "字段名，如 supplierId",
+    "addField": "添加字段",
+    "removeField": "移除字段 {field}",
+    "sourceTs": "源时间戳字段（最新优先策略使用）",
+    "sourceTsNone": "不使用",
+    "chain": {
+      "placeholder": "添加转换，如 trim",
+      "addStep": "为 {field} 添加转换步骤",
+      "removeStep": "移除转换 {step}",
+      "text": "{field} 的转换链文本",
+      "textMode": "以文本编辑",
+      "chipsMode": "以标签编辑",
+      "err": {
+        "TOO_MANY_STEPS": "转换链最多 {max} 步",
+        "MALFORMED": "转换格式不正确：{step}",
+        "UNKNOWN": "未知的转换：{step}",
+        "BAD_ARGS": "转换参数不正确：{step}"
+      }
+    },
+    "links": {
+      "title": "关系",
+      "hint": "可选：根据字段值创建到其他对象的关系。",
+      "add": "添加关系",
+      "none": "目标类型没有可创建的关系",
+      "type": "关系 {n} 类型",
+      "toKey": "关系 {n} 目标键字段",
+      "toKeyPlaceholder": "目标键字段",
+      "split": "关系 {n} 分隔符",
+      "splitPlaceholder": "分隔符",
+      "weight": "关系 {n} 权重字段",
+      "noWeight": "无权重",
+      "remove": "删除关系 {n}"
+    },
+    "ai": {
+      "generate": "AI 生成映射草稿",
+      "suggests": "建议映射到",
+      "suggestsPk": "建议主键字段",
+      "confidence": "置信度 {value}",
+      "accept": "确认",
+      "dismiss": "忽略",
+      "acceptRow": "确认 {field} 的 AI 建议",
+      "dismissRow": "忽略 {field} 的 AI 建议",
+      "acceptAll": "全部接受",
+      "confirmed": "已确认",
+      "pendingNotice": "{count, plural, other {# 条 AI 建议}}待确认，确认前不会生效。",
+      "done": "AI 已给出 {count, plural, other {# 条}}映射建议",
+      "failed": "生成映射草稿失败",
+      "noSource": "请先保存数据源",
+      "noSample": "需要样例数据才能生成草稿",
+      "noQuota": "今日 AI 次数已用完"
+    },
+    "preview": {
+      "title": "映射预览",
+      "subtitle": "首行样例按已确认映射转换（{count, plural, other {# 个字段}}）",
+      "noSample": "暂无样例数据可预览"
+    },
+    "issues": {
+      "title": "映射检查",
+      "pkMissing": "请选择主键来源字段",
+      "schema": "映射不合法：{detail}",
+      "chain": "字段 {field} 的转换链不合法：{detail}",
+      "duplicate": "属性 {prop} 被多个字段映射（{a}、{b}）",
+      "requiredMissing": "必填属性尚未映射：{props}",
+      "linkIncomplete": "关系需选择类型与目标键字段",
+      "aiPending": "还有 {count, plural, other {# 条}} AI 建议未确认，未确认的建议不会生效"
+    }
+  },
+  "quality": {
+    "title": "质量规则",
+    "subtitle": "按属性配置记录级校验；失败时拒绝、截断到范围或仅告警。",
+    "add": "添加规则",
+    "fromSchema": "按必填属性生成",
+    "empty": "尚未配置质量规则",
+    "emptyHint": "可跳过此步；Schema 的类型与必填校验始终生效。",
+    "cols": {
+      "prop": "属性",
+      "kind": "规则",
+      "arg": "参数",
+      "onFail": "失败处理"
+    },
+    "kinds": {
+      "required": "必填",
+      "range": "数值范围",
+      "format": "格式（正则）",
+      "ref": "引用",
+      "freshness": "时效"
+    },
+    "onFail": {
+      "reject": "拒绝记录",
+      "clamp": "截断到范围",
+      "defer": "告警后接受"
+    },
+    "chooseProp": "选择属性",
+    "propLabel": "规则 {n} 属性",
+    "kindLabel": "规则 {n} 类型",
+    "onFailLabel": "规则 {n} 失败处理",
+    "remove": "删除规则 {n}",
+    "min": "规则 {n} 最小值",
+    "max": "规则 {n} 最大值",
+    "minPh": "最小值",
+    "maxPh": "最大值",
+    "pattern": "规则 {n} 正则表达式",
+    "hours": "规则 {n} 最大时效（小时）",
+    "hoursUnit": "小时内",
+    "refType": "规则 {n} 引用类型",
+    "anyType": "任意类型",
+    "noArg": "无需参数",
+    "footnote": "规则按顺序执行：第一条「拒绝」失败即拒绝该记录；「截断到范围」仅适用于数值范围规则。",
+    "issues": {
+      "prop": "请选择属性",
+      "schema": "规则不合法",
+      "CLAMP_NOT_RANGE": "「截断到范围」仅适用于数值范围规则",
+      "RANGE_ARG": "请填写最小值与最大值，且最小值不大于最大值",
+      "FORMAT_ARG": "请填写有效的正则表达式",
+      "FRESHNESS_ARG": "时效需为大于 0 的小时数",
+      "REF_ARG": "引用类型不合法"
+    }
+  },
+  "preview": {
+    "rowsTitle": "转换后的前 5 行",
+    "rowsSubtitle": "按当前映射、转换链和质量规则在浏览器中预演",
+    "status": "结果",
+    "validBadge": "有效",
+    "clampedBadge": "已截断",
+    "statsTitle": "校验结果",
+    "statsSubtitle": "基于全部 {count, number} 行的前端预校验",
+    "stats": {
+      "total": "总行数",
+      "valid": "预计有效",
+      "rejected": "预计拒绝",
+      "clamped": "截断修正",
+      "warned": "{count, plural, other {# 行}}触发告警规则（仍会导入）"
+    },
+    "reasons": "拒绝原因",
+    "reasonCount": "{count, plural, other {# 行}} · 如第 {row} 行",
+    "allValid": "全部记录通过前端校验",
+    "planTitle": "上传计划",
+    "planSubtitle": "原始文件归档后，按批次并发提交",
+    "plan": {
+      "batches": "批次",
+      "batchesValue": "{count, plural, other {# 批}} × ≤ {size} 行",
+      "concurrency": "并发",
+      "concurrencyValue": "{count} 个并发",
+      "eta": "预计耗时",
+      "etaValue": "约 {seconds, number} 秒",
+      "retry": "失败重试",
+      "note": "被拒绝的记录会保留 30 天，可在作业页修正后重放。"
+    },
+    "progress": {
+      "archive": "原始文件归档",
+      "archiveSkipped": "未配置归档存储，已跳过",
+      "batches": "批次提交",
+      "batchesValue": "{done, number} / {total, number} 批",
+      "inFlight": "{count} 个进行中",
+      "retrying": "{count, plural, other {# 个批次}}等待重试"
+    },
+    "start": "开始导入",
+    "retryImport": "重新导入",
+    "cancel": "取消",
+    "started": "文件已提交，正在处理"
+  },
+  "summary": {
+    "title": "接入摘要",
+    "fields": "映射字段",
+    "links": "关系",
+    "rules": "质量规则",
+    "restNote": "启用后每 15 分钟自动拉取一次，可在数据源列表中停用。",
+    "finish": "完成并启用",
+    "created": "数据源已创建并启用"
+  },
+  "job": {
+    "title": "导入作业",
+    "source": "数据源：{name}",
+    "progress": "处理进度",
+    "polling": "每 2 秒自动刷新",
+    "finished": "作业已结束",
+    "quality": "质量分 {value}",
+    "groups": "{done, number} / {total, number} 个消息组",
+    "receivedSoFar": "已接收 {count, number} 条",
+    "started": "开始于 {time}",
+    "finishedAt": "结束于 {time}",
+    "duration": "耗时 {seconds, number} 秒",
+    "notFound": "作业不存在或已过期",
+    "back": "返回数据接入",
+    "counters": {
+      "received": "接收",
+      "upserted": "写入",
+      "merged": "合并",
+      "skipped": "跳过",
+      "rejected": "拒绝"
+    },
+    "rejected": {
+      "title": "拒绝记录",
+      "subtitle": "直接修改字段值后重放；拒绝记录保留 30 天。",
+      "empty": "没有被拒绝的记录",
+      "row": "行号",
+      "error": "错误",
+      "cell": "第 {row} 行 {field}",
+      "selectAll": "全选",
+      "selectRow": "选择第 {row} 行",
+      "selection": "已选 {selected} 行 · 已修改 {edited} 行",
+      "fixReplay": "修正并重放",
+      "replayAll": "全部重放",
+      "replayed": "已重新入队 {count, plural, other {# 条记录}}",
+      "replayFailed": "重放失败"
+    }
+  }
+}
