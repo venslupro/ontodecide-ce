@@ -66,7 +66,7 @@ packages/<context>/     contract/ domain/ application/ infrastructure/ interface
 packages/testing/       D1 over node:sqlite, DO SQL storage, KV, queues with DLQ, RPC binding fakes
 migrations/<db>/        D1 migrations (one directory per database)
 infra/                  Terraform: D1, KV, Queues, B2, Pages project, Neo4j Aura
-scripts/                gen_wrangler.mjs, dev.sh, smoke.mjs, deploy.sh, bootstrap.sh
+scripts/                gen_wrangler.mjs, dev.sh, smoke.mjs, bootstrap.sh
 samples/supply-chain/   demo CSVs for the built-in pack
 tests/e2e/              in-process full-loop test through the gateway
 ```
@@ -105,14 +105,19 @@ There is a single environment, **production** (GitHub environment `production`);
 | Secrets | GitHub Secrets | `wrangler secret bulk` |
 | Vectorize index | `scripts/bootstrap.sh` | wrangler (idempotent) |
 
-The workflows:
+The workflows run as one chain on `main`, each started by the previous one finishing, so services never deploy before the infrastructure for the same commit is applied:
 
-* **`ci.yml`** runs typecheck, lint (gts + dependency-cruiser), tests, the web build with the 250 KB bundle budget, Worker dry-run bundles, and Terraform validate.
-* **`terraform.yml`** plans on PRs (read-only), applies **only on `main`**, and runs a nightly drift check.
-* **`deploy.yml`** runs **only on `main`**, after CI passes for a push (or manually). It renders the configs, applies migrations, deploys the Workers leaf → root, then deploys Pages:
+```
+push to main → CI → Terraform → Deploy
+```
+
+* **`ci.yml`** runs typecheck, lint (gts + dependency-cruiser), tests, the web build with the 250 KB bundle budget, and Worker dry-run bundles.
+* **`terraform.yml`** runs Format → Validate → Lint → Plan → Apply. On PRs it runs only for `infra/` changes and stops at Plan; on `main` it runs after every green CI run. Apply runs **only on `main`**, only when the plan has changes, and only after a reviewer approves the `production` environment. A nightly run checks for drift.
+* **`deploy.yml`** runs **only on `main`**, after Terraform succeeds (or manually). After one approval on the `production` environment, each service deploys (migrations → deploy → secrets) in its own job, and a job waits for the services it binds to:
 
   ```
-  ontology-manager → data-integration → object-graph → situation-awareness → decision-engine → identity-access → api-gateway → Pages
+  ontology-manager ──► data-integration ──► object-graph ──► situation-awareness ──► decision-engine ──► api-gateway ──► Pages
+  identity-access  ─────────────────────────────────────────────────────────────────────────────────────┘
   ```
 
 **Secrets:** `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `B2_MASTER_KEY_ID/KEY`, `B2_STATE_KEY_ID/KEY`, `NEO4J_AURA_CLIENT_ID/SECRET`, `JWT_SECRET` (`kid:secret[,kid:secret]`), `APPROVAL_SECRET`, `WRITEBACK_SECRET`, `CONNECTOR_ENC_KEY`, `BOOTSTRAP_ADMIN_PASSWORD`, and optionally `GEMINI_API_KEY` / `GROQ_API_KEY`.

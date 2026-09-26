@@ -1,17 +1,29 @@
-# Terraform (production only).
-#   pull_request        → plan (read-only, shown in the job summary)
-#   schedule (nightly)  → drift check (`plan -detailed-exitcode`)
-#   push to main        → plan + apply (environment: production)
-#   workflow_dispatch   → plan + apply, only when run on main
-# Resources are never created from any branch other than main.
+# Terraform (production only). Stages, one job each:
+#
+#   Format → Validate → Lint → Plan → Apply
+#
+# On main it is the middle link of the release chain
+#
+#   push to main → CI → Terraform → Deploy
+#
+# so it runs for every green CI run on main (not only infra changes) and
+# Deploy always follows it for the same commit.
+#
+#   pull_request (infra/**) → Format · Validate · Lint · Plan
+#   CI green on main /      → all stages; Apply runs only when Plan found
+#   workflow_dispatch         changes and waits for a reviewer on `production`
+#   schedule (nightly)      → up to Plan, as a drift check
+#
+# Resources are never changed from any branch other than main.
 name: Terraform
 
 on:
   pull_request:
     paths: ['infra/**', '.github/workflows/terraform.yml']
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths: ['infra/**', '.github/workflows/terraform.yml']
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -25,6 +37,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
   TF_VAR_account_id: ${{ secrets.CF_ACCOUNT_ID }}
   CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
   AWS_ACCESS_KEY_ID: ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
@@ -34,51 +49,108 @@ env:
   AURA_CLIENT_ID: ${{ secrets.NEO4J_AURA_CLIENT_ID }}
   AURA_CLIENT_SECRET: ${{ secrets.NEO4J_AURA_CLIENT_SECRET }}
 
+defaults:
+  run:
+    working-directory: infra
+
 jobs:
-  plan:
-    name: Plan
-    if: github.event_name == 'pull_request' || github.event_name == 'schedule'
+  fmt:
+    name: Format
+    # From CI only when it was a green push to main; later stages are
+    # skipped with it.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: infra
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.10.5
-      - run: terraform init -input=false
+      - run: terraform fmt -check -recursive -diff
+
+  validate:
+    name: Validate
+    needs: fmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.10.5
+      - run: terraform init -backend=false
+      - run: terraform validate
+
+  lint:
+    name: Lint
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4.1.1
+        with:
+          tflint_version: v0.64.0
+      - run: tflint --format compact
+
+  plan:
+    name: Plan
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      has-changes: ${{ steps.plan.outputs.exitcode == '2' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+      - run: terraform init
       - name: Plan
         id: plan
         run: |
           set +e
-          terraform plan -input=false -no-color -detailed-exitcode -lock=false > plan.txt
+          terraform plan -no-color -lock=false -detailed-exitcode > plan.txt
           code=$?
-          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          set -e
+          echo "exitcode=${code}" >> "$GITHUB_OUTPUT"
           { echo '### terraform plan'; echo '```'; tail -n 80 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          [[ $code -eq 1 ]] && exit 1 || exit 0
+          [[ ${code} -ne 1 ]]
       - name: Drift detected
         if: github.event_name == 'schedule' && steps.plan.outputs.exitcode == '2'
         run: echo "::error::Infrastructure drift detected" && exit 1
 
   apply:
-    name: Apply (main → production)
+    name: Apply (production)
+    needs: plan
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch') &&
+      needs.plan.outputs.has-changes == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Waits for a required reviewer to approve the plan above.
     environment: production
-    defaults:
-      run:
-        working-directory: infra
     steps:
-      - uses: actions/checkout@v5
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.10.5
-      - run: terraform init -input=false
-      - name: Plan
-        run: |
-          terraform plan -input=false -no-color -out=tfplan > plan.txt
-          { echo '### terraform plan'; echo '```'; tail -n 80 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - run: terraform apply -input=false -auto-approve tfplan
+          terraform_wrapper: false
+      - run: terraform init
+      - run: terraform plan -no-color -out=tfplan
+      - run: terraform apply -auto-approve tfplan

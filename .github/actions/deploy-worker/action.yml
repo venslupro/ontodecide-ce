@@ -1,0 +1,105 @@
+# Deploys one production Worker: install → render wrangler.jsonc from
+# Terraform outputs → D1 migrations → deploy → secrets.
+# The caller's job env provides the Cloudflare, Terraform-state and secret
+# values (see deploy.yml).
+name: Deploy Worker
+description: Deploy one production Worker.
+
+inputs:
+  worker:
+    description: Worker directory under apps/.
+    required: true
+  admin-email:
+    description: BOOTSTRAP_ADMIN_EMAIL for identity-access.
+    required: true
+  secrets:
+    description: Space-separated env var names to upload as Worker secrets.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # Fail fast: independent services deploy in parallel, but once any job
+    # of this run has failed no further service starts. Jobs already running
+    # finish, so no migration or deploy is interrupted halfway.
+    - name: Stop if another service failed
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        failed="$(gh api --paginate \
+          "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs" \
+          --jq '.jobs[] | select(.conclusion == "failure") | .name')"
+        if [[ -n "${failed}" ]]; then
+          echo "::error::Not deploying: failed earlier in this run: ${failed//$'\n'/, }"
+          exit 1
+        fi
+    - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      with:
+        node-version: 22
+        package-manager-cache: false
+    - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+      with:
+        terraform_version: 1.10.5
+        terraform_wrapper: false
+    - name: Install dependencies
+      shell: bash
+      run: |
+        corepack enable && corepack prepare pnpm@9.12.0 --activate
+        pnpm install --frozen-lockfile
+    - name: Render Wrangler configs
+      shell: bash
+      env:
+        BOOTSTRAP_ADMIN_EMAIL: ${{ inputs.admin-email }}
+      run: |
+        terraform -chdir=infra init -input=false > /dev/null
+        terraform -chdir=infra output -json > tf-output.json
+        # Sensitive outputs → masked env for the secret upload.
+        node -e '
+          const fs = require("fs");
+          const o = require("./tf-output.json");
+          const put = (k, v) => {
+            if (!v) return;
+            console.log(`::add-mask::${v}`);
+            fs.appendFileSync(process.env.GITHUB_ENV, `${k}<<__EOF__\n${v}\n__EOF__\n`);
+          };
+          put("B2_KEY_ID", o.b2_integration_key?.value?.key_id);
+          put("B2_APP_KEY", o.b2_integration_key?.value?.key);
+          put("NEO4J_URL", o.neo4j?.value?.url);
+          put("NEO4J_USER", o.neo4j?.value?.username);
+          put("NEO4J_PASSWORD", o.neo4j_password?.value);
+        '
+        node scripts/gen_wrangler.mjs --env prod --tf-output tf-output.json
+        rm tf-output.json
+    - name: Migrate D1
+      shell: bash
+      env:
+        CONFIG: apps/${{ inputs.worker }}/wrangler.jsonc
+      run: |
+        db="$(node -e '
+          const c = require("fs").readFileSync(process.argv[1], "utf8");
+          const j = JSON.parse(c.replace(/^\s*\/\/.*$/gm, ""));
+          console.log(j.d1_databases?.[0]?.database_name ?? "");
+        ' "${CONFIG}")"
+        if [[ -z "${db}" ]]; then
+          echo 'No D1 database.'
+        else
+          CI=true npx wrangler d1 migrations apply "${db}" --remote -c "${CONFIG}"
+        fi
+    - name: Deploy
+      shell: bash
+      run: npx wrangler deploy -c "apps/${{ inputs.worker }}/wrangler.jsonc"
+    - name: Upload secrets
+      if: inputs.secrets != ''
+      shell: bash
+      env:
+        CONFIG: apps/${{ inputs.worker }}/wrangler.jsonc
+        NAMES: ${{ inputs.secrets }}
+      run: |
+        # shellcheck disable=SC2086  # NAMES is a word list.
+        node -e '
+          const out = {};
+          for (const k of process.argv.slice(1)) if (process.env[k]) out[k] = process.env[k];
+          process.stdout.write(JSON.stringify(out));
+        ' ${NAMES} | npx wrangler secret bulk -c "${CONFIG}"
