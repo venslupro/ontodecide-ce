@@ -1,29 +1,34 @@
-# Deploy: main → prod, staging → staging. Renders Wrangler configs from
-# Terraform outputs, applies D1 migrations, deploys the 7 Workers leaf → root
-# with their secrets, then publishes the Pages project (Direct Upload).
+# Deploy (production only). Runs after a successful CI run for a push to
+# main, or manually on main. Renders Wrangler configs from Terraform outputs,
+# applies D1 migrations, deploys the 7 Workers leaf → root with their
+# secrets, then publishes the Pages project (Direct Upload).
 name: Deploy
 
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
-    branches: [main, staging]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: deploy-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  group: deploy-production
   cancel-in-progress: false
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
-    environment: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'staging' && 'staging' || 'production' }}
+    environment: production
     env:
-      ENV: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'staging' && 'staging' || 'prod' }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       AWS_ACCESS_KEY_ID: ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
@@ -55,7 +60,7 @@ jobs:
       - name: Read Terraform outputs
         working-directory: infra
         run: |
-          terraform init -input=false -backend-config="key=${ENV}/terraform.tfstate" > /dev/null
+          terraform init -input=false > /dev/null
           terraform output -json > ../tf-output.json
           # Sensitive outputs → masked env for secret upload.
           node -e '
@@ -67,8 +72,8 @@ jobs:
             put("NEO4J_USER", o.neo4j?.value?.username);
             put("NEO4J_PASSWORD", o.neo4j_password?.value);
           '
-      - run: node scripts/gen_wrangler.mjs --env "$ENV" --tf-output tf-output.json
+      - run: node scripts/gen_wrangler.mjs --env prod --tf-output tf-output.json
       - run: rm tf-output.json
-      - run: ENV="$ENV" bash scripts/bootstrap.sh
+      - run: bash scripts/bootstrap.sh
       - run: pnpm build:web
       - run: bash scripts/deploy.sh

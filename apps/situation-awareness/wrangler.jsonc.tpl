@@ -1,7 +1,7 @@
 // situation-awareness: KPIs, automations and alerts, SituationRoom, UsageGuard.
 // Also consumes every *-dlq queue and can replay dead letters.
 {
-  "name": "situation-awareness${ENV_SUFFIX}",
+  "name": "situation-awareness",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -18,24 +18,24 @@
   ]},
   "migrations": [{"tag": "v1", "new_sqlite_classes": ["SituationRoom", "UsageGuard"]}],
   "services": [
-    {"binding": "OBJECTS", "service": "object-graph${ENV_SUFFIX}", "entrypoint": "ObjectGraphRpc"}
+    {"binding": "OBJECTS", "service": "object-graph", "entrypoint": "ObjectGraphRpc"}
   ],
   "queues": {
     "producers": [
-      {"binding": "DECISION_JOBS_QUEUE", "queue": "decision-jobs${ENV_SUFFIX}"},
-      {"binding": "INGEST_QUEUE", "queue": "ingest${ENV_SUFFIX}"},
-      {"binding": "OBJECT_WRITES_QUEUE", "queue": "object-writes${ENV_SUFFIX}"},
-      {"binding": "GRAPH_SYNC_QUEUE", "queue": "graph-sync${ENV_SUFFIX}"},
-      {"binding": "SITUATION_EVENTS_QUEUE", "queue": "situation-events${ENV_SUFFIX}"}
+      {"binding": "DECISION_JOBS_QUEUE", "queue": "decision-jobs"},
+      {"binding": "INGEST_QUEUE", "queue": "ingest"},
+      {"binding": "OBJECT_WRITES_QUEUE", "queue": "object-writes"},
+      {"binding": "GRAPH_SYNC_QUEUE", "queue": "graph-sync"},
+      {"binding": "SITUATION_EVENTS_QUEUE", "queue": "situation-events"}
     ],
     "consumers": [
-      {"queue": "situation-events${ENV_SUFFIX}", "max_batch_size": 10, "max_retries": 3,
-       "dead_letter_queue": "situation-events-dlq${ENV_SUFFIX}"},
-      {"queue": "ingest-dlq${ENV_SUFFIX}", "max_batch_size": 10, "max_retries": 1},
-      {"queue": "object-writes-dlq${ENV_SUFFIX}", "max_batch_size": 10, "max_retries": 1},
-      {"queue": "graph-sync-dlq${ENV_SUFFIX}", "max_batch_size": 10, "max_retries": 1},
-      {"queue": "situation-events-dlq${ENV_SUFFIX}", "max_batch_size": 10, "max_retries": 1},
-      {"queue": "decision-jobs-dlq${ENV_SUFFIX}", "max_batch_size": 10, "max_retries": 1}
+      {"queue": "situation-events", "max_batch_size": 10, "max_retries": 3,
+       "dead_letter_queue": "situation-events-dlq"},
+      {"queue": "ingest-dlq", "max_batch_size": 10, "max_retries": 1},
+      {"queue": "object-writes-dlq", "max_batch_size": 10, "max_retries": 1},
+      {"queue": "graph-sync-dlq", "max_batch_size": 10, "max_retries": 1},
+      {"queue": "situation-events-dlq", "max_batch_size": 10, "max_retries": 1},
+      {"queue": "decision-jobs-dlq", "max_batch_size": 10, "max_retries": 1}
     ]
   },
   "triggers": {"crons": ["0 * * * *"]},

@@ -20,7 +20,7 @@ export const DEAD_LETTER_PAGE = 200;
 
 const QUEUE_NAMES = new Set<string>(Object.values(QUEUES));
 
-/** Normalizes `ingest`, `ingest-dlq`, `ingest-dlq-staging` → `ingest`. */
+/** Normalizes `ingest` and `ingest-dlq` → `ingest`. */
 export function logicalQueue(queue: string): QueueName {
   const {name} = baseQueueName(queue);
   if (!QUEUE_NAMES.has(name)) {

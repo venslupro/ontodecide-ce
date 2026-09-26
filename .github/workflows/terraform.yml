@@ -1,21 +1,20 @@
-# Terraform: plan on PRs (reviewed in the job summary), apply on main /
-# staging, and a nightly drift check (`plan -detailed-exitcode`).
+# Terraform (production only).
+#   pull_request        → plan (read-only, shown in the job summary)
+#   schedule (nightly)  → drift check (`plan -detailed-exitcode`)
+#   push to main        → plan + apply (environment: production)
+#   workflow_dispatch   → plan + apply, only when run on main
+# Resources are never created from any branch other than main.
 name: Terraform
 
 on:
   pull_request:
     paths: ['infra/**', '.github/workflows/terraform.yml']
   push:
-    branches: [main, staging]
+    branches: [main]
     paths: ['infra/**', '.github/workflows/terraform.yml']
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
-    inputs:
-      env:
-        type: choice
-        options: [prod, staging]
-        default: prod
 
 permissions:
   contents: read
@@ -25,36 +24,35 @@ concurrency:
   group: terraform
   cancel-in-progress: false
 
+env:
+  TF_VAR_account_id: ${{ secrets.CF_ACCOUNT_ID }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
+  B2_APPLICATION_KEY_ID: ${{ secrets.B2_MASTER_KEY_ID }}
+  B2_APPLICATION_KEY: ${{ secrets.B2_MASTER_KEY }}
+  AURA_CLIENT_ID: ${{ secrets.NEO4J_AURA_CLIENT_ID }}
+  AURA_CLIENT_SECRET: ${{ secrets.NEO4J_AURA_CLIENT_SECRET }}
+
 jobs:
-  terraform:
+  plan:
+    name: Plan
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    environment: ${{ (github.ref == 'refs/heads/staging' || inputs.env == 'staging') && 'staging' || 'production' }}
     defaults:
       run:
         working-directory: infra
-    env:
-      TF_ENV: ${{ (github.ref == 'refs/heads/staging' || inputs.env == 'staging') && 'staging' || 'prod' }}
-      TF_VAR_account_id: ${{ secrets.CF_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
-      B2_APPLICATION_KEY_ID: ${{ secrets.B2_MASTER_KEY_ID }}
-      B2_APPLICATION_KEY: ${{ secrets.B2_MASTER_KEY }}
-      AURA_CLIENT_ID: ${{ secrets.NEO4J_AURA_CLIENT_ID }}
-      AURA_CLIENT_SECRET: ${{ secrets.NEO4J_AURA_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v5
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.10.5
-      - run: terraform init -input=false -backend-config="key=${TF_ENV}/terraform.tfstate"
+      - run: terraform init -input=false
       - name: Plan
         id: plan
         run: |
           set +e
-          VARFILE=""
-          [[ "$TF_ENV" == "staging" ]] && VARFILE="-var-file=staging.tfvars"
-          terraform plan -input=false -no-color -detailed-exitcode $VARFILE -out=tfplan > plan.txt
+          terraform plan -input=false -no-color -detailed-exitcode -lock=false > plan.txt
           code=$?
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           { echo '### terraform plan'; echo '```'; tail -n 80 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -62,6 +60,25 @@ jobs:
       - name: Drift detected
         if: github.event_name == 'schedule' && steps.plan.outputs.exitcode == '2'
         run: echo "::error::Infrastructure drift detected" && exit 1
-      - name: Apply
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        run: terraform apply -input=false -auto-approve tfplan
+
+  apply:
+    name: Apply (main → production)
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+      - run: terraform init -input=false
+      - name: Plan
+        run: |
+          terraform plan -input=false -no-color -out=tfplan > plan.txt
+          { echo '### terraform plan'; echo '```'; tail -n 80 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - run: terraform apply -input=false -auto-approve tfplan

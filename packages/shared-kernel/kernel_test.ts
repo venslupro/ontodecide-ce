@@ -73,7 +73,7 @@ describe('misc helpers', () => {
   });
 
   it('normalizes queue names and backs off exponentially', () => {
-    expect(baseQueueName('object-writes-dlq-staging')).toEqual({
+    expect(baseQueueName('object-writes-dlq')).toEqual({
       name: 'object-writes',
       dlq: true,
     });

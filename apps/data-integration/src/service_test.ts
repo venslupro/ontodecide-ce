@@ -142,7 +142,7 @@ describe('createService', () => {
       env(bus, {
         B2_KEY_ID: 'kid',
         B2_APP_KEY: 'secret',
-        B2_BUCKET: 'ontodecide-ce-raw-staging',
+        B2_BUCKET: 'ontodecide-ce-raw-prod',
         B2_ENDPOINT: 's3.us-west-004.backblazeb2.com',
         B2_REGION: 'us-west-004',
       }),
@@ -162,7 +162,7 @@ describe('createService', () => {
     const res = await svc.rpc.presignUpload(ctx, src.id, 'products.csv', 100);
     const url = new URL(res.url);
     expect(url.origin).toBe('https://s3.us-west-004.backblazeb2.com');
-    expect(url.pathname).toBe(`/ontodecide-ce-raw-staging/${res.key}`);
+    expect(url.pathname).toBe(`/ontodecide-ce-raw-prod/${res.key}`);
     expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
     expect(url.searchParams.get('X-Amz-Date')).toBe('20260924T000000Z');
     expect(url.searchParams.get('X-Amz-Credential')).toBe(

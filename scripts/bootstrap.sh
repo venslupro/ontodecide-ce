@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-time, idempotent setup for resources Terraform has no provider for.
-#   ENV=prod|staging scripts/bootstrap.sh
+#   scripts/bootstrap.sh
 # Requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
 #
 # The Terraform state bucket (ontodecide-ce-tfstate, private, SSE-B2,
@@ -9,10 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-ENV="${ENV:-prod}"
-SUFFIX=""
-[[ "$ENV" == "prod" ]] || SUFFIX="-$ENV"
-INDEX="decision-cases-bge-m3${SUFFIX}"
+INDEX="decision-cases-bge-m3"
 
 if npx wrangler vectorize get "$INDEX" >/dev/null 2>&1; then
   echo "vectorize index $INDEX exists"

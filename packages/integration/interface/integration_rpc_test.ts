@@ -51,8 +51,8 @@ import {createCronDispatcher, INTEGRATION_CRON} from './cron_dispatcher';
 import {createIntegrationRpc} from './integration_rpc';
 import {createQueueDispatcher} from './queue_dispatcher';
 
-const INGEST = 'ingest-staging';
-const WRITES = 'object-writes-staging';
+const INGEST = 'ingest';
+const WRITES = 'object-writes';
 
 interface Harness {
   db: D1Database;

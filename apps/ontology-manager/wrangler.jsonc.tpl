@@ -1,6 +1,6 @@
 // ontology-manager: schema drafts, publishing, compilation, packs.
 {
-  "name": "ontology-manager${ENV_SUFFIX}",
+  "name": "ontology-manager",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],

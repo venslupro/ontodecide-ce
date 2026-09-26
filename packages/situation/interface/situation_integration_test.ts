@@ -587,10 +587,10 @@ describe('situation context', () => {
     const handler = createQueueHandler(deps);
     const body = {ctx: testCtx(), sourceId: 's1', jobId: 'j1', seq: 1};
     await bus.sender('ingest-dlq').send(body);
-    await bus.sender('graph-sync-dlq-staging').send({tenantId: 't2'});
+    await bus.sender('graph-sync-dlq').send({tenantId: 't2'});
     await bus.drain({
       'ingest-dlq': {handler},
-      'graph-sync-dlq-staging': {handler},
+      'graph-sync-dlq': {handler},
     });
     const letters = await rpc.listDeadLetters(ctx);
     expect(letters).toHaveLength(1);

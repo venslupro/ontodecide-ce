@@ -41,12 +41,12 @@ export const QUEUES = {
 /** Logical queue name. */
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
-/** Strips `-staging` style environment suffixes and `-dlq`. */
+/** Splits a queue name into its base name and whether it is a DLQ. */
 export function baseQueueName(name: string): {name: string; dlq: boolean} {
-  let n = name.replace(/-(staging|dev|local)$/, '');
+  let n = name;
   const dlq = n.endsWith('-dlq');
   if (dlq) n = n.slice(0, -4);
-  return {name: n.replace(/-(staging|dev|local)$/, ''), dlq};
+  return {name: n, dlq};
 }
 
 /** Retry delay for attempt n (1-based): 2^n seconds, capped at 60. */

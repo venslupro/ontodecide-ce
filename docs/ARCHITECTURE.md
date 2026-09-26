@@ -33,7 +33,9 @@ ontology-manager → data-integration → object-graph → situation-awareness
 | decision-engine | OBJECTS, SITUATION, ONTOLOGY |
 | api-gateway | all six |
 
-Queues (`ENV_SUFFIX` is empty in prod, `-staging` in staging):
+There is one deployed environment, production, applied and deployed only from `main`.
+
+Queues:
 
 | Queue | Producer | Consumer | batch / retries |
 | --- | --- | --- | --- |
@@ -77,7 +79,7 @@ packages/<context>/
   interface/             RPC handler object implementing the contract; queue and cron dispatch
 packages/shared-kernel/  CallCtx, Rid, DomainEvent, AppError/Problem, FilterExpr, JSONLogic, crypto, JWT, …
 packages/testing/        Node fakes: D1 over node:sqlite, DO SqlStorage, KV, QueueBus (retries + DLQ), rpcBinding
-migrations/<db>/         D1 migrations; file names are unique across dbs because staging shares one database
+migrations/<db>/         D1 migrations, one directory per database (file names are globally unique)
 infra/                   Terraform (resources only)
 scripts/                 gen_wrangler.mjs, bootstrap.sh, dev.sh, smoke.mjs
 tests/e2e/               in-process full-loop test wiring all services through the gateway

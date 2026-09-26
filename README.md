@@ -94,13 +94,13 @@ Once logged in, a first walkthrough:
 
 ## Deployment
 
-Terraform manages resources and Wrangler manages code. Each kind of configuration has exactly one source of truth, and the Cloudflare dashboard is read-only.
+There is a single environment, **production** (GitHub environment `production`); resources are created and services deployed only from `main`. Terraform manages resources and Wrangler manages code. Each kind of configuration has exactly one source of truth, and the Cloudflare dashboard is read-only.
 
 | What | Source of truth | Tool |
 | --- | --- | --- |
 | D1, KV, Queues, B2 bucket + key, Pages project, Neo4j Aura | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
 | Worker bindings, vars, crons, DO migrations, queue consumers | `apps/*/wrangler.jsonc.tpl` | `scripts/gen_wrangler.mjs` renders ids from `terraform output -json` |
-| Pages bindings (`GATEWAY` → `api-gateway` / preview → `api-gateway-staging`) | `apps/web/wrangler.jsonc` | `wrangler pages deploy` |
+| Pages binding (`GATEWAY` → `api-gateway`) | `apps/web/wrangler.jsonc` | `wrangler pages deploy` |
 | D1 schema | `migrations/<db>/*.sql` | `wrangler d1 migrations apply` |
 | Secrets | GitHub Secrets | `wrangler secret bulk` |
 | Vectorize index | `scripts/bootstrap.sh` | wrangler (idempotent) |
@@ -108,8 +108,8 @@ Terraform manages resources and Wrangler manages code. Each kind of configuratio
 The workflows:
 
 * **`ci.yml`** runs typecheck, lint (gts + dependency-cruiser), tests, the web build with the 250 KB bundle budget, Worker dry-run bundles, and Terraform validate.
-* **`terraform.yml`** plans on PRs, applies on `main` (prod) and `staging`, and runs a nightly drift check.
-* **`deploy.yml`** runs after green CI on `main` or `staging`. It renders the configs, applies migrations, deploys the Workers leaf → root, then deploys Pages:
+* **`terraform.yml`** plans on PRs (read-only), applies **only on `main`**, and runs a nightly drift check.
+* **`deploy.yml`** runs **only on `main`**, after CI passes for a push (or manually). It renders the configs, applies migrations, deploys the Workers leaf → root, then deploys Pages:
 
   ```
   ontology-manager → data-integration → object-graph → situation-awareness → decision-engine → identity-access → api-gateway → Pages

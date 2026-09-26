@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Deploys all Workers (leaf → root), applies D1 migrations and uploads
-# secrets, then publishes the Pages project. Used by .github/workflows/deploy.yml.
+# secrets, then publishes the Pages project. Used by .github/workflows/deploy.yml
+# (production only, from main).
 #
-#   ENV=prod|staging scripts/deploy.sh
+#   scripts/deploy.sh
 #
 # Expects: rendered apps/*/wrangler.jsonc (scripts/gen_wrangler.mjs), a built
 # apps/web/dist, CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID, and secret
@@ -12,7 +13,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-ENV="${ENV:-prod}"
 ORDER=(ontology-manager data-integration object-graph situation-awareness decision-engine identity-access api-gateway)
 
 # Writes the JSON object of the named secrets that are set to stdout.
@@ -53,7 +53,5 @@ for w in "${ORDER[@]}"; do
 done
 
 echo "::group::deploy pages"
-branch="main"
-[[ "$ENV" == "prod" ]] || branch="$ENV"
-(cd apps/web && npx wrangler pages deploy dist --project-name ontodecide-ce --branch "$branch")
+(cd apps/web && npx wrangler pages deploy dist --project-name ontodecide-ce --branch main)
 echo "::endgroup::"

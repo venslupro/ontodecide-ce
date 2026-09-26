@@ -8,7 +8,10 @@
  * into `vars` so `wrangler dev` needs no login.
  *
  * Usage:
- *   node scripts/gen_wrangler.mjs --env prod|staging|local [--tf-output out.json]
+ *   node scripts/gen_wrangler.mjs --env prod|local [--tf-output out.json]
+ *
+ * There is a single deployed environment (production, from main); `local`
+ * only renders configs for `wrangler dev` on a developer machine.
  */
 
 import {execFileSync} from 'node:child_process';
@@ -54,7 +57,7 @@ function parseArgs(argv) {
     if (argv[i] === '--env') args.env = argv[++i];
     else if (argv[i] === '--tf-output') args.tfOutput = argv[++i];
   }
-  if (!['prod', 'staging', 'local'].includes(args.env)) {
+  if (!['prod', 'local'].includes(args.env)) {
     throw new Error(`Unknown env: ${args.env}`);
   }
   return args;
@@ -83,7 +86,6 @@ function readTfOutputs(file) {
 /** Builds the substitution map for an environment. */
 export function buildVars(env, tf) {
   const vars = {
-    ENV_SUFFIX: env === 'staging' ? '-staging' : '',
     ENVIRONMENT: env,
     APP_VERSION: process.env.APP_VERSION ?? gitVersion(),
     COOKIE_SECURE: env === 'local' ? 'false' : 'true',
@@ -96,7 +98,7 @@ export function buildVars(env, tf) {
       vars[`D1_${key}_NAME`] = `${service}-db`;
       vars[`D1_${key}_ID`] = `local-${service}-db`;
     } else {
-      const name = env === 'prod' ? `${service}-db` : 'staging-shared-db';
+      const name = `${service}-db`;
       const db = tf.d1?.[name];
       if (!db) throw new Error(`Terraform output d1["${name}"] is missing`);
       vars[`D1_${key}_NAME`] = db.name;

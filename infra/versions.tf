@@ -20,12 +20,12 @@ terraform {
   }
 
   # State lives in the private B2 bucket ontodecide-ce-tfstate (S3 API,
-  # SSE-B2, versioning). The key is per environment and passed at init:
-  #   terraform init -backend-config="key=prod/terraform.tfstate"
+  # SSE-B2, versioning). There is a single environment (production).
   # No secrets are ever written to state except the bucket-scoped B2 worker
   # key and the Neo4j password, which are marked sensitive.
   backend "s3" {
     bucket = "ontodecide-ce-tfstate"
+    key    = "terraform.tfstate"
     region = "us-east-005"
 
     endpoints = {

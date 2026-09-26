@@ -4,17 +4,6 @@ variable "account_id" {
   sensitive   = true
 }
 
-variable "env" {
-  description = "Environment: prod or staging."
-  type        = string
-  default     = "prod"
-
-  validation {
-    condition     = contains(["prod", "staging"], var.env)
-    error_message = "env must be prod or staging."
-  }
-}
-
 variable "b2_region" {
   description = "Backblaze B2 region of the S3 endpoint."
   type        = string
@@ -22,7 +11,7 @@ variable "b2_region" {
 }
 
 variable "enable_neo4j" {
-  description = "Create the Neo4j AuraDB Free instance (prod only)."
+  description = "Create the Neo4j AuraDB Free instance."
   type        = bool
   default     = true
 }

@@ -1,6 +1,6 @@
 // object-graph: authoritative objects and links, actions, lineage, Neo4j projection.
 {
-  "name": "object-graph${ENV_SUFFIX}",
+  "name": "object-graph",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -12,19 +12,19 @@
     "migrations_dir": "../../migrations/object"
   }],
   "services": [
-    {"binding": "ONTOLOGY", "service": "ontology-manager${ENV_SUFFIX}", "entrypoint": "OntologyRpc"},
-    {"binding": "INTEGRATION", "service": "data-integration${ENV_SUFFIX}", "entrypoint": "IntegrationRpc"}
+    {"binding": "ONTOLOGY", "service": "ontology-manager", "entrypoint": "OntologyRpc"},
+    {"binding": "INTEGRATION", "service": "data-integration", "entrypoint": "IntegrationRpc"}
   ],
   "queues": {
     "producers": [
-      {"binding": "GRAPH_SYNC_QUEUE", "queue": "graph-sync${ENV_SUFFIX}"},
-      {"binding": "SITUATION_EVENTS_QUEUE", "queue": "situation-events${ENV_SUFFIX}"}
+      {"binding": "GRAPH_SYNC_QUEUE", "queue": "graph-sync"},
+      {"binding": "SITUATION_EVENTS_QUEUE", "queue": "situation-events"}
     ],
     "consumers": [
-      {"queue": "object-writes${ENV_SUFFIX}", "max_batch_size": 4, "max_retries": 3,
-       "dead_letter_queue": "object-writes-dlq${ENV_SUFFIX}"},
-      {"queue": "graph-sync${ENV_SUFFIX}", "max_batch_size": 10, "max_retries": 5,
-       "dead_letter_queue": "graph-sync-dlq${ENV_SUFFIX}"}
+      {"queue": "object-writes", "max_batch_size": 4, "max_retries": 3,
+       "dead_letter_queue": "object-writes-dlq"},
+      {"queue": "graph-sync", "max_batch_size": 10, "max_retries": 5,
+       "dead_letter_queue": "graph-sync-dlq"}
     ]
   },
   "triggers": {"crons": ["*/15 * * * *"]},
