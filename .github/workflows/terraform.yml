@@ -2,24 +2,21 @@
 #
 #   Format → Validate → Lint → Plan → Apply
 #
-# Format, Validate, Lint and Plan run on every branch and on main. Apply
+# Format, Validate, Lint and Plan run for every pull request and on main. Apply
 # runs only on main (github.ref and a first-step check of GITHUB_REF), only
 # from a green push-CI on main (workflow_run) or a manual run on main, only
 # when Plan found changes, and only after a reviewer approves the
 # `production` environment. Nothing else ever applies.
 #
-# Triggers:
-#   push (every branch except main) → Format … Plan (plan -lock=false, never
-#                                     applies);
-#   pull_request                     → only for fork PRs (no secrets: stops
-#                                     after Lint). Same-repo PRs are covered
-#                                     by the push run of their branch, whose
-#                                     checks GitHub shows on the PR; skipping
-#                                     them avoids a second, identical run;
-#   workflow_run (CI on main)        → the release chain below;
-#   schedule                         → nightly drift check on main (Plan);
-#   workflow_dispatch                → on main: up to Apply; on any other
-#                                     ref: stops after Plan.
+# Triggers (one run per change, no duplicates):
+#   pull_request      → Format … Plan for every PR (plan -lock=false, never
+#                       applies). Fork PRs get no secrets and stop after
+#                       Lint. Branch pushes do not trigger Terraform, so a
+#                       branch with a PR shows only its pull-request run;
+#   workflow_dispatch → on main: up to Apply; on any other ref (e.g. a
+#                       branch without a PR): stops after Plan;
+#   workflow_run      → the release chain on main (CI on main succeeded);
+#   schedule          → nightly drift check on main (Plan).
 #
 # Concurrency: runs on main share one serialized group (the B2 backend has
 # no verified locking); every other ref has its own group in which a newer
@@ -34,8 +31,6 @@
 name: Terraform
 
 on:
-  push:
-    branches-ignore: [main]
   pull_request:
   workflow_run:
     workflows: [CI]
@@ -82,16 +77,13 @@ defaults:
 jobs:
   fmt:
     name: Format
-    # From CI only when it was a green push to main; pull requests only from
-    # forks (same-repo branches run on push). Later stages are skipped with
-    # it.
+    # From CI only when it was a green push to main. Later stages are
+    # skipped with it.
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push') ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name != github.repository) ||
-      github.event_name == 'push' ||
+      github.event_name == 'pull_request' ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -139,7 +131,9 @@ jobs:
     needs: lint
     # Fork PRs get no secrets, so they stop after the static checks. Plans
     # never take the state lock except on main (apply job).
-    if: github.event_name != 'pull_request'
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
