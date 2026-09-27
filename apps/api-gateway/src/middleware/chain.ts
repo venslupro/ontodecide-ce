@@ -3,7 +3,10 @@
  * composition of the gateway pipeline.
  */
 
-import type {RequestMeta} from '@ontodecide/identity/contract';
+import type {
+  AdminSessionStatus,
+  RequestMeta,
+} from '@ontodecide/identity/contract';
 import type {
   AccessClaims,
   CallCtx,
@@ -35,6 +38,8 @@ export interface GatewayState {
   scope?: Scope;
   params: Record<string, string>;
   claims?: AccessClaims;
+  /** Live state of an admin token's session (IDENTITY.adminSessionStatus). */
+  adminStatus?: AdminSessionStatus;
   ctx?: CallCtx;
   /** Act-as target tenant when an admin sent X-Act-As-Tenant. */
   actAs?: string;

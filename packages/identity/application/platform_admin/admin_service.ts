@@ -43,6 +43,10 @@ import {ADMIN_LINK_TTL_S} from '../config';
 import type {AccountService} from '../identity/account_service';
 import type {PasskeyService} from '../identity/passkey_service';
 import type {SessionService} from '../identity/session_service';
+import {
+  ARCHIVE_FAIL_PREFIX,
+  ARCHIVE_STUCK_AFTER_MS,
+} from '../tenancy/archive_saga_service';
 import type {TrialService} from '../tenancy/trial_service';
 import type {
   AccountRecord,
@@ -51,13 +55,16 @@ import type {
   ArchiveIndexRecord,
   ArchiveIndexRepository,
   LedgerRepository,
+  Lifecycles,
   LinkSigner,
   SettingsRepository,
+  SystemFlagRepository,
   UsageCounter,
   WorkspaceRepository,
 } from '../ports';
 import type {Secrets} from '../secrets';
 import type {AuditService} from './audit_service';
+import {signKeyFlag, signKeyRotationDue} from './ops_flags';
 
 /** usage_counter keys of the hourly analytics snapshot. */
 export const ANALYTICS_KEYS: Record<AnalyticsMetric, string> = {
@@ -83,9 +90,16 @@ export interface AdminDeps {
   queries: AdminQueryRepository;
   settings: SettingsRepository;
   usage: UsageCounter;
+  flags: SystemFlagRepository;
+  /** object-graph `tenantStats` for the users list (optional method). */
+  lifecycles: Pick<Lifecycles, 'objects'>;
   signer: LinkSigner;
   secrets: Secrets;
   clock: Clock;
+  /** Whether the Cloudflare analytics token and account id are set. */
+  analyticsConfigured: boolean;
+  /** B2_SIGN_KEY_ID (rotation check). */
+  signKeyId: string | null;
   purgeBacklogLimit: number;
   trialHours: number;
   archiveDays: number;
@@ -107,12 +121,37 @@ function toArchiveDto(r: ArchiveIndexRecord): ArchiveIndexDto {
   };
 }
 
+/** Stored instead of a user DTO (a replay re-reads the current data). */
+const USER_RESULT_MARKER = {user: 'reread'} as const;
+
 /** Platform administration. */
 export class AdminService {
   constructor(private readonly d: AdminDeps) {}
 
   private now(): number {
     return this.d.clock.now().getTime();
+  }
+
+  /**
+   * Objects / links per workspace from object-graph in one call (0/0 when
+   * the method is missing or fails — the list must still render).
+   */
+  private async statsOf(
+    tids: string[],
+  ): Promise<Record<string, {objects: number; links: number}>> {
+    const lc = this.d.lifecycles.objects;
+    if (tids.length === 0 || typeof lc?.tenantStats !== 'function') return {};
+    try {
+      return (await lc.tenantStats(tids)) ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  private async signKeyDue(now: number): Promise<boolean> {
+    if (!this.d.signKeyId) return false;
+    const f = await this.d.flags.get(await signKeyFlag(this.d.signKeyId));
+    return !!f && signKeyRotationDue(f.at, now);
   }
 
   private admin(ctx: CallCtx): Promise<AccountRecord> {
@@ -135,7 +174,7 @@ export class AdminService {
     const now = new Date(this.now());
     const day = utcDay(now);
     const s = await this.d.settings.get();
-    const [active, backlog, signups, closed, archives, recent] =
+    const [active, backlog, signups, closed, archives, recent, stuck, keyDue] =
       await Promise.all([
         this.d.workspaces.countTrials(['ACTIVE']),
         this.d.workspaces.countTrials(['EXPIRED', 'ARCHIVING']),
@@ -143,6 +182,11 @@ export class AdminService {
         this.d.usage.read(day, 'signup_closed'),
         this.d.archives.count(),
         this.d.queries.recentAudit(10),
+        this.d.flags.countPrefix(
+          ARCHIVE_FAIL_PREFIX,
+          now.getTime() - ARCHIVE_STUCK_AFTER_MS,
+        ),
+        this.signKeyDue(now.getTime()),
       ]);
     const analyticsAt = await this.d.usage.read(day, ANALYTICS_AT_KEY);
     const metrics = Object.keys(FREE_TIER_DAILY) as AnalyticsMetric[];
@@ -174,7 +218,13 @@ export class AdminService {
           limit: this.d.brevoDailyCap,
         },
       ],
-      analyticsAt: analyticsAt > 0 ? new Date(analyticsAt).toISOString() : null,
+      analyticsAt:
+        this.d.analyticsConfigured && analyticsAt > 0
+          ? new Date(analyticsAt).toISOString()
+          : null,
+      analyticsConfigured: this.d.analyticsConfigured,
+      stuckArchives: stuck,
+      signKeyRotationDue: keyDue,
       recentActions: recent.map(r => ({
         at: new Date(r.at).toISOString(),
         action: r.action,
@@ -186,7 +236,11 @@ export class AdminService {
 
   // —— Users ——
 
-  private async toRow(r: AdminListRow): Promise<AdminUserRow> {
+  private async toRow(
+    r: AdminListRow,
+    stats: Record<string, {objects: number; links: number}>,
+  ): Promise<AdminUserRow> {
+    const st = stats[r.tenantId];
     return {
       userId: r.userId,
       tenantId: r.tenantId,
@@ -196,6 +250,8 @@ export class AdminService {
       zipExpiresAt: iso(r.zipExpiresAt),
       sessions: r.sessions,
       banned: r.bannedAt !== null,
+      objects: st?.objects ?? 0,
+      links: st?.links ?? 0,
     };
   }
 
@@ -221,9 +277,11 @@ export class AdminService {
       limit + 1,
       this.now(),
     );
-    const items = await Promise.all(
-      rows.slice(0, limit).map(r => this.toRow(r)),
+    const slice = rows.slice(0, limit);
+    const stats = await this.statsOf(
+      slice.filter(r => r.userId !== null).map(r => r.tenantId),
     );
+    const items = await Promise.all(slice.map(r => this.toRow(r, stats)));
     return {
       items,
       nextCursor:
@@ -234,12 +292,13 @@ export class AdminService {
   }
 
   private async userDto(a: AccountRecord): Promise<AdminUserDto> {
-    const [w, idx, led, sessions, email] = await Promise.all([
+    const [w, idx, led, sessions, email, stats] = await Promise.all([
       this.d.workspaces.get(a.tenantId),
       this.d.archives.get(a.tenantId),
       this.d.ledgers.get(a.tenantId),
       this.d.sessions.countActive(a.userId),
       this.d.secrets.decryptEmail(a.emailEnc),
+      this.statsOf([a.tenantId]),
     ]);
     if (!w) throw new AppError('NOT_FOUND');
     return {
@@ -251,6 +310,8 @@ export class AdminService {
       zipExpiresAt: idx ? iso(idx.expiresAt) : null,
       sessions,
       banned: a.bannedAt !== null,
+      objects: stats[a.tenantId]?.objects ?? 0,
+      links: stats[a.tenantId]?.links ?? 0,
       locale: a.locale,
       timeZone: a.timeZone,
       verifiedAt: new Date(a.verifiedAt).toISOString(),
@@ -268,7 +329,6 @@ export class AdminService {
     await this.d.audit.append({
       action: 'email.view',
       targetTenantId: a.tenantId,
-      targetUserId: a.userId,
     });
     return dto;
   }
@@ -289,7 +349,6 @@ export class AdminService {
       {
         action: 'user.patch',
         targetTenantId: a.tenantId,
-        targetUserId: a.userId,
         reason: patch.reason,
       },
       async () => {
@@ -319,6 +378,15 @@ export class AdminService {
         const fresh = await this.d.accounts.accounts.findById(a.userId);
         return this.userDto(fresh ?? a);
       },
+      {
+        // The DTO holds the e-mail: store a PII-free marker, re-read on replay.
+        stored: () => USER_RESULT_MARKER,
+        replay: async () => {
+          const cur = await this.d.accounts.accounts.findById(uid);
+          if (!cur || cur.role === 'admin') throw new AppError('NOT_FOUND');
+          return this.userDto(cur);
+        },
+      },
     );
   }
 
@@ -335,7 +403,6 @@ export class AdminService {
       {
         action: 'sessions.revoke',
         targetTenantId: a.tenantId,
-        targetUserId: a.userId,
       },
       async () => ({revoked: await this.d.sessions.revokeUser(a.userId)}),
     );
@@ -362,7 +429,6 @@ export class AdminService {
       {
         action: 'user.delete',
         targetTenantId: a.tenantId,
-        targetUserId: a.userId,
         reason: `${opts.archive ? 'archive' : 'no_archive'}: ${reason}`,
       },
       async () => {

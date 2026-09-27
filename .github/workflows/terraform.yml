@@ -2,9 +2,28 @@
 #
 #   Format → Validate → Lint → Plan → Apply
 #
-# Format, Validate, Lint and Plan run on every branch (pull requests) and on
-# main. Apply runs only on main, only when Plan found changes, and only
-# after a reviewer approves the `production` environment.
+# Format, Validate, Lint and Plan run on every branch and on main. Apply
+# runs only on main (github.ref and a first-step check of GITHUB_REF), only
+# from a green push-CI on main (workflow_run) or a manual run on main, only
+# when Plan found changes, and only after a reviewer approves the
+# `production` environment. Nothing else ever applies.
+#
+# Triggers:
+#   push (every branch except main) → Format … Plan (plan -lock=false, never
+#                                     applies);
+#   pull_request                     → only for fork PRs (no secrets: stops
+#                                     after Lint). Same-repo PRs are covered
+#                                     by the push run of their branch, whose
+#                                     checks GitHub shows on the PR; skipping
+#                                     them avoids a second, identical run;
+#   workflow_run (CI on main)        → the release chain below;
+#   schedule                         → nightly drift check on main (Plan);
+#   workflow_dispatch                → on main: up to Apply; on any other
+#                                     ref: stops after Plan.
+#
+# Concurrency: runs on main share one serialized group (the B2 backend has
+# no verified locking); every other ref has its own group in which a newer
+# run cancels the older one.
 #
 # On main it is the middle link of the release chain
 #
@@ -15,6 +34,8 @@
 name: Terraform
 
 on:
+  push:
+    branches-ignore: [main]
   pull_request:
   workflow_run:
     workflows: [CI]
@@ -28,10 +49,10 @@ permissions:
   contents: read
 
 concurrency:
-  # The B2 backend has no verified locking; serialize runs on main. Pull
-  # requests only plan (no lock) and supersede their own older runs.
-  group: terraform-${{ github.event_name == 'pull_request' && github.ref || 'production' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # The B2 backend has no verified locking; serialize runs on main. Other
+  # refs only plan (no lock) and supersede their own older runs.
+  group: terraform-${{ github.ref == 'refs/heads/main' && 'production' || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -61,12 +82,18 @@ defaults:
 jobs:
   fmt:
     name: Format
-    # From CI only when it was a green push to main; later stages are
-    # skipped with it.
+    # From CI only when it was a green push to main; pull requests only from
+    # forks (same-repo branches run on push). Later stages are skipped with
+    # it.
     if: >-
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name != github.repository) ||
+      github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -110,10 +137,9 @@ jobs:
   plan:
     name: Plan
     needs: lint
-    # Fork PRs get no secrets, so they stop after the static checks.
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+    # Fork PRs get no secrets, so they stop after the static checks. Plans
+    # never take the state lock except on main (apply job).
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -144,15 +170,27 @@ jobs:
   apply:
     name: Apply (production)
     needs: plan
+    # Defensive guard: main only, from a green push-CI on main or a manual
+    # run on main, and only when Plan found changes.
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch') &&
-      needs.plan.outputs.has-changes == 'true'
+      needs.plan.outputs.has-changes == 'true' &&
+      ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main') ||
+       github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Waits for a required reviewer to approve the plan above.
     environment: production
     steps:
+      - name: Refuse to apply outside main
+        run: |
+          if [[ "${GITHUB_REF}" != 'refs/heads/main' ]]; then
+            echo "::error::terraform apply runs only on refs/heads/main (got ${GITHUB_REF})"
+            exit 1
+          fi
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ env.SHA }}

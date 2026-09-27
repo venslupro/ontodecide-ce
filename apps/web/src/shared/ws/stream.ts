@@ -10,7 +10,11 @@
  *   invalidates `['me']`. Everything lands under keys prefixed
  *   `['situation', …]` (plus the invalidations above), so components do
  *   not care whether data came over HTTP or WebSocket.
- * - Polling fallback: invalidates `['situation']` every 30 s.
+ * - Polling fallback (前端 6.3.3: 30 s GET /situation/overview): the leader
+ *   fetches the overview and emits it as a `poll` frame, which the hub
+ *   broadcasts like any frame, so follower tabs refresh too; the 24 h
+ *   overview cache is replaced, the 7-day one refetched, and alert /
+ *   recommendation lists are marked stale (refetched on next use).
  * - Pages may add cache mergers with {@link registerStreamMerger}.
  */
 
@@ -23,6 +27,9 @@ import {qk} from '../api/query_keys';
 import {createFrameBatcher, type FrameBatcher} from '../lib/frame_batcher';
 import {StreamHub, type StreamHubOptions} from './stream_hub';
 import {WsClient, type WsFrame, type WsState} from './ws_client';
+
+/** Synthetic frame type carrying a polled overview. */
+export const POLL_FRAME = 'poll';
 
 /** Alerts kept in the live list. */
 export const LIVE_ALERTS_MAX = 200;
@@ -155,12 +162,41 @@ export function applyFrames(qc: QueryClient, frames: WsFrame[]): void {
     }
     void qc.invalidateQueries({queryKey: qk.recommendationsAll()});
   }
+  const polled = [...frames].reverse().find(f => f.type === POLL_FRAME);
+  if (polled && polled.data && typeof polled.data === 'object') {
+    qc.setQueryData(qk.overview(), polled.data);
+    void qc.invalidateQueries({queryKey: qk.overview('7d')});
+    void qc.invalidateQueries({
+      queryKey: qk.alertsAll(),
+      refetchType: 'none',
+    });
+    void qc.invalidateQueries({
+      queryKey: qk.recommendationsAll(),
+      refetchType: 'none',
+    });
+  }
   if (frames.some(f => f.type === 'trial'))
     void qc.invalidateQueries({queryKey: qk.me()});
   for (const m of mergers) m(qc, frames);
   useRealtimeStatus.getState().set({
     newAlertIds: alerts.map(a => a.id),
     lastFrameAt: Date.now(),
+  });
+}
+
+/**
+ * One polling-fallback round: GET /situation/overview (24 h) emitted as a
+ * {@link POLL_FRAME} through the hub (so followers get it as well).
+ */
+export async function pollOverview(emit: (f: WsFrame) => void): Promise<void> {
+  const data = await api.get<unknown>('/situation/overview', {
+    query: {range: '24h'},
+  });
+  emit({
+    seq: 0,
+    type: POLL_FRAME,
+    data,
+    occurredAt: new Date().toISOString(),
   });
 }
 
@@ -223,7 +259,7 @@ function acquire(qc: QueryClient, scope: string): void {
         onState: h.onState,
         onEnded: h.onEnded,
         createSocket: config.createSocket,
-        poll: () => qc.invalidateQueries({queryKey: ['situation']}),
+        poll: () => pollOverview(h.onFrame),
       }),
     onFrame: f => batcher.push(f),
     onState: state => status.set({state}),

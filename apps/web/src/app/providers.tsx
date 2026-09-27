@@ -1,12 +1,12 @@
 /**
- * @fileoverview Provider assembly: QueryClient, tooltips, toasts. Dark
- * theme only (no theme switching).
+ * @fileoverview Provider assembly: QueryClient and toasts. Dark theme only
+ * (no theme switching). The tooltip provider lives in the lazily loaded
+ * app shell so public pages do not download Radix.
  */
 
 import {QueryClientProvider, type QueryClient} from '@tanstack/react-query';
 import type {ReactNode} from 'react';
 import {Toaster} from '../shared/ui/toast';
-import {TooltipProvider} from '../shared/ui/tooltip';
 
 /** Wraps the app with providers. */
 export function Providers({
@@ -18,10 +18,8 @@ export function Providers({
 }) {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider delayDuration={250}>
-        {children}
-        <Toaster />
-      </TooltipProvider>
+      {children}
+      <Toaster />
     </QueryClientProvider>
   );
 }

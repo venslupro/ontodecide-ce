@@ -6,6 +6,7 @@ import {AlertOctagon, Inbox, RotateCw} from 'lucide-react';
 import type {ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
 import {cn} from '../lib/cn';
+import {APP_VERSION} from '../lib/version';
 import {Button} from './button';
 
 /** Empty state with icon, title, description and optional action. */
@@ -41,17 +42,24 @@ export function EmptyState({
   );
 }
 
-/** Error view (used by error boundaries and failed queries). */
+/**
+ * Error view (used by error boundaries and failed queries). The API
+ * `traceId` and the build version are shown as support details (前端详细设计
+ * 6.6: "traceId 显示在错误详情中").
+ */
 export function ErrorView({
   title,
   detail,
   errorId,
+  traceId,
   onRetry,
   className,
 }: {
   title?: ReactNode;
   detail?: ReactNode;
   errorId?: string;
+  /** Problem Details `traceId` (or X-Request-Id) of a failed API call. */
+  traceId?: string;
   onRetry?: () => void;
   className?: string;
 }) {
@@ -73,10 +81,21 @@ export function ErrorView({
       {detail && (
         <p className="max-w-md text-xs break-words text-muted">{detail}</p>
       )}
-      {errorId && (
-        <p className="text-xs text-dim">
-          {t('errors.errorId')}:{' '}
-          <code className="font-mono text-muted">{errorId}</code>
+      {(errorId || traceId) && (
+        <p className="flex flex-wrap justify-center gap-x-3 text-xs text-dim">
+          {errorId && (
+            <span>
+              {t('errors.errorId')}:{' '}
+              <code className="font-mono text-muted">{errorId}</code>
+            </span>
+          )}
+          {traceId && (
+            <span>
+              {t('errors.traceId')}:{' '}
+              <code className="font-mono text-muted">{traceId}</code>
+            </span>
+          )}
+          <span>{t('about.version', {version: APP_VERSION})}</span>
         </p>
       )}
       {onRetry && (

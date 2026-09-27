@@ -1,8 +1,10 @@
 /**
  * @fileoverview Cloudflare GraphQL Analytics adapter: today's account-wide
  * Worker invocations, D1 rows written, Workers AI neurons and Queue
- * operations (read-only token CF_ANALYTICS_TOKEN). Unknown datasets count
- * as 0 so a schema change never blocks the cron.
+ * operations (read-only token CF_ANALYTICS_TOKEN). A response with
+ * `errors`, without the account or with a dataset / field this adapter does
+ * not know throws, so the cron keeps the last snapshot instead of reading
+ * zeros (a schema change shows up as `analytics.failed`).
  */
 
 import type {AnalyticsMetric} from '../domain';
@@ -22,10 +24,28 @@ const QUERY = `query Usage($account: string!, $day: Date!) {
   }
 }`;
 
-type Groups = {sum?: Record<string, number>}[] | undefined;
+type Groups = {sum?: Record<string, unknown>}[] | undefined;
 
-function total(groups: Groups, field: string): number {
-  return (groups ?? []).reduce((a, g) => a + (g.sum?.[field] ?? 0), 0);
+/** Dataset alias → summed field of the query above. */
+const FIELDS = {
+  workers: 'requests',
+  d1: 'rowsWritten',
+  ai: 'totalNeurons',
+  queues: 'billableOperations',
+} as const;
+
+function total(groups: Groups, alias: keyof typeof FIELDS): number {
+  if (!Array.isArray(groups)) {
+    throw new Error(`analytics schema: ${alias} missing`);
+  }
+  const field = FIELDS[alias];
+  return groups.reduce((a, g) => {
+    const v = g?.sum?.[field];
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      throw new Error(`analytics schema: ${alias}.${field}`);
+    }
+    return a + v;
+  }, 0);
 }
 
 /** Reads daily totals from GraphQL Analytics. */
@@ -52,14 +72,19 @@ export class CloudflareAnalytics implements AnalyticsPort {
     });
     if (!res.ok) throw new Error(`analytics ${res.status}`);
     const body = (await res.json()) as {
-      data?: {viewer?: {accounts?: Record<string, Groups>[]}};
+      data?: {viewer?: {accounts?: Record<string, Groups>[]} | null} | null;
+      errors?: unknown[] | null;
     };
-    const acc = body.data?.viewer?.accounts?.[0] ?? {};
+    if (Array.isArray(body.errors) && body.errors.length > 0) {
+      throw new Error(`analytics errors: ${body.errors.length}`);
+    }
+    const acc = body.data?.viewer?.accounts?.[0];
+    if (!acc) throw new Error('analytics schema: account missing');
     return {
-      workers: total(acc['workers'], 'requests'),
-      d1Writes: total(acc['d1'], 'rowsWritten'),
-      neurons: total(acc['ai'], 'totalNeurons'),
-      queues: total(acc['queues'], 'billableOperations'),
+      workers: total(acc['workers'], 'workers'),
+      d1Writes: total(acc['d1'], 'd1'),
+      neurons: total(acc['ai'], 'ai'),
+      queues: total(acc['queues'], 'queues'),
     };
   }
 }

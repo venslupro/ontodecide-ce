@@ -3,8 +3,9 @@
  * (parsed with parseEtag), `Idempotency-Key` (16–64 chars) and `X-Step-Up`
  * (passkey user-verification proof). A missing or malformed If-Match or
  * Idempotency-Key is 400 VALIDATION_FAILED; a missing step-up proof is 403
- * FORBIDDEN (详细设计 6.6). A recovery-code admin session may bind its new
- * passkey without a step-up proof (it has no usable passkey).
+ * FORBIDDEN (详细设计 6.6). A recovery-code admin session that has not bound
+ * a passkey yet (live session state) may bind its new passkey without a
+ * step-up proof (it has no usable passkey).
  */
 
 import {
@@ -42,7 +43,7 @@ export function requiredHeaders(): Middleware {
       }
       if (req === 'X-Step-Up' && !s.stepUp) {
         const recovery =
-          !!s.route?.recoveryOk && !!s.claims?.amr.includes('recovery');
+          !!s.route?.recoveryOk && !!s.adminStatus?.recoveryPending;
         if (!recovery) {
           throw new AppError('FORBIDDEN', 'Passkey user verification required');
         }

@@ -1,10 +1,12 @@
 /**
  * @fileoverview Admin workspace table (效果图 c9 "工作区"): full e-mail,
  * status (ACTIVE / EXPIRED / ARCHIVING / derived ARCHIVE_ONLY shown as
- * "账户已删除"), remaining time or ZIP deletion, sessions; "进入" (admin
- * view) and "管理 ▾" (extend / shorten trial with impact, end trial,
- * revoke sessions, delete with optional archive + reason, ban). ARCHIVE_ONLY
- * rows offer "下载 ZIP".
+ * "账户已删除"), remaining time or ZIP deletion, 对象 / 关系; "进入" (admin
+ * view) and "管理 ▾" (account details, extend / shorten trial with impact,
+ * end trial, revoke sessions, delete with optional archive — the reason is
+ * required only without an archive —, ban). ARCHIVE_ONLY rows offer
+ * "下载 ZIP" and a "管理 ▾" with download / delete archive. The details
+ * dialog reads GET /admin/users/{uid} (audited server-side).
  */
 
 import type {
@@ -21,15 +23,17 @@ import {serverNow} from '../../entities/session/store';
 import {enterActAs} from '../../features/admin/act_as';
 import {
   archiveLink,
+  deleteArchiveAdmin,
   deleteUser,
   invalidateAdmin,
   patchUser,
   revokeSessions,
+  useAdminUser,
   useAdminUsers,
 } from '../../features/admin/api';
 import {AdminConfirmDialog} from '../../features/admin/components/confirm_dialog';
 import {idempotencyKey} from '../../shared/api/client';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {openDownloadLink} from '../../shared/lib/download';
 import {fmt, shortTid} from '../../shared/lib/format';
 import {Badge} from '../../shared/ui/badge';
@@ -42,11 +46,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown_menu';
+import {Dialog, DialogContent} from '../../shared/ui/dialog';
 import {Checkbox, Field, Input, Label, Textarea} from '../../shared/ui/input';
+import {Skeleton} from '../../shared/ui/skeleton';
 import {Table, TBody, Td, Th, THead, Tr} from '../../shared/ui/table';
 import {toast} from '../../shared/ui/toast';
 
-type Action = 'trial' | 'end' | 'revoke' | 'delete' | 'ban';
+type Action =
+  'trial' | 'end' | 'revoke' | 'delete' | 'ban' | 'details' | 'deleteArchive';
 
 const STATUS_TONE = {
   ACTIVE: 'good',
@@ -154,7 +161,7 @@ function ActionDialog({
     <Field
       label={t('reason.label')}
       htmlFor="admin-reason"
-      hint={required ? t('reason.required') : undefined}
+      hint={required ? t('reason.required') : t('reason.optional')}
       required={required}
     >
       <Textarea
@@ -167,6 +174,20 @@ function ActionDialog({
   );
 
   switch (action) {
+    case 'details':
+      return <UserDetailsDialog uid={uid} onClose={onClose} />;
+    case 'deleteArchive':
+      return (
+        <AdminConfirmDialog
+          {...common}
+          highRisk
+          danger
+          title={t('archives.deleteTitle')}
+          description={t('archives.deleteBody')}
+          confirmLabel={t('archives.delete')}
+          onConfirm={w => deleteArchiveAdmin(row.tenantId, w)}
+        />
+      );
     case 'trial':
       return (
         <AdminConfirmDialog
@@ -270,8 +291,8 @@ function ActionDialog({
             archive ? t('delete.bodyArchive') : t('delete.bodyNoArchive')
           }
           confirmLabel={t('delete.confirm')}
-          disabled={!reason.trim()}
-          onConfirm={w => deleteUser(uid, archive, reason.trim(), w)}
+          disabled={!archive && !reason.trim()}
+          onConfirm={w => deleteUser(uid, archive, reason, w)}
         >
           <div className="flex items-center gap-2">
             <Checkbox
@@ -283,10 +304,69 @@ function ActionDialog({
               {t('delete.archive')}
             </Label>
           </div>
-          {reasonField(true)}
+          {reasonField(!archive)}
         </AdminConfirmDialog>
       );
   }
+}
+
+/** Account details (GET /admin/users/{uid}; the view is audited). */
+export function UserDetailsDialog({
+  uid,
+  onClose,
+}: {
+  uid: string;
+  onClose(): void;
+}) {
+  const {t} = useTranslation('admin');
+  const q = useAdminUser(uid);
+  const u = q.data;
+  const time = (iso: string | null | undefined) =>
+    iso ? fmt.dateTimeTz(iso, u?.timeZone) : t('detail.none');
+  const rows: [string, string][] = u
+    ? [
+        [t('detail.email'), u.email ?? t('users.deleted')],
+        [t('detail.status'), u.status],
+        [t('detail.locale'), u.locale],
+        [t('detail.timeZone'), u.timeZone],
+        [t('detail.verifiedAt'), time(u.verifiedAt)],
+        [t('detail.trialExpiresAt'), time(u.trialExpiresAt)],
+        [
+          t('detail.expiredAt'),
+          u.expiredAt ? time(u.expiredAt) : t('detail.notExpired'),
+        ],
+        [t('detail.archivePhase'), u.archivePhase ?? t('detail.none')],
+        [t('detail.sessions'), String(u.sessions)],
+        [t('detail.objectsLinks'), `${u.objects} / ${u.links}`],
+        [t('detail.banned'), u.banned ? t('detail.yes') : t('detail.no')],
+      ]
+    : [];
+  return (
+    <Dialog open onOpenChange={v => !v && onClose()}>
+      <DialogContent
+        title={t('detail.title')}
+        description={t('detail.audited')}
+        size="md"
+      >
+        {q.isLoading ? (
+          <Skeleton className="h-48 w-full" />
+        ) : q.error ? (
+          <p role="alert" className="text-sm text-crit">
+            {errorMessage(q.error, t)}
+          </p>
+        ) : (
+          <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
+            {rows.map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="text-muted">{k}</dt>
+                <dd className="min-w-0 break-all text-text">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 /** Opens a 15-minute archive link by top-level navigation. */
@@ -332,7 +412,7 @@ export function UsersPanel({overview}: {overview?: PlatformOverview}) {
             <Th>{t('users.email')}</Th>
             <Th>{t('users.status')}</Th>
             <Th>{t('users.time')}</Th>
-            <Th>{t('users.sessions')}</Th>
+            <Th>{t('users.objectsLinks')}</Th>
             <Th className="text-right">{t('users.actions')}</Th>
           </Tr>
         </THead>
@@ -357,7 +437,7 @@ export function UsersPanel({overview}: {overview?: PlatformOverview}) {
                 </Td>
                 <Td className="num">{timeCell(row, now, t)}</Td>
                 <Td className="num text-muted">
-                  {archiveOnly ? '—' : row.sessions}
+                  {archiveOnly ? '—' : `${row.objects} / ${row.links}`}
                 </Td>
                 <Td>
                   <div className="flex justify-end gap-2">
@@ -366,7 +446,9 @@ export function UsersPanel({overview}: {overview?: PlatformOverview}) {
                         size="sm"
                         onClick={() =>
                           void downloadArchive(row.tenantId, e =>
-                            toast.error(errorMessage(e, t)),
+                            toast.error(errorMessage(e, t), undefined, {
+                              traceId: errorTraceId(e),
+                            }),
                           )
                         }
                       >
@@ -377,6 +459,41 @@ export function UsersPanel({overview}: {overview?: PlatformOverview}) {
                       <Button size="sm" onClick={() => enter(row)}>
                         {t('enter')}
                       </Button>
+                    )}
+                    {archiveOnly && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="sm"
+                            aria-label={`${t('manage')} ${row.tenantId}`}
+                          >
+                            {t('manage')}
+                            <ChevronDown aria-hidden />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent>
+                          <DropdownMenuItem
+                            onSelect={() =>
+                              void downloadArchive(row.tenantId, e =>
+                                toast.error(errorMessage(e, t), undefined, {
+                                  traceId: errorTraceId(e),
+                                }),
+                              )
+                            }
+                          >
+                            {t('menu.downloadZip')}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-crit"
+                            onSelect={() =>
+                              setDialog({row, action: 'deleteArchive'})
+                            }
+                          >
+                            {t('menu.deleteArchive')}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
                     {!archiveOnly && row.userId && (
                       <DropdownMenu>
@@ -390,6 +507,12 @@ export function UsersPanel({overview}: {overview?: PlatformOverview}) {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent>
+                          <DropdownMenuItem
+                            onSelect={() => setDialog({row, action: 'details'})}
+                          >
+                            {t('menu.details')}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem
                             disabled={row.status !== 'ACTIVE'}
                             onSelect={() => setDialog({row, action: 'trial'})}

@@ -18,7 +18,7 @@ import {
   useLooseSearch,
   useSearchPatch,
 } from '../../features/object-graph/search_params';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {Badge} from '../../shared/ui/badge';
 import {Button} from '../../shared/ui/button';
 import {Panel} from '../../shared/ui/card';
@@ -183,6 +183,7 @@ export function GraphPage() {
             />
           ) : links.error ? (
             <ErrorView
+              traceId={errorTraceId(links.error)}
               detail={errorMessage(links.error, t)}
               onRetry={() => void links.refetch()}
             />

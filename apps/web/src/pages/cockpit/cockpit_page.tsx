@@ -31,7 +31,7 @@ import {
   useLooseSearch,
   useSearchPatch,
 } from '../../features/object-graph/search_params';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {Badge} from '../../shared/ui/badge';
 import {Button} from '../../shared/ui/button';
 import {Panel} from '../../shared/ui/card';
@@ -107,6 +107,7 @@ export function CockpitPage() {
 
       {ov.error ? (
         <ErrorView
+          traceId={errorTraceId(ov.error)}
           detail={errorMessage(ov.error, t)}
           onRetry={() => void ov.refetch()}
         />

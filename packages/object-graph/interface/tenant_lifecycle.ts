@@ -18,5 +18,6 @@ export function createLifecycleRpc(deps: {
     exportTenant: (tid, cursor) => lc().exportTenant(tid, cursor),
     purgeTenant: (tid, maxRows) => lc().purgeTenant(tid, maxRows),
     countTenant: tid => lc().countTenant(tid),
+    tenantStats: tids => lc().tenantStats!(tids),
   };
 }

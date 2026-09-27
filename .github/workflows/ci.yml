@@ -1,8 +1,18 @@
-# CI: typecheck, lint (gts + architecture guard + SQL guard), OpenAPI
-# contract check, unit/integration tests,
-# web build with bundle budget, Worker dry-run bundles. Runs on every PR and
-# push to main; Deploy starts from a green run on main. Terraform checks live
-# in terraform.yml.
+# CI (详细设计 表 4 / 表 14). Runs on every PR and push to main; Deploy
+# starts from a green run on main. Terraform checks live in terraform.yml.
+#
+#   build-test  typecheck · lint (gts + architecture guard + SQL guard) ·
+#               OpenAPI lint (official 3.2 schema + JSON Schema 2020-12) ·
+#               all Vitest suites with the coverage gate (packages/**/domain
+#               ≥ 80 % lines) — unit, integration, tests/e2e full-system
+#               flows, tests/budget (D1 rows_written, CPU timing) and
+#               tests/contract (responses vs openapi.yaml) · script
+#               self-tests · web build with bundle budgets · Worker dry-run
+#               bundles
+#   web-e2e     Playwright specs of apps/web/e2e in Chromium against
+#               `vite preview` of the production build (API mocked in-page)
+#   lighthouse  Lighthouse CI on the built SPA (LCP ≤ 2.5 s; other budgets
+#               warn). Non-blocking: lab timings on shared runners are noisy.
 name: CI
 
 on:
@@ -22,6 +32,9 @@ jobs:
     name: Typecheck · Lint · Test · Build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # CPU budget tests (tests/budget/cpu_budget_test.ts): 8 ms × factor.
+      CPU_BUDGET_FACTOR: '3'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -34,16 +47,107 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
-      - name: OpenAPI contract (apps/api-gateway/openapi.yaml)
+      - name: OpenAPI lint (apps/api-gateway/openapi.yaml)
         run: node scripts/check_openapi.mjs apps/api-gateway/openapi.yaml
-      - run: pnpm test
+      - name: Tests with coverage gate (domain ≥ 80 % lines)
+        run: pnpm test:coverage
+      - name: Script self-tests
+        run: pnpm test:scripts
       - name: Build web
         run: pnpm build:web
-      - name: Bundle budget (initial JS ≤ 250 KB gzip)
-        run: node scripts/check_bundle.mjs apps/web/dist 250
+      # Initial JS ≤ 250 KB gzip; the explanation pages (/ended,
+      # /archive-deletions) add ≤ 60 KB (前端详细设计 表 3).
+      - name: Bundle budgets
+        run: >-
+          node scripts/check_bundle.mjs apps/web/dist 250
+          --entry ended_page=60 --entry archive_deletion_page=60
+      # /ended hard load (static ended.html) ≤ 60 KB; public entries never
+      # statically load the app shell.
+      - name: Web entry budgets
+        run: pnpm --filter @ontodecide/web run check:bundle
       - name: Worker bundles (dry-run)
         run: |
           node scripts/gen_wrangler.mjs --env local
           for w in ontology-manager object-graph situation-awareness decision-engine data-integration identity-access api-gateway; do
             npx wrangler deploy --dry-run --outdir "dist/$w" -c "apps/$w/wrangler.jsonc"
           done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: web-dist
+          path: apps/web/dist
+          retention-days: 3
+
+  web-e2e:
+    name: Web e2e (Playwright)
+    needs: build-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2E_BASE_URL: http://localhost:5173
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: web-dist
+          path: apps/web/dist
+      - name: Install Chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: Start vite preview
+        working-directory: apps/web
+        run: |
+          nohup npx vite preview --port 5173 --strictPort > preview.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf "${E2E_BASE_URL}/" > /dev/null && exit 0
+            sleep 1
+          done
+          cat preview.log
+          echo '::error::vite preview did not start'
+          exit 1
+      - name: Playwright
+        run: pnpm test:e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: playwright-results
+          path: apps/web/test-results
+          retention-days: 7
+
+  lighthouse:
+    name: Lighthouse CI (non-blocking)
+    needs: build-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Lab metrics on shared runners fluctuate; failures are reported as
+    # warnings and never block the release chain.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: web-dist
+          path: apps/web/dist
+      - name: Lighthouse CI (LCP ≤ 2.5 s)
+        id: lhci
+        run: npx --yes @lhci/cli@0.15.1 autorun --config=.github/lighthouserc.json
+      - name: Report
+        if: failure() && steps.lhci.outcome == 'failure'
+        run: echo '::warning::Lighthouse budgets not met (see the lhci step and the lighthouse-report artifact)'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: lighthouse-report
+          path: .lighthouseci
+          retention-days: 7

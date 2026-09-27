@@ -27,6 +27,7 @@ let knownExpired = false;
 const onAuthFailure = vi.fn();
 const onTrialEnded = vi.fn();
 const onServerDate = vi.fn();
+const onAdminGate = vi.fn();
 
 beforeEach(() => {
   token = 'old';
@@ -35,6 +36,7 @@ beforeEach(() => {
   onAuthFailure.mockReset();
   onTrialEnded.mockReset();
   onServerDate.mockReset();
+  onAdminGate.mockReset();
   configureApi({
     getToken: () => token,
     onToken: g => {
@@ -46,6 +48,7 @@ beforeEach(() => {
     onAuthFailure,
     onTrialEnded,
     onServerDate,
+    onAdminGate,
   });
 });
 
@@ -278,6 +281,22 @@ describe('TRIAL_EXPIRED (V2.4 #1)', () => {
     expect(onAuthFailure).not.toHaveBeenCalled();
   });
 
+  it('TRIAL_EXPIRED + refresh UNAUTHENTICATED: /login unless the trial end is known past (前端 6.3.1)', async () => {
+    server.use(
+      http.post('*/api/v1/auth/sessions/refresh', () =>
+        problem(401, 'UNAUTHENTICATED'),
+      ),
+      http.get('*/api/v1/data', () => problem(401, 'TRIAL_EXPIRED')),
+    );
+    knownExpired = false;
+    await expect(api.get('/data')).rejects.toBeInstanceOf(ApiError);
+    expect(onAuthFailure).toHaveBeenCalledTimes(1);
+    expect(onTrialEnded).not.toHaveBeenCalled();
+    knownExpired = true;
+    await expect(api.get('/data')).rejects.toBeInstanceOf(ApiError);
+    expect(onTrialEnded).toHaveBeenCalledTimes(1);
+  });
+
   it('replay still TRIAL_EXPIRED after a good refresh → /ended', async () => {
     server.use(
       refreshOk(),
@@ -285,5 +304,28 @@ describe('TRIAL_EXPIRED (V2.4 #1)', () => {
     );
     await expect(api.get('/data')).rejects.toBeInstanceOf(ApiError);
     expect(onTrialEnded).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('admin session gate (403 extras.reason)', () => {
+  it('reports RECOVERY_PENDING / PASSKEY_SETUP_INCOMPLETE, not other 403s', async () => {
+    server.use(
+      http.get('*/api/v1/a', () =>
+        problem(403, 'FORBIDDEN', undefined, {reason: 'RECOVERY_PENDING'}),
+      ),
+      http.get('*/api/v1/b', () =>
+        problem(403, 'FORBIDDEN', undefined, {
+          reason: 'PASSKEY_SETUP_INCOMPLETE',
+        }),
+      ),
+      http.get('*/api/v1/c', () => problem(403, 'FORBIDDEN')),
+    );
+    await expect(api.get('/a')).rejects.toBeInstanceOf(ApiError);
+    await expect(api.get('/b')).rejects.toBeInstanceOf(ApiError);
+    await expect(api.get('/c')).rejects.toBeInstanceOf(ApiError);
+    expect(onAdminGate.mock.calls).toEqual([
+      ['RECOVERY_PENDING'],
+      ['PASSKEY_SETUP_INCOMPLETE'],
+    ]);
   });
 });

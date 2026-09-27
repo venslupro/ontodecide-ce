@@ -170,6 +170,8 @@ export function adminUsers(): AdminUserRow[] {
       zipExpiresAt: null,
       sessions: 2,
       banned: false,
+      objects: 212,
+      links: 540,
     },
     {
       userId: 'u2',
@@ -180,6 +182,8 @@ export function adminUsers(): AdminUserRow[] {
       zipExpiresAt: null,
       sessions: 1,
       banned: false,
+      objects: 80,
+      links: 160,
     },
     {
       userId: 'u3',
@@ -190,6 +194,8 @@ export function adminUsers(): AdminUserRow[] {
       zipExpiresAt: null,
       sessions: 0,
       banned: false,
+      objects: 64,
+      links: 120,
     },
     {
       userId: null,
@@ -200,6 +206,8 @@ export function adminUsers(): AdminUserRow[] {
       zipExpiresAt: at(6 * 24 - 1),
       sessions: 0,
       banned: false,
+      objects: 0,
+      links: 0,
     },
   ];
 }

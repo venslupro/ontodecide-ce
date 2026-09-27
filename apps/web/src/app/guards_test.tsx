@@ -3,12 +3,13 @@
  */
 
 import {screen, waitFor} from '@testing-library/react';
-import {describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it} from 'vitest';
 import {useSession} from '../entities/session/store';
 import {adminMe, ownerMe} from '../test/fixtures/platform';
 import {platformDb} from '../test/handlers/platform';
-import {renderApp} from '../test/render';
-import {decideApp} from './guards';
+import {createTestQueryClient, renderApp} from '../test/render';
+import {wireApp} from './boot';
+import {decideApp, guardPublicAuth} from './guards';
 
 describe('decideApp', () => {
   it('maps restore outcomes', () => {
@@ -20,6 +21,35 @@ describe('decideApp', () => {
       kind: 'login',
       next: '/x',
     });
+  });
+});
+
+describe('guardPublicAuth (/signup, /login)', () => {
+  beforeEach(() => wireApp(createTestQueryClient(), {navigate: () => {}}));
+
+  it('tries one silent refresh on a fresh load and sends signed-in users to /cockpit', async () => {
+    useSession.getState().signOut();
+    useSession.setState({status: 'unknown'});
+    platformDb.refresh = 'ok';
+    platformDb.me = ownerMe();
+    const before = platformDb.refreshCount;
+    await expect(guardPublicAuth()).resolves.toBe('/cockpit');
+    expect(platformDb.refreshCount).toBe(before + 1);
+  });
+
+  it('stays on the page when the silent refresh fails', async () => {
+    useSession.getState().signOut();
+    useSession.setState({status: 'unknown'});
+    platformDb.refresh = 'unauthenticated';
+    await expect(guardPublicAuth()).resolves.toBeNull();
+    expect(useSession.getState().status).toBe('anonymous');
+  });
+
+  it('does not refresh after an explicit sign-out', async () => {
+    useSession.getState().signOut();
+    const before = platformDb.refreshCount;
+    await expect(guardPublicAuth()).resolves.toBeNull();
+    expect(platformDb.refreshCount).toBe(before);
   });
 });
 

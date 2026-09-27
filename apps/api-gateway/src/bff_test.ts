@@ -1,6 +1,7 @@
 /**
  * @fileoverview BFF aggregations: GET /me quotas, GET /situation/overview,
- * the GET /me/export JSON Lines stream and sample data routing.
+ * the GET /me/export JSON Lines stream, sample data routing and
+ * GET /objects/{rid}?expand=links.
  */
 
 import type {SituationOverview} from '@ontodecide/situation/contract';
@@ -253,5 +254,79 @@ describe('POST /workspace/sample-data', () => {
       token: await ownerToken(),
     });
     expect(res.status).toBe(409);
+  });
+});
+
+describe('GET /objects/{rid}?expand=links', () => {
+  const RID = 'ri.Supplier.01K6A00000000000000000R001';
+  const object = {
+    rid: RID,
+    type: 'Supplier',
+    primaryKey: 'S1',
+    title: 'S1',
+    props: {riskScore: 80},
+    provenance: {},
+    version: 7,
+    updatedAt: '2026-09-24T08:00:00Z',
+    derived: {supplierRiskLevel: 'HIGH'},
+  };
+  const slice = {
+    nodes: [{rid: RID, type: 'Supplier', title: 'S1', props: {}, hop: 0}],
+    edges: [{type: 'supplies', src: RID, dst: 'ri.Part.X', weight: null}],
+    truncated: false,
+  };
+
+  it('joins getObject and getLinks; the ETag stays the object version', async () => {
+    const getLinks = vi.fn(async (..._a: unknown[]) => slice as never);
+    const gw = await makeGateway({
+      objects: {getObject: async () => object as never, getLinks},
+    });
+    const res = await call(
+      gw,
+      'GET',
+      `/objects/${RID}?expand=links&depth=2&linkTypes=supplies`,
+      {token: await ownerToken()},
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('etag')).toBe('"v7"');
+    expect(await res.json()).toEqual({...object, links: slice});
+    expect([...gw.calls].sort()).toEqual([
+      'OBJECTS.getLinks',
+      'OBJECTS.getObject',
+    ]);
+    expect(getLinks.mock.calls[0]).toMatchObject([
+      expect.anything(),
+      RID,
+      {depth: 2, direction: 'both', linkTypes: ['supplies']},
+    ]);
+  });
+
+  it('defaults to depth 1 and never calls getLinks without expand', async () => {
+    const getLinks = vi.fn(async (..._a: unknown[]) => slice as never);
+    const gw = await makeGateway({
+      objects: {getObject: async () => object as never, getLinks},
+    });
+    const token = await ownerToken();
+    await call(gw, 'GET', `/objects/${RID}?expand=links`, {token});
+    expect(getLinks.mock.calls[0][2]).toEqual({depth: 1, direction: 'both'});
+    const plain = await call(gw, 'GET', `/objects/${RID}`, {token});
+    expect(await plain.json()).not.toHaveProperty('links');
+    expect(getLinks).toHaveBeenCalledTimes(1);
+  });
+
+  it('a missing object is 404 even though getLinks fails too', async () => {
+    const gw = await makeGateway({
+      objects: {
+        getObject: async () => null,
+        getLinks: async () => {
+          throw new AppError('NOT_FOUND');
+        },
+      },
+    });
+    const res = await call(gw, 'GET', `/objects/${RID}?expand=links`, {
+      token: await ownerToken(),
+    });
+    expect(res.status).toBe(404);
+    expect((await problemOf(res)).code).toBe('NOT_FOUND');
   });
 });

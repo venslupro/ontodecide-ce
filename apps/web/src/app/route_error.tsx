@@ -22,17 +22,9 @@ export function RouteError({error}: ErrorComponentProps) {
     <div className="glass mx-auto mt-10 max-w-xl">
       <ErrorView
         title={t('errors.RENDER')}
-        detail={
-          <>
-            {errorMessage(error, t)}
-            {traceId && (
-              <span className="mt-1 block font-mono text-dim">
-                traceId {traceId}
-              </span>
-            )}
-          </>
-        }
+        detail={errorMessage(error, t)}
         errorId={errorId}
+        traceId={traceId}
         onRetry={() => location.reload()}
       />
     </div>

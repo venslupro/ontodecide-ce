@@ -2,10 +2,13 @@
  * @fileoverview Backend-for-frontend aggregations (详细设计 6.11.7):
  * `GET /me` and `GET /situation/overview` merge the personal quotas that
  * each service counts locally (修订说明书 12.7: no callback into
- * identity-access); `GET /me/export` streams JSON Lines chunk by chunk.
+ * identity-access); `GET /me/export` streams JSON Lines chunk by chunk;
+ * `GET /objects/{rid}?expand=links` joins the object with its link slice.
  */
 
+import type {LinksQuery} from '@ontodecide/object-graph/contract';
 import {
+  AppError,
   CE_LIMITS,
   mergeQuotas,
   type CallCtx,
@@ -13,9 +16,10 @@ import {
   type Logger,
   type QuotaItem,
   type Quotas,
+  type Rid,
 } from '@ontodecide/shared-kernel';
 import type {Env} from './env';
-import {json} from './http';
+import {json, jsonWithEtag} from './http';
 
 async function settle<T>(
   p: Promise<T>,
@@ -158,4 +162,31 @@ export async function exportBff(
       'content-disposition': `attachment; filename="ontodecide-export-${day}.jsonl"`,
     },
   });
+}
+
+/**
+ * GET /objects/{rid}?expand=links&depth=1|2: OBJECTS.getObject and
+ * OBJECTS.getLinks in parallel, returned as `ObjectDto` with
+ * `links: GraphSlice`. The ETag stays the object's version.
+ */
+export async function getObjectWithLinksBff(
+  env: Env,
+  ctx: CallCtx,
+  rid: Rid,
+  q: Pick<LinksQuery, 'depth' | 'linkTypes'>,
+): Promise<Response> {
+  const [o, links] = await Promise.all([
+    env.OBJECTS.getObject(ctx, rid),
+    env.OBJECTS.getLinks(ctx, rid, {
+      depth: q.depth,
+      direction: 'both',
+      ...(q.linkTypes ? {linkTypes: q.linkTypes} : {}),
+    }).then(
+      slice => ({slice}),
+      (error: unknown) => ({error}),
+    ),
+  ]);
+  if (!o) throw new AppError('NOT_FOUND');
+  if ('error' in links) throw links.error;
+  return jsonWithEtag({...o, links: links.slice}, o.version);
 }

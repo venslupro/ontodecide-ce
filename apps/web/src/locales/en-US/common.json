@@ -149,12 +149,15 @@
     "ontology": "Ontology",
     "automations": "Automations",
     "account": "Account & data",
-    "admin": "Platform admin"
+    "admin": "Platform admin",
+    "pendingBadge": "{count, number} pending"
   },
   "search": {
     "label": "Global search",
     "placeholder": "Search objects, RIDs, alerts...",
-    "openRid": "Open"
+    "openRid": "Open",
+    "groupObjects": "Objects",
+    "groupAlerts": "Alerts"
   },
   "realtime": {
     "idle": "Not connected",
@@ -236,6 +239,27 @@
     "HTTP_ERROR": "The server returned an error",
     "SERVER": "Temporary server error, please try again later",
     "PAYLOAD_TOO_LARGE": "Content too large (request body limit is 512 KB)",
-    "RENDER": "Something went wrong on this page"
+    "RENDER": "Something went wrong on this page",
+    "traceId": "Trace ID",
+    "details": "Details"
+  },
+  "about": {
+    "title": "About OntoDecide Community Edition",
+    "menu": "About",
+    "version": "Version {version}",
+    "body": "Ontology-driven decision system, Community Edition. When reporting a problem, include the version and the trace ID from the error details."
+  },
+  "notifications": {
+    "label": "Notifications",
+    "labelUnread": "Notifications ({count, number} unread)",
+    "title": "Notifications",
+    "markAll": "Mark all as read",
+    "empty": "No open alerts or pending recommendations",
+    "alert": "Alert",
+    "recommendation": "Pending recommendation",
+    "new": "Unread"
+  },
+  "rateLimit": {
+    "retryIn": "Retry in {seconds, number} s"
   }
 }

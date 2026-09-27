@@ -9,6 +9,8 @@
  *   failures a new code is required.
  * - "Resend" is enabled 60 s after each send (seconds shown); Turnstile
  *   tokens are single-use, so the widget is reset after every send.
+ * - 429 RATE_LIMITED: the send / verify buttons count down Retry-After and
+ *   re-enable at zero (shared `useRetryAfter`).
  */
 
 import {Mail} from 'lucide-react';
@@ -16,6 +18,7 @@ import {useState, type FormEvent} from 'react';
 import {useTranslation} from 'react-i18next';
 import {isApiError} from '../../../shared/api/errors';
 import {errorMessage} from '../../../shared/api/error_message';
+import {useRetryAfter} from '../../../shared/api/rate_limit';
 import {useCountdown} from '../../../shared/lib/hooks';
 import {normalizeLang} from '../../../shared/lib/i18n';
 import {Badge} from '../../../shared/ui/badge';
@@ -66,6 +69,10 @@ export function EmailCodeFlow({
   const [busy, setBusy] = useState(false);
   const [resendAt, setResendAt] = useState<number | null>(null);
   const resendIn = useCountdown(resendAt);
+  const sendLimit = useRetryAfter('auth.code');
+  const verifyLimit = useRetryAfter('auth.session');
+  const retryIn = (sec: number) =>
+    t('common:rateLimit.retryIn', {seconds: sec});
 
   const request = async () => {
     if (!token) return;
@@ -84,6 +91,7 @@ export function EmailCodeFlow({
       setNeedNewCode(false);
       setResendAt(Date.now() + RESEND_SECONDS * 1000);
     } catch (e) {
+      sendLimit.trap(e);
       setError(
         isApiError(e, 'SIGNUP_CLOSED')
           ? t('signup.closed')
@@ -107,6 +115,7 @@ export function EmailCodeFlow({
 
   const verify = async (value = code) => {
     if (value.length !== OTP_LENGTH || busy || needNewCode) return;
+    if (verifyLimit.limited) return;
     setBusy(true);
     setError(null);
     try {
@@ -134,6 +143,7 @@ export function EmailCodeFlow({
       } else if (isApiError(e, 'SIGNUP_CLOSED')) {
         setError(t('signup.closed'));
       } else {
+        verifyLimit.trap(e);
         setError(errorMessage(e, t));
       }
     } finally {
@@ -194,9 +204,9 @@ export function EmailCodeFlow({
             variant="primary"
             size="lg"
             loading={busy}
-            disabled={!token || !email}
+            disabled={!token || !email || sendLimit.limited}
           >
-            {t('email.send')}
+            {sendLimit.limited ? retryIn(sendLimit.seconds) : t('email.send')}
           </Button>
           <p className="text-xs leading-relaxed text-dim">{t('privacyNote')}</p>
         </form>
@@ -247,9 +257,11 @@ export function EmailCodeFlow({
             variant="primary"
             size="lg"
             loading={busy}
-            disabled={code.length !== OTP_LENGTH || needNewCode}
+            disabled={
+              code.length !== OTP_LENGTH || needNewCode || verifyLimit.limited
+            }
           >
-            {submitLabel}
+            {verifyLimit.limited ? retryIn(verifyLimit.seconds) : submitLabel}
           </Button>
           <p className="text-xs leading-relaxed text-dim">
             {t('code.notReceived')}{' '}
@@ -257,6 +269,8 @@ export function EmailCodeFlow({
               <span className="num">
                 {t('code.resendIn', {seconds: resendIn})}
               </span>
+            ) : sendLimit.limited ? (
+              <span className="num">{retryIn(sendLimit.seconds)}</span>
             ) : (
               <button
                 type="button"

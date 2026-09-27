@@ -23,6 +23,7 @@ import type {
   ArchiveIndexRecord,
   ArchiveIndexRepository,
   BlobStore,
+  LedgerRepository,
   Lifecycles,
   WorkspaceRepository,
 } from '../ports';
@@ -31,6 +32,7 @@ import type {
 export interface TrialDeps {
   workspaces: WorkspaceRepository;
   archives: ArchiveIndexRepository;
+  ledgers: LedgerRepository;
   blobs: BlobStore;
   lifecycles: Lifecycles;
   accounts: AccountService;
@@ -179,8 +181,10 @@ export class TrialService {
   }
 
   /**
-   * Deletes every B2 version of the ZIP, then archive_index and
-   * purge_ledger, and writes the tombstone.
+   * Deletes every B2 version of the ZIP, then archive_index. purge_ledger
+   * (and the tombstone) go only when the saga already deleted the account;
+   * an unfinished saga keeps its ledger and still purges the data and
+   * deletes the account (it never re-creates the index or mails again).
    */
   async finalDelete(idx: ArchiveIndexRecord): Promise<void> {
     await this.d.blobs.deleteAllVersions(idx.objectKey);
@@ -192,6 +196,8 @@ export class TrialService {
   async finalDeleteDue(limit = 1): Promise<number> {
     const due = await this.d.archives.due(this.now(), limit);
     for (const idx of due) await this.finalDelete(idx);
+    // A finished saga whose ZIP went meanwhile leaves nothing behind.
+    await this.d.ledgers.deleteOrphans();
     return due.length;
   }
 }

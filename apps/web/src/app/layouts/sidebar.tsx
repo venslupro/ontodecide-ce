@@ -1,11 +1,13 @@
 /**
  * @fileoverview 216 px sidebar: brand, grouped navigation (运营 / 构建 /
- * 我的; admin: 平台), and the trial or admin card at the bottom.
+ * 我的; admin: 平台) with the pending-recommendation count on 建议中心
+ * (效果图 c2), and the trial or admin card at the bottom.
  */
 
 import {Link} from '@tanstack/react-router';
 import {useTranslation} from 'react-i18next';
 import {useSession} from '../../entities/session/store';
+import {usePendingRecCount} from '../../features/situation/notifications';
 import {Brand} from '../../shared/ui/brand';
 import {visibleGroups} from '../nav';
 import {SidebarCard} from './trial_card';
@@ -14,6 +16,7 @@ import {SidebarCard} from './trial_card';
 export function Sidebar() {
   const {t} = useTranslation('common');
   const isAdmin = useSession(s => s.role === 'admin');
+  const pending = usePendingRecCount();
   return (
     <aside className="sticky top-0 flex h-screen w-[216px] shrink-0 flex-col border-r border-line bg-bg/70 backdrop-blur-sm">
       <div className="px-4 pt-4 pb-5">
@@ -44,6 +47,20 @@ export function Sidebar() {
                   >
                     <item.icon className="size-4 shrink-0" aria-hidden />
                     {t(item.labelKey)}
+                    {item.to === '/recommendations' && pending > 0 && (
+                      <>
+                        <span
+                          aria-hidden
+                          data-testid="pending-rec-badge"
+                          className="ml-auto rounded-full bg-crit/15 px-1.5 text-[11px] leading-[18px] font-semibold text-crit"
+                        >
+                          {pending > 99 ? '99+' : pending}
+                        </span>
+                        <span className="sr-only">
+                          {t('nav.pendingBadge', {count: pending})}
+                        </span>
+                      </>
+                    )}
                   </Link>
                 </li>
               ))}

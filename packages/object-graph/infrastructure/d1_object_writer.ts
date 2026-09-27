@@ -28,13 +28,49 @@ const GUARD =
 
 /** Workspace-scoped object writes. */
 export class D1ObjectWriter extends TenantRepository implements ObjectWriter {
-  private outboxStmt(row: OutboxRow): D1PreparedStatement {
+  /**
+   * Outbox row of an upsert, written after the guarded object and link
+   * statements of the same batch. RETURNING is not visible to later
+   * statements, so the row keeps only the changes whose object this batch
+   * wrote (props_hash and updated_at match) or that have a link this batch
+   * wrote (weight matches); no row at all when nothing was written. Cron
+   * redelivery therefore never resends objects rejected by the 300/900
+   * guards.
+   */
+  private upsertOutboxStmt(
+    row: OutboxRow,
+    input: {objects: HashedObject[]; links: PlannedLink[]},
+    nowMs: number,
+  ): D1PreparedStatement {
+    // Non-correlated IN subqueries: each set is built once per execution,
+    // with one primary-key probe per planned object / link.
+    const written = `(c.value ->> 'rid' IN (SELECT h.value ->> 'rid'
+         FROM json_each(?5) AS h
+         WHERE EXISTS (SELECT 1 FROM og_object o WHERE o.tenant_id = ?1
+           AND o.rid = h.value ->> 'rid'
+           AND o.props_hash = h.value ->> 'hash' AND o.updated_at = ?7))
+       OR c.value ->> 'rid' IN (SELECT l.value ->> 's'
+         FROM json_each(?6) AS l
+         WHERE EXISTS (SELECT 1 FROM og_link k WHERE k.tenant_id = ?1
+           AND k.src_rid = l.value ->> 's' AND k.link_type = l.value ->> 't'
+           AND k.dst_rid = l.value ->> 'd'
+           AND k.weight IS (l.value ->> 'w'))))`;
     return this.stmt(
       `INSERT INTO domain_event (tenant_id, id, payload, occurred_at)
-       VALUES (?1, ?2, ?3, ?4)`,
+       SELECT ?1, ?2, json_set(?3, '$.changes', json((
+           SELECT json_group_array(json(w.value)) FROM (
+             SELECT c.value AS value FROM json_each(?3, '$.changes') AS c
+             WHERE ${written} ORDER BY c.key) AS w))), ?4
+       WHERE EXISTS (SELECT 1 FROM json_each(?3, '$.changes') AS c
+         WHERE ${written})`,
       row.id,
       JSON.stringify(row.msg),
       row.msg.occurredAt,
+      JSON.stringify(input.objects.map(o => ({rid: o.rid, hash: o.hash}))),
+      JSON.stringify(
+        input.links.map(l => ({s: l.src, t: l.type, d: l.dst, w: l.weight})),
+      ),
+      nowMs,
     );
   }
 
@@ -155,7 +191,9 @@ export class D1ObjectWriter extends TenantRepository implements ObjectWriter {
         ),
       );
     }
-    if (input.outbox) stmts.push(this.outboxStmt(input.outbox));
+    if (input.outbox) {
+      stmts.push(this.upsertOutboxStmt(input.outbox, input, input.nowMs));
+    }
 
     let results: D1Result[];
     try {

@@ -22,7 +22,15 @@
     "remove": "Remove perturbation {index}",
     "change": "Relative change",
     "sliderLabel": "Perturbation {index} relative change",
-    "empty": "Add at least one perturbation to run the simulation"
+    "empty": "Add at least one perturbation to run the simulation",
+    "mode": "Perturbation kind",
+    "delay": "Delay",
+    "delayValue": "+{days, number} d",
+    "delayDays": "Delay (days)",
+    "delayPickProperty": "Pick a time property (e.g. lead time) to convert it into a relative change",
+    "delayConverted": "+{days, number} d ≈ {pct} (now {current} {unit})",
+    "delayNoCurrent": "The current value is missing or not positive; the delay cannot be converted",
+    "delayCapped": "More than 100% of the current value; simulated as +100%"
   },
   "candidates": {
     "title": "Candidate actions (from the ontology)",
@@ -63,5 +71,15 @@
     "generate": "Generate AI recommendation",
     "rulesHint": "Today's AI quota is used up; you can still generate, the result will be rule ranked",
     "needFocus": "Choose a perturbed object first"
+  },
+  "save": {
+    "button": "Save scenario",
+    "title": "Save scenario",
+    "nameLabel": "Scenario name",
+    "namePlaceholder": "e.g. S-017 capacity drop impact",
+    "hint": "Saving runs the simulation with the current perturbations and candidate actions and stores it under this name",
+    "submit": "Save",
+    "saved": "Scenario \"{name}\" saved",
+    "savedBadge": "Saved"
   }
 }

@@ -2,7 +2,9 @@
  * @fileoverview End-to-end core loop through the gateway (ARCHITECTURE.md
  * 6): sign-up → sample data → domain events → cockpit alerts → scenario →
  * recommendation (rule ranking, AI absent) → confirm → action executed as
- * svc:decision-engine; plus workspace isolation and If-Match on objects.
+ * svc:decision-engine; declarative function values and
+ * `expand=links` on object reads; plus workspace isolation and If-Match on
+ * objects.
  */
 
 import {describe, expect, it} from 'vitest';
@@ -14,6 +16,8 @@ interface ObjectItem {
   title: string;
   props: Record<string, unknown>;
   version: number;
+  derived?: Record<string, unknown>;
+  links?: {nodes: unknown[]; edges: unknown[]; truncated: boolean};
 }
 
 describe('core loop', () => {
@@ -94,6 +98,25 @@ describe('core loop', () => {
     );
     expect(links.status).toBe(200);
     expect(links.body.edges.length).toBeGreaterThan(0);
+
+    // Declarative functions (supplierRiskLevel) are evaluated on reads.
+    for (const s of suppliers.body.items) {
+      const risk = Number(s.props.riskScore);
+      const level = risk >= 70 ? 'HIGH' : risk >= 40 ? 'MEDIUM' : 'LOW';
+      expect(s.derived).toEqual({supplierRiskLevel: level});
+    }
+
+    // Object detail with its links in one call; the ETag is unchanged.
+    const detail = await sys.api<ObjectItem>(
+      'GET',
+      `/objects/${focus.rid}?expand=links&depth=2`,
+      {token: owner.token},
+    );
+    expect(detail.status).toBe(200);
+    expect(detail.headers.get('etag')).toBe(`"v${focus.version}"`);
+    expect(detail.body.derived).toEqual({supplierRiskLevel: 'HIGH'});
+    expect(detail.body.links?.edges.length).toBe(links.body.edges.length);
+    expect(detail.body.links?.nodes.length).toBe(links.body.nodes.length);
 
     const scenario = await sys.api<{
       id: string;
@@ -191,7 +214,9 @@ describe('core loop', () => {
       '/objects?type=Supplier',
       {token: a.token},
     );
-    const obj = list.body.items[0];
+    // A supplier whose status actually changes: a no-op patch keeps the
+    // version, and then the old ETag is (correctly) still current.
+    const obj = list.body.items.find(o => o.props.status !== 'watch')!;
     // Workspace B cannot see A's object: same 404 as a missing one.
     const foreign = await sys.api<{code: string}>(
       'GET',

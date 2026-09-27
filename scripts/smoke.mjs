@@ -11,6 +11,22 @@
  *   5. refresh with a foreign Origin → 403 (Origin check)
  *   6. GET /me without a token → 401 UNAUTHENTICATED
  *
+ * Pre-launch checks (详细设计 表 14 冒烟), from outside:
+ *
+ *   7. /api is served by the gateway Worker (Workers Route), not by Pages:
+ *      the health response carries the gateway's `X-Request-Id`;
+ *   8. CSP of the API response and of the SPA page contains
+ *      `connect-src 'self'` (the SPA talks to no other backend);
+ *   9. with SMOKE_PAGES_URL (e.g. https://ontodecide-ce.pages.dev, set when
+ *      a custom domain is used): it answers 301 to SMOKE_BASE_URL.
+ *
+ * Not testable from here and therefore skipped: "the other 6 Workers have
+ * no public URL" (their hostnames are unknown by construction), e-mail
+ * link tracking, and B2 download headers (need a real archive).
+ *
+ * SMOKE_READONLY=1 skips check 4 (it sends a real e-mail and needs the
+ * Turnstile test secret) — used by the post-deploy smoke of production.
+ *
  * Optional full flow when SMOKE_CODE_READER is set: a shell command that
  * prints the latest code for $SMOKE_EMAIL (e.g. a grep over the
  * identity-access log with EMAIL_MODE=log). It then signs up, reads /me and
@@ -32,6 +48,8 @@ const API = `${BASE}/api/v1`;
 const ORIGIN = process.env.SMOKE_ORIGIN ?? 'http://localhost:5173';
 const EMAIL = process.env.SMOKE_EMAIL ?? `smoke-${Date.now()}@example.com`;
 const TURNSTILE = process.env.SMOKE_TURNSTILE ?? 'XXXX.DUMMY.TOKEN.XXXX';
+const READONLY = process.env.SMOKE_READONLY === '1';
+const PAGES_URL = (process.env.SMOKE_PAGES_URL ?? '').replace(/\/$/, '');
 
 let failures = 0;
 
@@ -74,6 +92,16 @@ function expect(cond, message) {
   if (!cond) throw new Error(message);
 }
 
+/** Asserts a CSP header whose connect-src is exactly 'self'. */
+function expectConnectSelf(csp) {
+  expect(csp, 'no Content-Security-Policy header');
+  const directive = csp
+    .split(';')
+    .map(d => d.trim())
+    .find(d => d.startsWith('connect-src'));
+  expect(directive === "connect-src 'self'", `connect-src: ${directive}`);
+}
+
 function expectProblem(r, status, code) {
   expect(r.status === status, `status ${r.status}, want ${status}: ${r.text}`);
   const type = r.headers.get('content-type') ?? '';
@@ -90,6 +118,36 @@ async function main() {
     expect(r.status === 200, `status ${r.status}`);
   });
 
+  await check('/api served by the gateway Worker (X-Request-Id)', async () => {
+    const r = await call('GET', '/health');
+    expect(
+      /^[\w-]{8,}$/.test(r.headers.get('x-request-id') ?? ''),
+      `x-request-id ${r.headers.get('x-request-id')}`,
+    );
+  });
+
+  await check("API CSP has connect-src 'self'", async () => {
+    const r = await call('GET', '/health');
+    expectConnectSelf(r.headers.get('content-security-policy'));
+  });
+
+  if (/^https:/.test(BASE)) {
+    await check("SPA CSP has connect-src 'self'", async () => {
+      const res = await fetch(`${BASE}/`, {headers: {accept: 'text/html'}});
+      expect(res.status === 200, `status ${res.status}`);
+      expectConnectSelf(res.headers.get('content-security-policy'));
+    });
+  }
+
+  if (PAGES_URL) {
+    await check(`${PAGES_URL} → 301 ${BASE}`, async () => {
+      const res = await fetch(`${PAGES_URL}/login`, {redirect: 'manual'});
+      expect(res.status === 301, `status ${res.status}`);
+      const to = res.headers.get('location') ?? '';
+      expect(to.startsWith(BASE), `location ${to}`);
+    });
+  }
+
   await check('openapi.yaml', async () => {
     const r = await call('GET', '/openapi.yaml', {
       headers: {accept: 'application/yaml'},
@@ -102,17 +160,21 @@ async function main() {
     expectProblem(await call('GET', '/no-such-route'), 404);
   });
 
-  await check('sign-up code accepted (202)', async () => {
-    const r = await call('POST', '/auth/codes', {
-      body: {
-        email: EMAIL,
-        purpose: 'signup',
-        turnstileToken: TURNSTILE,
-        locale: 'en-US',
-      },
+  if (READONLY) {
+    console.log('– sign-up code skipped (SMOKE_READONLY=1)');
+  } else {
+    await check('sign-up code accepted (202)', async () => {
+      const r = await call('POST', '/auth/codes', {
+        body: {
+          email: EMAIL,
+          purpose: 'signup',
+          turnstileToken: TURNSTILE,
+          locale: 'en-US',
+        },
+      });
+      expect(r.status === 202, `status ${r.status}: ${r.text}`);
     });
-    expect(r.status === 202, `status ${r.status}: ${r.text}`);
-  });
+  }
 
   await check('foreign Origin rejected (403)', async () => {
     const r = await call('POST', '/auth/sessions/refresh', {

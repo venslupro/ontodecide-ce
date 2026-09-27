@@ -7,10 +7,12 @@
  * - `X-Act-As-Tenant` while an admin is in the admin view.
  * - 401 UNAUTHENTICATED / TRIAL_EXPIRED → one single-flight refresh
  *   (`POST /auth/sessions/refresh`, cross-tab Web Lock), then one replay.
- *   If the refresh fails: TRIAL_EXPIRED (or a known past trial end) →
- *   `onTrialEnded` (→ /ended); otherwise `onAuthFailure` (→ /login).
+ *   If the refresh fails: refresh TRIAL_EXPIRED (or a known past trial
+ *   end) → `onTrialEnded` (→ /ended); otherwise `onAuthFailure` (→ /login).
  * - `If-Match` from a version number, `Idempotency-Key`, `X-Step-Up`.
  * - Problem Details → {@link ApiError}; the `Date` header estimates skew.
+ * - 403 with `reason` RECOVERY_PENDING / PASSKEY_SETUP_INCOMPLETE (admin
+ *   session gate) → `onAdminGate` (the app forces passkey registration).
  */
 
 import {
@@ -46,6 +48,27 @@ export interface ApiHooks {
   getActAs(): string | undefined;
   /** Server `Date` header, for clock skew estimation. */
   onServerDate(serverMs: number): void;
+  /** The admin session gate refused a request (403 extras.reason). */
+  onAdminGate(reason: AdminGateReason): void;
+}
+
+/** 403 reasons of the admin session gate (api-gateway authenticate). */
+export const ADMIN_GATE_REASONS = [
+  'RECOVERY_PENDING',
+  'PASSKEY_SETUP_INCOMPLETE',
+] as const;
+
+/** One of {@link ADMIN_GATE_REASONS}. */
+export type AdminGateReason = (typeof ADMIN_GATE_REASONS)[number];
+
+/** The admin-gate reason of an error, if any. */
+export function adminGateReason(err: ApiError): AdminGateReason | null {
+  const r = err.extras.reason;
+  return err.status === 403 &&
+    typeof r === 'string' &&
+    (ADMIN_GATE_REASONS as readonly string[]).includes(r)
+    ? (r as AdminGateReason)
+    : null;
 }
 
 const hooks: ApiHooks = {
@@ -57,6 +80,7 @@ const hooks: ApiHooks = {
   getLocale: () => 'zh-CN',
   getActAs: () => undefined,
   onServerDate: () => {},
+  onAdminGate: () => {},
 };
 
 /** Installs app hooks (token store, locale, redirects). */
@@ -257,10 +281,11 @@ export async function apiRaw(
     const outcome: RefreshOutcome =
       current && current !== first.token ? 'ok' : await refreshAccessToken();
     if (outcome !== 'ok') {
-      const ended =
-        outcome === 'expired' ||
-        err.code === 'TRIAL_EXPIRED' ||
-        hooks.trialKnownExpired();
+      // Refresh said TRIAL_EXPIRED → /ended. Refresh said UNAUTHENTICATED
+      // (account deleted / session revoked) → /ended only when the locally
+      // known trial end has passed, else /login — even if the original
+      // request answered TRIAL_EXPIRED (前端详细设计 6.3.1).
+      const ended = outcome === 'expired' || hooks.trialKnownExpired();
       if (ended) hooks.onTrialEnded();
       else hooks.onAuthFailure();
       throw err;
@@ -273,7 +298,12 @@ export async function apiRaw(
       throw again;
     }
   }
-  if (!res.ok) throw await toApiError(res);
+  if (!res.ok) {
+    const err = await toApiError(res);
+    const gate = adminGateReason(err);
+    if (gate) hooks.onAdminGate(gate);
+    throw err;
+  }
   return res;
 }
 

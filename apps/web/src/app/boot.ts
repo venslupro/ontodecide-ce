@@ -9,6 +9,7 @@ import type {QueryClient} from '@tanstack/react-query';
 import {setLifecycleHandlers} from '../entities/session/lifecycle';
 import {trialKnownExpired, useSession} from '../entities/session/store';
 import {configureApi, refreshAccessToken} from '../shared/api/client';
+import {resetRateLimits} from '../shared/api/rate_limit';
 import {i18n, resolveLanguage} from '../shared/lib/i18n';
 import {configureStream, releaseAll} from '../shared/ws/stream';
 
@@ -23,6 +24,7 @@ export const SKEW_TOLERANCE_MS = 1500;
 /** Clears all client state of the session (memory token, caches, stream). */
 export function clearClientState(qc: QueryClient): void {
   releaseAll();
+  resetRateLimits();
   useSession.getState().signOut();
   qc.clear();
 }
@@ -60,6 +62,10 @@ export function wireApp(qc: QueryClient, router: Navigator): void {
     trialKnownExpired,
     onTrialEnded: trialEnded,
     onAuthFailure: authFailed,
+    onAdminGate: reason =>
+      useSession
+        .getState()
+        .setAdminGate(reason === 'RECOVERY_PENDING' ? 'recovery' : 'setup'),
     onServerDate: serverMs => {
       const skew = serverMs - Date.now();
       const s = useSession.getState();

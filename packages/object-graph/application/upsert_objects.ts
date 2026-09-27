@@ -151,13 +151,13 @@ export async function upsertBatch(
     const written = outbox.msg.changes.filter(
       c => commit.objects.has(c.rid) || linkSources.has(c.rid as Rid),
     );
+    // The stored row holds the same subset (filtered inside the batch); no
+    // row was stored when nothing was written.
     if (written.length) {
       await deliver(deps, repos, {
         id: outbox.id,
         msg: {...outbox.msg, changes: written},
       });
-    } else {
-      await repos.outbox.delete(outbox.id);
     }
   }
   return result;

@@ -71,7 +71,63 @@ async function adminFirstLogin(sys: System): Promise<string> {
   expect(setup.status).toBe(201);
   expect(setup.body.total).toBe(1);
   expect(refreshCookie(setup)).toContain('__Host-od_rt=');
-  return setup.body.accessToken;
+  const token = setup.body.accessToken;
+
+  // With one passkey everything but passkey registration is refused.
+  const early = await sys.api<{code: string; reason: string}>(
+    'GET',
+    '/admin/users',
+    {token},
+  );
+  expect(early.status).toBe(403);
+  expect(early.body.reason).toBe('PASSKEY_SETUP_INCOMPLETE');
+
+  // Passkey #2 (with a step-up from #1) issues the 10 recovery codes.
+  const so = await sys.api<{challenge: string}>(
+    'POST',
+    '/auth/passkeys/options',
+    {token, body: {purpose: 'step_up'}},
+  );
+  const su = await sys.api<{stepUpToken: string}>(
+    'POST',
+    '/auth/passkeys/assertion',
+    {
+      token,
+      body: {
+        purpose: 'step_up',
+        credential: FakeWebAuthn.credential('pk-1', so.body.challenge, {
+          counter: 5,
+        }),
+      },
+    },
+  );
+  expect(su.status).toBe(200);
+  const ro = await sys.api<{challenge: string}>(
+    'POST',
+    '/admin/passkeys/options',
+    {token, body: {}, headers: {'idempotency-key': 'e2e-pk-options-000001'}},
+  );
+  const pk2 = await sys.api<{total: number; recoveryCodes: string[]}>(
+    'POST',
+    '/admin/passkeys',
+    {
+      token,
+      headers: {
+        'x-step-up': su.body.stepUpToken,
+        'idempotency-key': 'e2e-pk-add-0000000001',
+      },
+      body: {
+        credential: FakeWebAuthn.credential('pk-2', ro.body.challenge, {
+          type: 'create',
+        }),
+        label: 'backup',
+      },
+    },
+  );
+  expect(pk2.status).toBe(201);
+  expect(pk2.body.total).toBe(2);
+  expect(pk2.body.recoveryCodes).toHaveLength(10);
+  return token;
 }
 
 describe('admin', () => {

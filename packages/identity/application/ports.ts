@@ -161,6 +161,8 @@ export interface SessionRepository {
   countActive(userId: string, now: number): Promise<number>;
   /** Whether the user holds an unexpired session signed in by recovery code. */
   hasActiveRecoverySession(userId: string, now: number): Promise<boolean>;
+  /** Replaces the authentication methods of one session (recovery upgrade). */
+  setAmr(sessionId: string, amr: AuthMethod[]): Promise<void>;
   sweep(now: number): Promise<void>;
 }
 
@@ -252,7 +254,10 @@ export interface WorkspaceRepository {
   dueExpirations(now: number, limit: number): Promise<WorkspaceRecord[]>;
   /** Expires one due trial (conditional). */
   expire(tenantId: string, now: number): Promise<boolean>;
-  /** An EXPIRED trial past the delay without a ledger. */
+  /**
+   * An EXPIRED trial past the delay without a ledger, or an ARCHIVING one
+   * whose ledger is gone (resumed by the saga).
+   */
   nextArchiveCandidate(expiredBefore: number): Promise<WorkspaceRecord | null>;
   markArchiving(tenantId: string): Promise<void>;
   /** Deletes sessions, pending codes, account and workspace; tombstone. */
@@ -275,6 +280,8 @@ export interface LedgerRepository {
     },
   ): Promise<boolean>;
   delete(tenantId: string): Promise<void>;
+  /** Deletes account_deleted ledgers whose archive_index row is gone. */
+  deleteOrphans(): Promise<number>;
 }
 
 /** An archive_index row. */
@@ -297,7 +304,11 @@ export interface ArchiveIndexRepository {
   due(now: number, limit: number): Promise<ArchiveIndexRecord[]>;
   list(cursor: string | null, limit: number): Promise<ArchiveIndexRecord[]>;
   count(): Promise<number>;
-  /** Deletes archive_index + purge_ledger and writes the tombstone. */
+  /**
+   * Deletes archive_index. The purge_ledger row goes too (with the
+   * tombstone) only once the saga reached account_deleted; otherwise the
+   * saga keeps it and still purges the data and deletes the account.
+   */
   finalDelete(tenantId: string, now: number): Promise<void>;
 }
 
@@ -309,6 +320,26 @@ export interface UsageCounter {
   read(day: string, key: string): Promise<number>;
   set(day: string, key: string, value: number): Promise<void>;
   sweep(beforeDay: string): Promise<void>;
+}
+
+/** A system_flag row. */
+export interface SystemFlag {
+  value: number;
+  at: number;
+}
+
+/**
+ * system_flag access for cron bookkeeping (archive step failures, B2
+ * signing key first-seen time). Keys and values never hold personal data.
+ */
+export interface SystemFlagRepository {
+  /** Inserts the flag unless it exists; true when this call created it. */
+  setOnce(key: string, value: number, at: number): Promise<boolean>;
+  get(key: string): Promise<SystemFlag | null>;
+  setValue(key: string, value: number): Promise<void>;
+  clear(key: string): Promise<void>;
+  /** Flags whose key starts with `prefix` and whose `at` ≤ `atOrBefore`. */
+  countPrefix(prefix: string, atOrBefore: number): Promise<number>;
 }
 
 /** Lifecycle entry points of the five data-owning services. */

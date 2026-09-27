@@ -12,6 +12,29 @@ export const PASSKEY_RULES = {
   recoveryCodes: 10,
 } as const;
 
+/**
+ * Whether a session was opened with a recovery code and has not bound a
+ * passkey since (then it may only manage passkeys, read /me and log out).
+ */
+export function recoveryPending(amr: readonly string[]): boolean {
+  return amr.includes('recovery') && !amr.includes('passkey');
+}
+
+/**
+ * Whether the admin's second factor is not fully set up: fewer than
+ * {@link PASSKEY_RULES.minPasskeys} passkeys, or recovery codes never
+ * issued. Until then only passkey registration, /me and logout work.
+ */
+export function passkeySetupIncomplete(
+  passkeys: number,
+  recoveryCodesIssued: number,
+): boolean {
+  return passkeys < PASSKEY_RULES.minPasskeys || recoveryCodesIssued === 0;
+}
+
+/** Amr of a recovery session once it bound a new passkey. */
+export const UPGRADED_RECOVERY_AMR = ['otp', 'passkey'] as const;
+
 /** system_flag key recording that the bootstrap setup code was consumed. */
 export const SETUP_CODE_USED_FLAG = 'setup_code_used';
 

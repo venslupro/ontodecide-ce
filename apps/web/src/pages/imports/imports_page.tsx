@@ -9,7 +9,7 @@ import {FileUp, Plus} from 'lucide-react';
 import {useTranslation} from 'react-i18next';
 import {useImports} from '../../features/integration/api';
 import {JobStatusBadge} from '../../features/integration/components/job_status_badge';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {fmt} from '../../shared/lib/format';
 import {Button} from '../../shared/ui/button';
 import {EmptyState, ErrorView} from '../../shared/ui/empty_state';
@@ -100,6 +100,7 @@ export function ImportsPage() {
           </div>
         ) : q.error ? (
           <ErrorView
+            traceId={errorTraceId(q.error)}
             detail={errorMessage(q.error, t)}
             onRetry={() => void q.refetch()}
           />

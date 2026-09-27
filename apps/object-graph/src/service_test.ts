@@ -469,6 +469,76 @@ describe('outbox delivery', () => {
     expect(count(h, 'SELECT COUNT(*) AS n FROM domain_event')).toBe(0);
   });
 
+  it('stores only the changes the guarded batch wrote (never rejected rids)', async () => {
+    // Two concurrent batches both plan with free capacity; the in-batch
+    // guards then reject one object and some links of the later batch.
+    const h = setup({maxObjects: 5, maxLinks: 4});
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 0,
+      cmds: [part('P1'), part('P2', {}, 2)],
+    });
+    h.failQueue(true);
+    const batch = (prefix: string) =>
+      h.rpc.upsertBatch(testCtx(), {
+        jobId: prefix,
+        seq: 1,
+        cmds: [1, 2].map(i =>
+          supplier(`${prefix}${i}`, {}, i, [supplies('P1'), supplies('P2')]),
+        ),
+      });
+    const results = await Promise.all([batch('A'), batch('B')]);
+    expect(results.flatMap(r => r.rejected).length).toBeGreaterThan(0);
+
+    const written = new Set(
+      (
+        h.db.raw.prepare('SELECT rid FROM og_object').all() as {rid: string}[]
+      ).map(r => r.rid),
+    );
+    const linked = new Set(
+      (
+        h.db.raw.prepare('SELECT src_rid FROM og_link').all() as {
+          src_rid: string;
+        }[]
+      ).map(r => r.src_rid),
+    );
+    const rows = h.db.raw.prepare('SELECT payload FROM domain_event').all() as {
+      payload: string;
+    }[];
+    const stored = rows.flatMap(
+      r => (JSON.parse(r.payload) as DomainEventMsg).changes,
+    );
+    // 3 suppliers were written (5 - 2 parts); the rejected one is absent.
+    expect(stored).toHaveLength(3);
+    for (const c of stored) {
+      expect(written.has(c.rid) || linked.has(c.rid)).toBe(true);
+    }
+
+    h.failQueue(false);
+    h.clock.advance(2 * MINUTE_MS);
+    await h.svc.scheduled('*/15 * * * *', h.clock.now());
+    const redelivered = h
+      .messages()
+      .filter(m => m.jobId !== 'j')
+      .flatMap(m => m.changes.map(c => c.rid));
+    expect(redelivered.sort()).toEqual(stored.map(c => c.rid).sort());
+    expect(redelivered.every(r => written.has(r))).toBe(true);
+  });
+
+  it('stores no outbox row when the guards rejected everything', async () => {
+    const h = setup({maxObjects: 1});
+    h.failQueue(true);
+    const batch = (pk: string) =>
+      h.rpc.upsertBatch(testCtx(), {
+        jobId: pk,
+        seq: 1,
+        cmds: [supplier(pk)],
+      });
+    const results = await Promise.all([batch('A'), batch('B')]);
+    expect(results.reduce((n, r) => n + r.upserted, 0)).toBe(1);
+    expect(count(h, 'SELECT COUNT(*) AS n FROM domain_event')).toBe(1);
+  });
+
   it('splits messages larger than the bound by rid', async () => {
     const h = setup({maxEventBytes: 1024});
     const cmds = Array.from({length: 40}, (_, i) => supplier(`S${i}`, {}, i));
@@ -676,6 +746,49 @@ describe('reads and queries', () => {
       links: 0,
       byType: {Supplier: 5, Part: 1},
     });
+  });
+
+  it('evaluates the declarative functions of the object type into derived', async () => {
+    // The supply-chain template's two functions (scaled to this fixture).
+    h.setSchema(
+      testSchema(s => {
+        s.functions = {
+          supplierRiskLevel: {
+            apiName: 'supplierRiskLevel',
+            objectType: 'Supplier',
+            expr: {
+              if: [
+                {'>=': [{var: 'riskScore'}, 0.7]},
+                'HIGH',
+                {'>=': [{var: 'riskScore'}, 0.4]},
+                'MEDIUM',
+                'LOW',
+              ],
+            },
+            returns: 'string',
+          },
+          stockCoverage: {
+            apiName: 'stockCoverage',
+            objectType: 'Part',
+            expr: {'/': [{var: 'stock'}, {var: 'safetyStock'}]},
+            returns: 'double',
+          },
+        };
+      }),
+    );
+    const r1 = await ridOf(h, 'Supplier', 'S1');
+    const one = await h.rpc.getObject(testCtx(), r1);
+    expect(one?.derived).toEqual({supplierRiskLevel: 'HIGH'});
+    const r2 = await ridOf(h, 'Part', 'P1');
+    const [part1] = await h.rpc.getObjects(testCtx(), [r2]);
+    // safetyStock is not a Part property: division by missing → null.
+    expect(part1.derived).toEqual({stockCoverage: null});
+    const page = await h.rpc.listObjects(
+      testCtx(),
+      {type: 'Supplier'},
+      {limit: 100},
+    );
+    expect(page.items.every(o => o.derived?.supplierRiskLevel)).toBe(true);
   });
 });
 
@@ -1178,6 +1291,25 @@ describe('TenantLifecycle', () => {
     });
     return h;
   }
+
+  it('counts objects and links of several workspaces in one call', async () => {
+    const h = await seeded();
+    const lc = rpcBinding(h.svc.lifecycle);
+    const missing = '01K6A000000000000000000T99';
+    const before = h.db.queries;
+    const stats = await lc.tenantStats!([TEST_TID, OTHER_TID, missing]);
+    expect(h.db.queries - before).toBe(2);
+    expect(stats).toEqual({
+      [TEST_TID]: {objects: 3, links: 2},
+      [OTHER_TID]: {objects: 1, links: 0},
+      [missing]: {objects: 0, links: 0},
+    });
+    expect(await lc.tenantStats!([])).toEqual({});
+    const tooMany = Array.from({length: 101}, (_, i) => `t${i}`);
+    expect((await codeOf(lc.tenantStats!(tooMany))).code).toBe(
+      'VALIDATION_FAILED',
+    );
+  });
 
   it('exports objects, links and audit as JSON Lines pages', async () => {
     const h = await seeded();

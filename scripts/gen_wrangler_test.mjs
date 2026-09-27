@@ -152,6 +152,94 @@ test('local uses dev secrets, log mode, no AI and no routes', () => {
   assert.equal(c['data-integration'].ai, undefined);
 });
 
+/**
+ * Service-binding graph of rendered configs: worker name → bound worker
+ * names (ARCHITECTURE.md 2.2 requires a DAG).
+ * @param {Record<string, {name: string, services?: {service: string}[]}>} c
+ */
+function bindingGraph(c) {
+  const names = new Set(Object.values(c).map(cfg => cfg.name));
+  const graph = new Map();
+  for (const cfg of Object.values(c)) {
+    const deps = (cfg.services ?? []).map(s => s.service);
+    for (const d of deps) {
+      assert.ok(names.has(d), `${cfg.name} binds unknown service ${d}`);
+    }
+    graph.set(cfg.name, [...new Set(deps)]);
+  }
+  return graph;
+}
+
+/** A cycle in the graph as a node path, or null. */
+function findCycle(graph) {
+  const state = new Map(); // 1 = on stack, 2 = done
+  const stack = [];
+  const visit = n => {
+    if (state.get(n) === 2) return null;
+    if (state.get(n) === 1) return [...stack.slice(stack.indexOf(n)), n];
+    state.set(n, 1);
+    stack.push(n);
+    for (const d of graph.get(n) ?? []) {
+      const c = visit(d);
+      if (c) return c;
+    }
+    stack.pop();
+    state.set(n, 2);
+    return null;
+  };
+  for (const n of graph.keys()) {
+    const c = visit(n);
+    if (c) return c;
+  }
+  return null;
+}
+
+test('service bindings form a DAG; the gateway binds no TenantLifecycle', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'odgw-')), 'dev.json');
+  const secrets = loadDevSecrets(file);
+  const rendered = {
+    prod: renderAll('prod', buildVars('prod', TF, {environ: ENVIRON}), {}),
+    local: renderAll(
+      'local',
+      buildVars('local', {}, {devSecrets: secrets}),
+      secrets,
+    ),
+  };
+  for (const [env, c] of Object.entries(rendered)) {
+    assert.equal(Object.keys(c).length, 7, env);
+    const graph = bindingGraph(c);
+    assert.equal(findCycle(graph), null, `${env}: service-binding cycle`);
+    const gw = c['api-gateway'];
+    assert.ok(gw.services.length > 0);
+    assert.deepEqual(
+      gw.services.filter(s => s.entrypoint === 'TenantLifecycle'),
+      [],
+      `${env}: the gateway must not bind TenantLifecycle`,
+    );
+    // Only identity-access drives the lifecycle of the other services.
+    for (const [w, cfg] of Object.entries(c)) {
+      if (w === 'identity-access') continue;
+      assert.ok(
+        (cfg.services ?? []).every(s => s.entrypoint !== 'TenantLifecycle'),
+        `${env}: ${w} binds a TenantLifecycle entry point`,
+      );
+    }
+    // Nothing binds the gateway (it is the edge).
+    for (const deps of graph.values()) assert.ok(!deps.includes(gw.name));
+  }
+  // The detector itself finds cycles.
+  assert.deepEqual(
+    findCycle(
+      new Map([
+        ['a', ['b']],
+        ['b', ['c']],
+        ['c', ['a']],
+      ]),
+    ),
+    ['a', 'b', 'c', 'a'],
+  );
+});
+
 test('secret helpers', () => {
   assert.match(
     setupCode(),

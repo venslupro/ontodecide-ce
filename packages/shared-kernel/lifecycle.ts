@@ -58,6 +58,13 @@ export interface TenantLifecycleRpc {
   countTenant(tenantId: string): Promise<number>;
   /** situation-awareness only: closes the workspace's WebSockets. */
   closeStreams?(tenantId: string, code: number): Promise<void>;
+  /**
+   * object-graph only: object and link counts of several workspaces in one
+   * call (platform admin list). Missing tenants count as 0.
+   */
+  tenantStats?(
+    tenantIds: string[],
+  ): Promise<Record<string, {objects: number; links: number}>>;
 }
 
 /** Services exposing a TenantLifecycle entry point. */

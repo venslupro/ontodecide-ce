@@ -2,7 +2,8 @@
  * @fileoverview TenantLifecycle storage over object-graph-db
  * (SystemRepository; constructed only by the lifecycle entry point): keyset
  * export of objects, links and the action audit, bounded purge in the
- * design's order, counts and the local tombstone.
+ * design's order, counts (per workspace and grouped over several) and the
+ * local tombstone.
  */
 
 import {SystemRepository, writeTombstone} from '@ontodecide/shared-kernel/d1';
@@ -118,6 +119,29 @@ export class D1LifecycleStore
       tid,
     ).first<{n: number}>();
     return Number(r?.n ?? 0);
+  }
+
+  async stats(
+    tids: string[],
+  ): Promise<Record<string, {objects: number; links: number}>> {
+    const out: Record<string, {objects: number; links: number}> = {};
+    if (!tids.length) return out;
+    const ids = JSON.stringify(tids);
+    const grouped = (table: 'og_object' | 'og_link') =>
+      this.sql(
+        `SELECT tenant_id AS tid, COUNT(*) AS n FROM ${table}
+         WHERE tenant_id IN (SELECT value FROM json_each(?1))
+         GROUP BY tenant_id`,
+        ids,
+      );
+    const [objects, links] = await this.db.batch<{tid: string; n: number}>([
+      grouped('og_object'),
+      grouped('og_link'),
+    ]);
+    const at = (tid: string) => (out[tid] ??= {objects: 0, links: 0});
+    for (const r of objects.results) at(r.tid).objects = Number(r.n);
+    for (const r of links.results) at(r.tid).links = Number(r.n);
+    return out;
   }
 
   async writeTombstone(tid: string, nowMs: number): Promise<void> {

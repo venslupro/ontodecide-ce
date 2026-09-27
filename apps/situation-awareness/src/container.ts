@@ -48,7 +48,7 @@ export interface Container {
   logger: Logger;
   rooms: RoomResolver<RoomStub>;
   rpc: SituationRpc;
-  lifecycle: Required<TenantLifecycleRpc>;
+  lifecycle: Required<Omit<TenantLifecycleRpc, 'tenantStats'>>;
   queue(batch: QueueBatch<unknown>): Promise<void>;
   fetch(request: Request): Promise<Response>;
 }

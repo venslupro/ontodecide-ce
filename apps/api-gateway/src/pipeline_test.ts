@@ -235,13 +235,33 @@ describe('token verification', () => {
   });
 });
 
+/** A fake adminSessionStatus. */
+function status(
+  o: Partial<{
+    valid: boolean;
+    recoveryPending: boolean;
+    setupIncomplete: boolean;
+  }> = {},
+) {
+  return async () => ({
+    valid: true,
+    recoveryPending: false,
+    setupIncomplete: false,
+    ...o,
+  });
+}
+
 describe('admin session', () => {
-  it('checks verifyAdminSession on every admin request (revocation is immediate)', async () => {
+  it('checks adminSessionStatus on every admin request (revocation is immediate)', async () => {
     let live = true;
-    const verify = vi.fn(async (sid: string) => live && sid === 'sid-a');
+    const verify = vi.fn(async (sid: string) => ({
+      valid: live && sid === 'sid-a',
+      recoveryPending: false,
+      setupIncomplete: false,
+    }));
     const gw = await makeGateway({
       identity: {
-        verifyAdminSession: verify,
+        adminSessionStatus: verify,
         adminOverview: async () => ({}) as never,
       },
     });
@@ -257,12 +277,126 @@ describe('admin session', () => {
   });
 
   it('is not called for owner tokens', async () => {
-    const verify = vi.fn(async () => true);
+    const verify = vi.fn(status());
     const gw = await makeGateway({
-      identity: {verifyAdminSession: verify, getMe: async () => sampleMe()},
+      identity: {adminSessionStatus: verify, getMe: async () => sampleMe()},
     });
     await call(gw, 'GET', '/me', {token: await ownerToken()});
     expect(verify).not.toHaveBeenCalled();
+  });
+});
+
+describe('admin session gate', () => {
+  const ok = async () => ({}) as never;
+  const identity = {
+    getMe: async () => sampleMe('admin'),
+    usage: async () => [],
+    logout: async () => undefined,
+    adminOverview: ok,
+    adminListUsers: ok,
+    adminListPasskeys: async () => [],
+    adminPasskeyOptions: async () => ({challenge: 'c'}),
+    adminAddPasskey: async () => ({passkey: {}, total: 3}) as never,
+    adminDeletePasskey: async () => undefined,
+    adminGetSettings: ok,
+    passkeyOptions: async () => ({challenge: 'c'}),
+  };
+  const objects = {
+    stats: async () => ({objects: 0, links: 0, byType: {}}),
+    listObjects: async () => ({items: [], nextCursor: null}),
+  };
+  const recoveryToken = () => adminToken({amr: ['otp', 'recovery']});
+
+  async function reason(res: Response): Promise<string | undefined> {
+    return ((await res.json()) as {reason?: string}).reason;
+  }
+
+  it('recovery pending: only /me, the passkey list/options/registration and logout', async () => {
+    const gw = await makeGateway({
+      identity: {
+        ...identity,
+        adminSessionStatus: status({recoveryPending: true}),
+      },
+      objects,
+    });
+    const token = await recoveryToken();
+    const allowed: [string, string, unknown?][] = [
+      ['GET', '/me'],
+      ['GET', '/admin/passkeys'],
+      ['POST', '/admin/passkeys/options', {}],
+      ['POST', '/admin/passkeys', {credential: {id: 'c'}}],
+      ['DELETE', '/auth/sessions/current'],
+    ];
+    for (const [m, p, body] of allowed) {
+      const res = await call(gw, m, p, {token, body});
+      expect(res.status, `${m} ${p}`).toBeLessThan(300);
+    }
+    const denied: [string, string, Record<string, string>?, unknown?][] = [
+      ['GET', '/admin/overview'],
+      ['GET', '/admin/users'],
+      ['GET', '/admin/settings'],
+      ['DELETE', '/admin/passkeys/pk1', {'x-step-up': 's'}],
+      ['POST', '/auth/passkeys/options', {}, {purpose: 'step_up'}],
+      ['GET', '/objects'],
+      ['GET', '/objects', {'x-act-as-tenant': TARGET_TID}],
+      ['GET', '/me', {'x-act-as-tenant': TARGET_TID}],
+    ];
+    for (const [m, p, headers, body] of denied) {
+      const res = await call(gw, m, p, {token, headers, body});
+      expect(res.status, `${m} ${p}`).toBe(403);
+      expect(await reason(res)).toBe('RECOVERY_PENDING');
+    }
+  });
+
+  it('decides by the session state: an upgraded recovery token has full access', async () => {
+    const gw = await makeGateway({identity, objects});
+    const token = await recoveryToken();
+    expect((await call(gw, 'GET', '/admin/overview', {token})).status).toBe(
+      200,
+    );
+    expect((await call(gw, 'GET', '/objects', {token})).status).toBe(200);
+  });
+
+  it('fewer than 2 passkeys: only /me, passkey registration, step-up and logout', async () => {
+    const gw = await makeGateway({
+      identity: {
+        ...identity,
+        adminSessionStatus: status({setupIncomplete: true}),
+      },
+      objects,
+    });
+    const token = await adminToken();
+    for (const [m, p, body] of [
+      ['GET', '/me'],
+      ['GET', '/admin/passkeys'],
+      ['POST', '/admin/passkeys/options', {}],
+      ['POST', '/auth/passkeys/options', {purpose: 'step_up'}],
+      ['DELETE', '/auth/sessions/current'],
+    ] as [string, string, unknown?][]) {
+      const res = await call(gw, m, p, {token, body});
+      expect(res.status, `${m} ${p}`).toBeLessThan(300);
+    }
+    for (const [m, p, headers] of [
+      ['GET', '/admin/overview'],
+      ['GET', '/admin/users'],
+      ['GET', '/objects'],
+      ['GET', '/objects', {'x-act-as-tenant': TARGET_TID}],
+    ] as [string, string, Record<string, string>?][]) {
+      const res = await call(gw, m, p, {token, headers});
+      expect(res.status, `${m} ${p}`).toBe(403);
+      const body = (await res.json()) as {code: string; reason: string};
+      expect(body).toMatchObject({
+        code: 'FORBIDDEN',
+        reason: 'PASSKEY_SETUP_INCOMPLETE',
+      });
+    }
+  });
+
+  it('passes the sid to identity in the ctx', async () => {
+    const getMe = vi.fn(async (_ctx: CallCtx) => sampleMe('admin'));
+    const gw = await makeGateway({identity: {...identity, getMe}, objects});
+    await call(gw, 'GET', '/me', {token: await adminToken({sid: 'sid-z'})});
+    expect(getMe.mock.calls[0][0].sid).toBe('sid-z');
   });
 });
 
@@ -289,13 +423,19 @@ describe('scope and role', () => {
     expect(
       (await call(gw, 'GET', '/admin/overview', {token: otpOnly})).status,
     ).toBe(403);
+    const rec = await makeGateway({
+      identity: {
+        ...services.identity,
+        adminSessionStatus: status({recoveryPending: true}),
+      },
+    });
     const recovery = await adminToken({amr: ['otp', 'recovery']});
     expect(
-      (await call(gw, 'GET', '/admin/overview', {token: recovery})).status,
+      (await call(rec, 'GET', '/admin/overview', {token: recovery})).status,
     ).toBe(403);
     // A recovery session may manage passkeys (it must bind a new one).
     expect(
-      (await call(gw, 'GET', '/admin/passkeys', {token: recovery})).status,
+      (await call(rec, 'GET', '/admin/passkeys', {token: recovery})).status,
     ).toBe(200);
     expect(
       (await call(gw, 'GET', '/admin/overview', {token: await adminToken()}))
@@ -720,12 +860,24 @@ describe('validation and required headers', () => {
     const adminAddPasskey = vi.fn(
       async () => ({passkey: {}, total: 1}) as never,
     );
-    const gw = await makeGateway({identity: {adminAddPasskey}});
-    const res = await call(gw, 'POST', '/admin/passkeys', {
+    const rec = await makeGateway({
+      identity: {
+        adminAddPasskey,
+        adminSessionStatus: status({recoveryPending: true}),
+      },
+    });
+    const res = await call(rec, 'POST', '/admin/passkeys', {
       token: await adminToken({amr: ['otp', 'recovery']}),
       body: {credential: {id: 'c'}},
     });
     expect(res.status).toBe(201);
+    // Once the session is upgraded (not pending) a step-up is required.
+    const gw = await makeGateway({identity: {adminAddPasskey}});
+    const upgraded = await call(gw, 'POST', '/admin/passkeys', {
+      token: await adminToken({amr: ['otp', 'recovery']}),
+      body: {credential: {id: 'c'}},
+    });
+    expect(upgraded.status).toBe(403);
     const denied = await call(gw, 'POST', '/admin/passkeys', {
       token: await adminToken(),
       body: {credential: {id: 'c'}},
@@ -758,6 +910,7 @@ describe('CallCtx and Problem Details', () => {
       actor: {role: 'owner', userId: TEST_UID, actingAs: false},
       requestId: 'trace-12345678',
       locale: 'en-US',
+      sid: 'sid-1',
     });
   });
 

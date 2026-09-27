@@ -18,6 +18,7 @@ export * from './notification/routed_email_sender';
 export * from './platform_admin/admin_service';
 export * from './platform_admin/audit_service';
 export * from './platform_admin/maintenance_service';
+export * from './platform_admin/ops_flags';
 export * from './platform_admin/policy_service';
 export * from './ports';
 export * from './secrets';

@@ -37,6 +37,9 @@ export class IdentityRpc extends WorkerEntrypoint<Env> implements Contract {
   verifyAdminSession(...a: Parameters<Contract['verifyAdminSession']>) {
     return svc(this.env).rpc.verifyAdminSession(...a);
   }
+  adminSessionStatus(...a: Parameters<Contract['adminSessionStatus']>) {
+    return svc(this.env).rpc.adminSessionStatus(...a);
+  }
   passkeyOptions(...a: Parameters<Contract['passkeyOptions']>) {
     return svc(this.env).rpc.passkeyOptions(...a);
   }

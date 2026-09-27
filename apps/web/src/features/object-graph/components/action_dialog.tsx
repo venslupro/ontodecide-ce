@@ -2,7 +2,8 @@
  * @fileoverview Execute-action dialog: parameter form rendered from the
  * action type (renderer registry per DataType), `Idempotency-Key` created
  * when the dialog opens and reused for retries, `If-Match` = the object
- * version. 412 → conflict dialog; 422 unmet preconditions inline.
+ * version. 412 → conflict dialog; 422 unmet preconditions inline; 429
+ * RATE_LIMITED → the execute button counts down Retry-After.
  */
 
 import type {ObjectDto} from '@ontodecide/object-graph/contract';
@@ -14,6 +15,7 @@ import type {UiActionType} from '../../../entities/schema/model';
 import {idempotencyKey} from '../../../shared/api/client';
 import {errorMessage} from '../../../shared/api/error_message';
 import {isApiError} from '../../../shared/api/errors';
+import {useRetryAfter} from '../../../shared/api/rate_limit';
 import {Button} from '../../../shared/ui/button';
 import {Dialog, DialogContent} from '../../../shared/ui/dialog';
 import {Field} from '../../../shared/ui/input';
@@ -46,6 +48,7 @@ export function ActionDialog({
   );
   const form = useForm<Record<string, unknown>>({defaultValues: defaults});
   const [missing, setMissing] = useState<string[]>([]);
+  const limit = useRetryAfter(`action:${action?.apiName ?? ''}`);
   useEffect(() => {
     if (open) {
       setKey(idempotencyKey());
@@ -63,7 +66,7 @@ export function ActionDialog({
   const submit = form.handleSubmit(values => {
     const miss = missingParams(action.parameters, values);
     setMissing(miss);
-    if (miss.length) return;
+    if (miss.length || limit.limited) return;
     exec.mutate(
       {
         actionType: action.apiName,
@@ -82,6 +85,7 @@ export function ActionDialog({
           onOpenChange(false);
         },
         onError: e => {
+          limit.trap(e);
           if (isApiError(e, 'PRECONDITION_FAILED')) {
             onOpenChange(false);
             onConflict();
@@ -104,9 +108,12 @@ export function ActionDialog({
             <Button
               variant="primary"
               loading={exec.isPending}
+              disabled={limit.limited}
               onClick={() => void submit()}
             >
-              {t('action.execute')}
+              {limit.limited
+                ? t('common:rateLimit.retryIn', {seconds: limit.seconds})
+                : t('action.execute')}
             </Button>
           </>
         }

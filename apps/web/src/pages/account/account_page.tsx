@@ -30,7 +30,7 @@ import {
 } from '../../features/identity/api';
 import {LangSwitch} from '../../features/identity/components/lang_switch';
 import {isApiError} from '../../shared/api/errors';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {qk} from '../../shared/api/query_keys';
 import {cn} from '../../shared/lib/cn';
 import {isoDay, saveBlob} from '../../shared/lib/download';
@@ -190,7 +190,9 @@ function ExportButton() {
       saveBlob(blob, `ontodecide-export-${isoDay()}.jsonl`);
       toast.success(t('export.done'));
     } catch (e) {
-      toast.error(t('export.failed'), errorMessage(e, t));
+      toast.error(t('export.failed'), errorMessage(e, t), {
+        traceId: errorTraceId(e),
+      });
     } finally {
       setBusy(false);
     }
@@ -221,7 +223,9 @@ function AccountCard({me, admin}: {me: Me; admin: boolean}) {
       qc.setQueryData(qk.me(), {...me, ...next});
     } catch (e) {
       setTz(me.timeZone);
-      toast.error(errorMessage(e, t));
+      toast.error(errorMessage(e, t), undefined, {
+        traceId: errorTraceId(e),
+      });
     }
   };
   const rows: [string, ReactNode][] = [

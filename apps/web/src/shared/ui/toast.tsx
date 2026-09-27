@@ -7,6 +7,7 @@ import {useEffect} from 'react';
 import {useTranslation} from 'react-i18next';
 import {create} from 'zustand';
 import {cn} from '../lib/cn';
+import {APP_VERSION} from '../lib/version';
 
 /** Toast tone. */
 export type ToastTone = 'info' | 'success' | 'error';
@@ -17,7 +18,15 @@ export interface ToastItem {
   tone: ToastTone;
   title: string;
   description?: string;
+  /** API traceId, shown with the build version under "详情". */
+  traceId?: string;
   durationMs: number;
+}
+
+/** Extra toast options. */
+export interface ToastOptions {
+  /** API traceId of the failed call (see `errorTraceId`). */
+  traceId?: string;
 }
 
 interface ToastState {
@@ -47,10 +56,14 @@ export const toast = {
     useToastStore.getState().push({tone: 'info', title, description}),
   success: (title: string, description?: string) =>
     useToastStore.getState().push({tone: 'success', title, description}),
-  error: (title: string, description?: string) =>
-    useToastStore
-      .getState()
-      .push({tone: 'error', title, description, durationMs: 8000}),
+  error: (title: string, description?: string, opts: ToastOptions = {}) =>
+    useToastStore.getState().push({
+      tone: 'error',
+      title,
+      description,
+      traceId: opts.traceId,
+      durationMs: 8000,
+    }),
 };
 
 function ToastView({item}: {item: ToastItem}) {
@@ -92,6 +105,16 @@ function ToastView({item}: {item: ToastItem}) {
           <p className="mt-0.5 text-xs break-words text-muted">
             {item.description}
           </p>
+        )}
+        {item.traceId && (
+          <details className="mt-1 text-xs text-dim">
+            <summary className="cursor-pointer">{t('errors.details')}</summary>
+            <p className="mt-0.5 break-all">
+              {t('errors.traceId')}:{' '}
+              <code className="font-mono text-muted">{item.traceId}</code>
+            </p>
+            <p>{t('about.version', {version: APP_VERSION})}</p>
+          </details>
         )}
       </div>
       <button

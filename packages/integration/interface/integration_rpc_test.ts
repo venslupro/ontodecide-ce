@@ -14,7 +14,7 @@ import {
 } from '@ontodecide/testing';
 import {beforeEach, describe, expect, it} from 'vitest';
 import type {IntegrationRpc, MappingSpec, Row} from '../contract';
-import {sampleDatasets} from '../domain';
+import {SAMPLE_SEED_ROWS, sampleDatasets} from '../domain';
 import {WorkersAiPort} from '../infrastructure';
 import {createIntegrationRpc} from './integration_rpc';
 import {FakeObjectGraph, testDeps} from './test_fixtures';
@@ -715,7 +715,8 @@ describe('IntegrationRpc', () => {
     });
 
     it('respects the global daily seed budget', async () => {
-      wire({config: {seedRowsDaily: 2500}});
+      // Room for exactly two sample loads today.
+      wire({config: {seedRowsDaily: 2 * SAMPLE_SEED_ROWS + 100}});
       await rpc.loadSample(ctx);
       await rpc.loadSample(testCtx({tid: OTHER_TID}));
       expect(

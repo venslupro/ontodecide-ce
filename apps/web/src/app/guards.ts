@@ -38,10 +38,18 @@ export async function guardApp(href: string): Promise<GuardDecision> {
   );
 }
 
-/** Where a signed-in user visiting /signup or /login goes (null: stay). */
-export function guardPublicAuth(): string | null {
+/**
+ * Where a user visiting /signup or /login goes (null: stay). On a fresh page
+ * load (session state still `unknown`) one silent refresh with the HttpOnly
+ * cookie is tried first, so a signed-in user who opens /login in a new tab
+ * lands on /cockpit. After an explicit sign-out or a failed refresh the
+ * state is `anonymous` and no request is made.
+ */
+export async function guardPublicAuth(): Promise<string | null> {
   const s = useSession.getState();
-  return s.status === 'authenticated' && s.accessToken ? '/cockpit' : null;
+  if (s.status === 'authenticated' && s.accessToken) return '/cockpit';
+  if (s.status !== 'unknown') return null;
+  return (await restoreSession()) === 'ok' ? '/cockpit' : null;
 }
 
 /** Whether the current session may open /admin. */

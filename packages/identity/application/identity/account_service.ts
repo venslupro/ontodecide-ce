@@ -12,6 +12,7 @@ import {
   type QuotaItem,
 } from '@ontodecide/shared-kernel';
 import type {MeDto} from '../../contract';
+import {recoveryPending} from '../../domain';
 import {
   toWorkspaceDto,
   type WorkspaceDirectory,
@@ -62,15 +63,23 @@ export class AccountService {
     return a;
   }
 
-  /** Builds MeDto. */
-  async me(a: AccountRecord): Promise<MeDto> {
+  /**
+   * Builds MeDto; with the caller's session id it also reports when that
+   * session expires and (admin) whether it still has to bind a passkey.
+   */
+  async me(a: AccountRecord, sid?: string): Promise<MeDto> {
     const w = await this.workspaces.get(a.tenantId);
     if (!w) throw new AppError('UNAUTHENTICATED');
     const now = this.clock.now().getTime();
-    const [email, used] = await Promise.all([
+    const [email, used, session] = await Promise.all([
       this.secrets.decryptEmail(a.emailEnc),
       this.sessions.countActive(a.userId, now),
+      sid ? this.sessions.findById(sid) : Promise.resolve(null),
     ]);
+    const own =
+      session && session.userId === a.userId && session.expiresAt > now
+        ? session
+        : null;
     const me: MeDto = {
       userId: a.userId,
       email,
@@ -80,7 +89,9 @@ export class AccountService {
       workspace: toWorkspaceDto(w, a.verifiedAt),
       sessions: {used, limit: this.maxSessions},
     };
+    if (own) me.sessionExpiresAt = new Date(own.expiresAt).toISOString();
     if (a.role === 'admin') {
+      me.recoveryPending = own ? recoveryPending(own.amr) : false;
       const [count, rec] = await Promise.all([
         this.passkeys.count(a.userId),
         this.passkeys.recoveryStats(),
@@ -103,7 +114,7 @@ export class AccountService {
       });
     }
     await this.accounts.updateProfile(a.userId, patch);
-    return this.me({...a, ...patch});
+    return this.me({...a, ...patch}, ctx.sid);
   }
 
   /** `sessions` quota. */

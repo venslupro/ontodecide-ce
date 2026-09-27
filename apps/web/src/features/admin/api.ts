@@ -184,16 +184,20 @@ export function revokeSessions(
   );
 }
 
-/** DELETE /admin/users/{uid}?archive= (step-up; reason required). */
+/**
+ * DELETE /admin/users/{uid}?archive= (step-up). The reason is required
+ * without an archive (archive=false) and optional otherwise.
+ */
 export function deleteUser(
   uid: string,
   archive: boolean,
   reason: string,
   w: WriteCtx,
 ): Promise<void> {
+  const r = reason.trim();
   return api.del(
     `/admin/users/${encodeURIComponent(uid)}`,
-    {reason},
+    r ? {reason: r} : undefined,
     {
       ...NO_ACT_AS,
       query: {archive},

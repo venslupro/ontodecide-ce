@@ -4,6 +4,15 @@
 
 import {describe, expect, it} from 'vitest';
 import {
+  MAX_STAGING_PARTS,
+  TRUNCATED_JSON,
+  fitToBudget,
+  isLastAllowedPart,
+  passkeySetupIncomplete,
+  recoveryPending,
+  truncateText,
+} from './index';
+import {
   ARCHIVE_README,
   EXPORT_DONE,
   GENESIS_HASH,
@@ -370,5 +379,80 @@ describe('email templates', () => {
         }).text,
       ).toBeTruthy();
     }
+  });
+});
+
+describe('archive limits', () => {
+  it('reserves one staging part for every later service', () => {
+    // objects is followed by situation and decision.
+    expect(isLastAllowedPart('objects', MAX_STAGING_PARTS - 4)).toBe(false);
+    expect(isLastAllowedPart('objects', MAX_STAGING_PARTS - 3)).toBe(true);
+    expect(isLastAllowedPart('decision', MAX_STAGING_PARTS - 1)).toBe(true);
+    expect(isLastAllowedPart('ontology', 0)).toBe(false);
+  });
+
+  it('marks truncated staging parts', () => {
+    expect(decodePart(encodePart('objects.jsonl', 'a\n', true))).toEqual({
+      file: 'objects.jsonl',
+      text: 'a\n',
+      truncated: true,
+    });
+    expect(decodePart(encodePart('objects.jsonl', 'a\n'))).toEqual({
+      file: 'objects.jsonl',
+      text: 'a\n',
+    });
+  });
+
+  it('truncates whole JSON Lines and replaces oversize JSON', () => {
+    expect(truncateText('objects.jsonl', '{"a":1}\n{"b":2}\n', 9)).toBe(
+      '{"a":1}\n',
+    );
+    expect(truncateText('ontology.json', '{"x":"yyyy"}', 5)).toBe(
+      TRUNCATED_JSON,
+    );
+    expect(truncateText('ontology.json', '{}', 5)).toBe('{}');
+  });
+
+  it('cuts the largest files until the total fits', () => {
+    const big = Array.from({length: 100}, (_, i) => `{"n":${i}}`).join('\n');
+    const files = new Map<'objects.jsonl' | 'links.jsonl', string>([
+      ['objects.jsonl', big],
+      ['links.jsonl', '{"l":1}\n'],
+    ]);
+    const fit = fitToBudget(files, 200);
+    const total = [...fit.files.values()].reduce(
+      (a, t) => a + new TextEncoder().encode(t).byteLength,
+      0,
+    );
+    expect(total).toBeLessThanOrEqual(200);
+    expect([...fit.truncated]).toEqual(['objects.jsonl']);
+    expect(fit.files.get('links.jsonl')).toBe('{"l":1}\n');
+    expect(fitToBudget(files, 10_000).truncated.size).toBe(0);
+    const m = buildManifest(
+      [
+        {
+          name: 'objects.jsonl',
+          records: 1,
+          bytes: 1,
+          sha256: 'x',
+          truncated: true,
+        },
+      ],
+      new Date(0),
+    );
+    expect(m.notes).toHaveLength(1);
+    expect(buildManifest([], new Date(0)).notes).toBeUndefined();
+  });
+});
+
+describe('admin session gate rules', () => {
+  it('recovery pending until a passkey is in amr; setup needs 2 passkeys + codes', () => {
+    expect(recoveryPending(['otp', 'recovery'])).toBe(true);
+    expect(recoveryPending(['otp', 'passkey'])).toBe(false);
+    expect(recoveryPending(['otp'])).toBe(false);
+    expect(passkeySetupIncomplete(1, 10)).toBe(true);
+    expect(passkeySetupIncomplete(2, 0)).toBe(true);
+    expect(passkeySetupIncomplete(2, 10)).toBe(false);
+    expect(auditKind('admin.login')).toBe('enter');
   });
 });

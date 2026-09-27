@@ -82,7 +82,8 @@
     "expired": "已到期，等待归档",
     "zipIn": "ZIP {days} 天后删除",
     "downloadZip": "下载 ZIP",
-    "empty": "暂无工作区"
+    "empty": "暂无工作区",
+    "objectsLinks": "对象 / 关系"
   },
   "menu": {
     "trial": "延长 / 缩短试用",
@@ -90,7 +91,10 @@
     "revoke": "吊销会话",
     "ban": "封禁邮箱",
     "unban": "解除封禁",
-    "delete": "删除账户"
+    "delete": "删除账户",
+    "details": "账户详情",
+    "downloadZip": "下载 ZIP",
+    "deleteArchive": "删除归档"
   },
   "confirm": {
     "workspace": "目标工作区",
@@ -98,7 +102,8 @@
   },
   "reason": {
     "label": "原因",
-    "required": "必填，写入审计日志"
+    "required": "必填，写入审计日志",
+    "optional": "可选，写入审计日志"
   },
   "trial": {
     "title": "调整试用到期时间",
@@ -194,5 +199,31 @@
     "deleteTitle": "删除 Passkey",
     "minTwo": "至少需要保留 2 个 Passkey",
     "empty": "暂无 Passkey"
+  },
+  "detail": {
+    "title": "账户详情",
+    "audited": "查看账户详情会写入管理员审计日志",
+    "email": "邮箱",
+    "status": "状态",
+    "locale": "界面语言",
+    "timeZone": "时区",
+    "verifiedAt": "邮箱验证时间",
+    "trialExpiresAt": "试用到期",
+    "expiredAt": "到期时间",
+    "archivePhase": "归档阶段",
+    "sessions": "活跃会话",
+    "objectsLinks": "对象 / 关系",
+    "banned": "封禁",
+    "yes": "是",
+    "no": "否",
+    "none": "—",
+    "verified": "已验证",
+    "notExpired": "未到期"
+  },
+  "warn": {
+    "label": "运维提醒",
+    "analytics": "未配置账户分析（免费额度无法按小时检查）",
+    "stuckArchives": "{count, number} 个归档卡住超过 24 小时",
+    "signKey": "B2 签名密钥需要轮换"
   }
 }

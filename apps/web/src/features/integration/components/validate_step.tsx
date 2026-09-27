@@ -37,6 +37,7 @@ export function SummaryBadges({summary}: {summary: ValidationSummary}) {
 function limitLeft(plan: UploadPlan, quota: PlanQuota): number {
   if (plan.limitedBy === 'importRows') return quota.importRowsLeft;
   if (plan.limitedBy === 'objects') return quota.objectsLeft;
+  if (plan.limitedBy === 'links') return quota.linksLeft ?? 0;
   return CE_LIMITS.importRowsDaily;
 }
 

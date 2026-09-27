@@ -67,6 +67,9 @@ export class TenantLifecycle
   countTenant(tid: string) {
     return svc(this.env).lifecycle.countTenant(tid);
   }
+  tenantStats(tids: string[]) {
+    return svc(this.env).lifecycle.tenantStats!(tids);
+  }
 }
 
 export default {

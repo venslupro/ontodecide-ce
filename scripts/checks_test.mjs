@@ -6,7 +6,11 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-import {checkOpenApi} from './check_openapi.mjs';
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
+
+import {initialScripts, parseEntries, staticImports} from './check_bundle.mjs';
+import {checkOpenApi, validateOpenApi} from './check_openapi.mjs';
 import {isExempt} from './check_sql.mjs';
 import {dropAllSql, unknownMigrations} from './d1_migrate.mjs';
 
@@ -44,6 +48,59 @@ test('check_openapi', () => {
     .concat('\n      operationId: getA');
   const problems = checkOpenApi(bad);
   assert.equal(problems.length, 3, problems.join('; '));
+});
+
+test('validateOpenApi: official 3.2 schema + JSON Schema 2020-12', async () => {
+  const text = readFileSync(
+    join(import.meta.dirname, '..', 'apps/api-gateway/openapi.yaml'),
+    'utf8',
+  );
+  assert.deepEqual(await validateOpenApi(text), []);
+  const badSchema = text.replace(
+    /^ {2}schemas:$/m,
+    '  schemas:\n    Broken: {type: strng}',
+  );
+  assert.match(
+    (await validateOpenApi(badSchema)).join('\n'),
+    /components\/schemas\/Broken/,
+  );
+  const badDoc = text.replace(/^info:$/m, 'info:\n  bogusField: 1');
+  assert.match(
+    (await validateOpenApi(badDoc)).join('\n'),
+    /OpenAPI 3\.2 schema: \/info/,
+  );
+});
+
+test('check_bundle helpers', () => {
+  assert.deepEqual(
+    staticImports(
+      'import{a as b}from"./x-1.js";import"./y-2.js";const c=import("./lazy.js")',
+    ),
+    ['x-1.js', 'y-2.js'],
+  );
+  assert.deepEqual(
+    initialScripts(
+      '<script type="module" src="/assets/index-1.js"></script>' +
+        '<link rel="modulepreload" href="/assets/r-2.js">' +
+        '<script type="module" src="/assets/index-1.js"></script>',
+    ),
+    ['assets/index-1.js', 'assets/r-2.js'],
+  );
+  assert.deepEqual(
+    parseEntries([
+      'dist',
+      '250',
+      '--entry',
+      'ended_page=60',
+      '--entry-total',
+      'x=5',
+    ]),
+    [
+      {name: 'ended_page', kb: 60, total: false},
+      {name: 'x', kb: 5, total: true},
+    ],
+  );
+  assert.throws(() => parseEntries(['--entry', 'nope']), /name=kb/);
 });
 
 test('d1_migrate helpers', () => {

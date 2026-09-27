@@ -224,6 +224,13 @@ export interface LifecycleStore {
     maxRows: number,
   ): Promise<{deleted: number; remaining: boolean}>;
   count(tid: string): Promise<number>;
+  /**
+   * Object and link counts of several workspaces (one grouped COUNT per
+   * table); workspaces without rows are absent from the result.
+   */
+  stats(
+    tids: string[],
+  ): Promise<Record<string, {objects: number; links: number}>>;
   writeTombstone(tid: string, nowMs: number): Promise<void>;
 }
 

@@ -13,7 +13,7 @@ invitations and no property markings.
 | Deletable / demotable | No — database triggers refuse it | Yes: deleted when the trial ends, or by the Admin |
 | Data scope | Everything: any workspace (Act-as-Tenant), archives, full e-mails, sessions, audit log, platform settings | Only its own workspace |
 | Sign-in | E-mail code **and** passkey (WebAuthn); session ≤ 8 h; high-risk actions need a fresh passkey step-up | E-mail code; session ≤ trial end |
-| Audit | Every admin write, Act-as entry (≤ 1 per workspace per hour), Act-as write, full e-mail view and archive download → `admin_audit` (append-only hash chain, 90 days) | Action executions → the workspace audit log |
+| Audit | Every admin write, sign-in (`admin.login`), step-up (`admin.step_up`), passkey add / delete, Act-as entry (≤ 1 per workspace per hour), Act-as write, full e-mail view and archive download → `admin_audit` (append-only hash chain, 90 days; target tenant only, never an e-mail or user id) | Action executions → the workspace audit log |
 
 Service principals (`svc:<worker>`) run lifecycle, archive, purge and queue
 work for the workspace named in the call context. They cannot sign in and are
@@ -59,10 +59,24 @@ data access through the application.
    the secret.
 2. **Second passkey**: bound with a step-up; the response carries 10 offline
    recovery codes exactly once (only HMACs are stored, each usable once).
+   Until the admin has 2 passkeys and recovery codes, every admin-token
+   request except `GET /me`, the passkey list / options / registration, the
+   step-up and logout is refused (403 `FORBIDDEN`, `reason:
+   PASSKEY_SETUP_INCOMPLETE`) by api-gateway and identity-access
+   (`MeDto.passkeys`, `recoveryCodesLeft`).
 3. **Sign-in**: e-mail code + passkey assertion with user verification; a sign
    counter that does not increase is rejected (cloned authenticator). A
-   recovery code replaces the passkey once; while that recovery session is
-   alive, a new passkey may be bound without a step-up.
+   recovery code replaces the passkey once. That recovery session
+   (`MeDto.recoveryPending: true`) may only call `GET /me`,
+   `GET /admin/passkeys`, `POST /admin/passkeys/options`,
+   `POST /admin/passkeys` (without a step-up) and logout; everything else —
+   business routes with or without `X-Act-As-Tenant` and all other `/admin`
+   routes — is 403 `FORBIDDEN` (`reason: RECOVERY_PENDING`). Only the
+   caller's own session (`sid`) counts, not another live recovery session.
+   Binding the passkey upgrades that session in D1 to `amr` otp + passkey:
+   the restriction ends at once (the gateway reads the live session state
+   on every admin request) and the next `POST /auth/sessions/refresh`
+   issues an otp + passkey access token.
 4. **Sessions**: ≤ 8 h; api-gateway calls `verifyAdminSession(sid)` on every
    admin request, so revocation is immediate. A sign-in with a passkey that
    was never used before (or a recovery code) sends `admin_new_device` to the
@@ -77,7 +91,23 @@ data access through the application.
    is possible only through the operations script, which writes
    `admin_pending_change`. The cron notifies the current admin address and
    applies the change after a 24-hour cool-down (sessions revoked; a passkey
-   reset re-enables the setup code).
+   reset deletes every passkey and recovery code and re-enables the setup
+   code, so the next sign-in binds the first passkey again with
+   `BOOTSTRAP_ADMIN_SETUP_CODE` — set a new secret first).
+
+   ```
+   # new admin e-mail (sealed with EMAIL_ENC_KEY, never stored in clear)
+   EMAIL_ENC_KEY=… node scripts/admin_pending_change.mjs --kind email --email new-admin@example.com
+   # passkey reset
+   node scripts/admin_pending_change.mjs --kind passkey_reset
+   # options: --delay-hours N (≥ 24), --local [--persist-to DIR], --dry-run (print the SQL only),
+   #          -c apps/identity-access/wrangler.jsonc (rendered by gen_wrangler)
+   ```
+
+   The script runs `wrangler d1 execute <identity-access-db> --remote`
+   with `requested_at = now`, `effective_at = now + 24 h` (or later). The
+   payload of an e-mail change is `{"emailEnc": …}` (AES-GCM like every
+   stored address) and is cleared when the change is applied.
 
 ## Owners
 

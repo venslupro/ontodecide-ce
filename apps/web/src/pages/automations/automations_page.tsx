@@ -19,7 +19,7 @@ import {
   useDeleteAutomation,
   useUpdateAutomation,
 } from '../../features/situation/api';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {isApiError} from '../../shared/api/errors';
 import {fmt} from '../../shared/lib/format';
 import {Badge, SeverityBadge} from '../../shared/ui/badge';
@@ -80,7 +80,10 @@ export function AutomationsPage() {
         onError: e => {
           if (isApiError(e, 'PRECONDITION_FAILED') && e.status === 412)
             onConflict(a);
-          else toast.error(t('toast.toggleFailed'), errorMessage(e, t));
+          else
+            toast.error(t('toast.toggleFailed'), errorMessage(e, t), {
+              traceId: errorTraceId(e),
+            });
         },
         onSettled: () =>
           setToggling(s => {
@@ -152,6 +155,7 @@ export function AutomationsPage() {
           </div>
         ) : q.isError ? (
           <ErrorView
+            traceId={errorTraceId(q.error)}
             detail={errorMessage(q.error, t)}
             onRetry={() => void q.refetch()}
           />

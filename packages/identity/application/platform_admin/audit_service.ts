@@ -1,7 +1,12 @@
 /**
  * @fileoverview PlatformAdmin: the append-only admin_audit hash chain and
  * the Idempotency-Key replay store for /admin writes (a replay returns the
- * stored `result` of the first execution).
+ * stored `result` of the first execution, or re-reads current data when the
+ * write stores a PII-free marker instead).
+ *
+ * No personal data is written (修订说明书 6.4: after the target user is
+ * deleted only tenant_id remains): new rows carry target_tenant_id only
+ * (target_user_id stays NULL) and results never contain e-mail addresses.
  */
 
 import {
@@ -27,12 +32,19 @@ import {
 } from '../../domain';
 import type {AuditRepository} from '../ports';
 
-/** What is recorded for one admin action. */
+/** What is recorded for one admin action (no personal data). */
 export interface AuditRecord {
   action: AuditAction;
   targetTenantId?: string | null;
-  targetUserId?: string | null;
   reason?: string | null;
+}
+
+/** How an idempotent write stores and replays its result. */
+export interface IdempotentOptions<T> {
+  /** PII-free value stored in `result` (default: the result itself). */
+  stored?: (result: T) => unknown;
+  /** Rebuilds the response of a replay from the stored value. */
+  replay?: (stored: unknown) => Promise<T>;
 }
 
 const APPEND_RETRIES = 5;
@@ -60,7 +72,8 @@ export class AuditService {
         at,
         action: rec.action,
         targetTenantId: rec.targetTenantId ?? null,
-        targetUserId: rec.targetUserId ?? null,
+        // Never stored for new rows: only tenant_id survives the account.
+        targetUserId: null,
         reason: rec.reason ?? null,
         idempotencyKey,
         result: result === undefined ? null : JSON.stringify(result),
@@ -92,6 +105,7 @@ export class AuditService {
     key: string,
     rec: AuditRecord | ((result: T) => AuditRecord),
     fn: () => Promise<T>,
+    opts: IdempotentOptions<T> = {},
   ): Promise<T> {
     if (!isIdempotencyKey(key)) {
       throw new AppError('VALIDATION_FAILED', 'Idempotency-Key required', {
@@ -102,17 +116,24 @@ export class AuditService {
         },
       });
     }
+    const replay = async (row: AuditRow): Promise<T> => {
+      const v = row.result === null ? undefined : JSON.parse(row.result);
+      return opts.replay ? opts.replay(v) : (v as T);
+    };
     const seen = await this.audit.findByKey(key);
-    if (seen)
-      return (seen.result === null ? undefined : JSON.parse(seen.result)) as T;
+    if (seen) return replay(seen);
     const result = await fn();
+    const stored = opts.stored ? opts.stored(result) : result;
+    const value = stored === undefined ? null : stored;
+    const serialized = JSON.stringify(value);
     const row = await this.append(
       typeof rec === 'function' ? rec(result) : rec,
       key,
-      result === undefined ? null : result,
+      value,
     );
     // A concurrent first execution may have won the key: return its result.
-    return row.result === null ? result : (JSON.parse(row.result) as T);
+    if (row.result === null || row.result === serialized) return result;
+    return replay(row);
   }
 
   /** Gateway entries: act_as.enter (≤ 1 per workspace per hour), tenant.write. */

@@ -60,7 +60,8 @@ describe('TenantLifecycle', () => {
     expect(doc.mappings).toHaveLength(1);
     expect(doc.mappings[0]).toMatchObject({id: 'Product', name: 'p.csv'});
     expect(page.text).not.toContain('secret-value');
-    expect(page.text).not.toContain('X1');
+    // Match the cell as a JSON string value: random ULIDs may contain "X1".
+    expect(page.text).not.toContain('"X1"');
   });
 
   it('purges in bounded steps, then writes the tombstone', async () => {

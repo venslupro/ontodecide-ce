@@ -35,7 +35,7 @@ import {
   useLooseSearch,
   useSearchPatch,
 } from '../../features/object-graph/search_params';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {cn} from '../../shared/lib/cn';
 import {fmt} from '../../shared/lib/format';
 import {useDebouncedValue} from '../../shared/lib/hooks';
@@ -156,7 +156,13 @@ export function ObjectsPage() {
     [type],
   );
 
-  if (modelError) return <ErrorView detail={errorMessage(modelError, t)} />;
+  if (modelError)
+    return (
+      <ErrorView
+        traceId={errorTraceId(modelError)}
+        detail={errorMessage(modelError, t)}
+      />
+    );
 
   return (
     <div className="flex flex-col gap-4">
@@ -252,6 +258,7 @@ export function ObjectsPage() {
 
         {list.error ? (
           <ErrorView
+            traceId={errorTraceId(list.error)}
             detail={errorMessage(list.error, t)}
             onRetry={() => void list.refetch()}
           />

@@ -10,7 +10,9 @@
  * - Daily login: passkey assertion (`/auth/passkeys/options` +
  *   `/auth/passkeys/assertion`), or a recovery code instead.
  * - Re-entrant: an admin with fewer than 2 passkeys is sent back to the
- *   second-passkey step on every login.
+ *   second-passkey step on every login (and the app shell gate repeats it
+ *   after a reload). A recovery-code session continues to the app, whose
+ *   passkey gate forces the new passkey first.
  * - Without WebAuthn: an explanation, no downgrade.
  */
 
@@ -83,7 +85,10 @@ export function AdminPasskeyStep({
 
   const afterSession = () => {
     const me = useSession.getState().me;
-    if ((me?.passkeys ?? 2) < 2) setPhase('second');
+    // A recovery session binds its new passkey (no step-up possible) in the
+    // app's passkey gate before anything else.
+    if (me?.recoveryPending) onDone();
+    else if ((me?.passkeys ?? 2) < 2) setPhase('second');
     else onDone();
   };
 

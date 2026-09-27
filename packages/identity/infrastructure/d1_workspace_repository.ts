@@ -96,8 +96,8 @@ export class D1WorkspaceRepository
     expiredBefore: number,
   ): Promise<WorkspaceRecord | null> {
     const r = await this.sql(
-      `SELECT * FROM workspace w WHERE kind = 'trial' AND status = 'EXPIRED'
-       AND expired_at <= ?1
+      `SELECT * FROM workspace w WHERE kind = 'trial'
+       AND status IN ('EXPIRED', 'ARCHIVING') AND expired_at <= ?1
        AND NOT EXISTS (SELECT 1 FROM purge_ledger l WHERE l.tenant_id = w.tenant_id)
        ORDER BY expired_at LIMIT 1`,
       expiredBefore,

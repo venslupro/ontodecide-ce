@@ -8,8 +8,9 @@ import {
   AppError,
   FixedClock,
   generateSigningKey,
-  silentLogger,
   type ArchiveFile,
+  type LogLevel,
+  type Logger,
   type ExportPage,
   type LifecycleService,
   type PurgeResult,
@@ -17,6 +18,7 @@ import {
 } from '@ontodecide/shared-kernel';
 import type {IdentityRpc, IssuedSession, PasskeyRequired} from '../contract';
 import type {
+  AnalyticsPort,
   EmailMessage,
   EmailSender,
   IdentityConfig,
@@ -34,6 +36,34 @@ import {
   type MailSetup,
 } from './compose';
 import {createIdentityRpc} from './identity_rpc';
+
+/** One captured log line. */
+export interface LogLine {
+  level: LogLevel;
+  msg: string;
+  fields: Record<string, unknown>;
+}
+
+/** Logger that records every line (to assert alerts and the absence of PII). */
+export class CaptureLogger implements Logger {
+  constructor(readonly lines: LogLine[] = []) {}
+
+  log(level: LogLevel, msg: string, fields: Record<string, unknown> = {}) {
+    this.lines.push({level, msg, fields});
+  }
+  info(msg: string, fields?: Record<string, unknown>) {
+    this.log('info', msg, fields);
+  }
+  warn(msg: string, fields?: Record<string, unknown>) {
+    this.log('warn', msg, fields);
+  }
+  error(msg: string, fields?: Record<string, unknown>) {
+    this.log('error', msg, fields);
+  }
+  child(): Logger {
+    return this;
+  }
+}
 
 /** A captured e-mail. */
 export interface SentMail extends EmailMessage {
@@ -82,6 +112,11 @@ export class FakeLifecycle implements TenantLifecycleRpc {
     readonly file: ArchiveFile,
     private readonly pageRows = 2,
   ) {}
+
+  /** Cancels pending injected failures. */
+  clearFailures(): void {
+    this.fail = 0;
+  }
 
   /** Makes the next call throw. */
   failNext(times = 1): void {
@@ -166,6 +201,12 @@ export interface Harness {
   resend: FakeEmailSender;
   brevo: FakeEmailSender;
   lifecycles: FakeLifecycles;
+  logger: CaptureLogger;
+}
+
+/** Optional adapters of {@link createHarness}. */
+export interface HarnessExtras {
+  analytics?: AnalyticsPort | null;
 }
 
 /** Creates a harness over a migrated identity-access D1. */
@@ -173,6 +214,7 @@ export async function createHarness(
   db: D1Database,
   overrides: Partial<IdentityConfig> = {},
   mail?: MailSetup,
+  extras: HarnessExtras = {},
 ): Promise<Harness> {
   const clock = new FixedClock('2026-09-24T08:00:00Z');
   const config: IdentityConfig = {
@@ -204,18 +246,19 @@ export async function createHarness(
   const resend = new FakeEmailSender('resend');
   const brevo = new FakeEmailSender('brevo');
   const lifecycles = fakeLifecycles();
+  const logger = new CaptureLogger();
   const services = composeIdentity({
     db,
     config,
     clock,
-    logger: silentLogger,
+    logger,
     lifecycles,
     blobs,
     signer: new FakeLinkSigner(),
     webauthn: new FakeWebAuthn(),
     turnstile: new FakeTurnstile(),
     mail: mail ?? {mode: 'live', resend, brevo},
-    analytics: null,
+    analytics: extras.analytics ?? null,
   });
   return {
     db,
@@ -227,6 +270,7 @@ export async function createHarness(
     resend,
     brevo,
     lifecycles,
+    logger,
   };
 }
 

@@ -1,9 +1,13 @@
 /**
- * @fileoverview Global search (object name or RID; GET /objects?q=, 300 ms
- * debounce, ⌘K / Ctrl+K). A pasted RID opens its Object View directly.
+ * @fileoverview Global search (前端详细设计 2.1: 对象名 / RID / 告警): objects
+ * via GET /objects?q= and alerts via GET /alerts (latest 100, filtered by
+ * title on the client), shown in two groups; 300 ms debounce, ⌘K / Ctrl+K.
+ * A pasted RID opens its Object View directly.
  */
 
 import type {ObjectSummary} from '@ontodecide/object-graph/contract';
+import type {PageResult} from '@ontodecide/shared-kernel';
+import type {AlertDto} from '@ontodecide/situation/contract';
 import {isRid} from '@ontodecide/shared-kernel';
 import {useQuery} from '@tanstack/react-query';
 import {useNavigate} from '@tanstack/react-router';
@@ -30,6 +34,46 @@ export function useObjectSearch(q: string) {
   });
 }
 
+/** Alerts fetched once for title search (client-side filter). */
+export const ALERT_SEARCH_LIMIT = 100;
+/** Alert matches shown. */
+export const ALERT_MATCHES = 5;
+
+/** Alerts whose title contains `q` (case-insensitive), newest first. */
+export function filterAlerts(
+  alerts: readonly AlertDto[],
+  q: string,
+  max = ALERT_MATCHES,
+): AlertDto[] {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return [];
+  return alerts
+    .filter(a => a.title.toLowerCase().includes(needle))
+    .sort((a, b) => (a.raisedAt < b.raisedAt ? 1 : -1))
+    .slice(0, max);
+}
+
+/** Alert matches for the search box (one GET /alerts per 30 s). */
+export function useAlertSearch(q: string) {
+  return useQuery({
+    queryKey: qk.alerts({limit: ALERT_SEARCH_LIMIT, purpose: 'search'}),
+    queryFn: async () =>
+      (
+        await api.get<PageResult<AlertDto>>('/alerts', {
+          query: {limit: ALERT_SEARCH_LIMIT},
+        })
+      )?.items ?? [],
+    enabled: q.length > 0,
+    staleTime: 30_000,
+    select: list => filterAlerts(list, q),
+  });
+}
+
+/** One selectable search result. */
+type Hit =
+  | {kind: 'object'; key: string; object: ObjectSummary}
+  | {kind: 'alert'; key: string; alert: AlertDto};
+
 /** Global search combobox. */
 export function GlobalSearch() {
   const {t} = useTranslation('common');
@@ -40,8 +84,22 @@ export function GlobalSearch() {
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const q = useDebouncedValue(text.trim(), 300);
-  const {data, isFetching} = useObjectSearch(isRid(q) ? '' : q);
-  const results = data ?? [];
+  const term = isRid(q) ? '' : q;
+  const objects = useObjectSearch(term);
+  const alerts = useAlertSearch(term);
+  const isFetching = objects.isFetching || alerts.isFetching;
+  const results: Hit[] = [
+    ...(objects.data ?? []).map((o): Hit => ({
+      kind: 'object',
+      key: `o:${o.rid}`,
+      object: o,
+    })),
+    ...(alerts.data ?? []).map((a): Hit => ({
+      kind: 'alert',
+      key: `a:${a.id}`,
+      alert: a,
+    })),
+  ];
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -59,6 +117,50 @@ export function GlobalSearch() {
     setText('');
     void navigate({to: '/objects/$rid', params: {rid}});
   };
+  const pick = (h: Hit) => {
+    if (h.kind === 'object') return go(h.object.rid);
+    if (h.alert.rid) return go(h.alert.rid);
+    setOpen(false);
+    setText('');
+    void navigate({to: '/cockpit'});
+  };
+
+  const option = (h: Hit, i: number) => (
+    <li
+      key={h.key}
+      id={`${listId}-${i}`}
+      role="option"
+      aria-selected={i === active}
+      onMouseDown={e => {
+        e.preventDefault();
+        pick(h);
+      }}
+      className={cn(
+        'flex cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm',
+        i === active ? 'bg-panel-2 text-cyan' : 'hover:bg-panel-2',
+      )}
+    >
+      {h.kind === 'object' ? (
+        <>
+          <span className="truncate">{h.object.title}</span>
+          <span className="shrink-0 font-mono text-xs text-dim">
+            {h.object.type}
+          </span>
+        </>
+      ) : (
+        <>
+          <span className="truncate">{h.alert.title}</span>
+          <span className="shrink-0 text-xs text-dim">
+            {t(`severity.${h.alert.severity}`, {
+              defaultValue: h.alert.severity,
+            })}
+          </span>
+        </>
+      )}
+    </li>
+  );
+  const objectHits = results.filter(h => h.kind === 'object');
+  const alertHits = results.filter(h => h.kind === 'alert');
 
   return (
     <div className="relative w-full max-w-[500px]">
@@ -97,7 +199,7 @@ export function GlobalSearch() {
           } else if (e.key === 'Enter') {
             const v = text.trim();
             if (isRid(v)) go(v);
-            else if (results[active]) go(results[active].rid);
+            else if (results[active]) pick(results[active]);
           } else if (e.key === 'Escape') {
             setOpen(false);
           }
@@ -127,27 +229,28 @@ export function GlobalSearch() {
               {isFetching ? t('state.loading') : t('state.noResults')}
             </li>
           ) : (
-            results.map((o, i) => (
-              <li
-                key={o.rid}
-                id={`${listId}-${i}`}
-                role="option"
-                aria-selected={i === active}
-                onMouseDown={e => {
-                  e.preventDefault();
-                  go(o.rid);
-                }}
-                className={cn(
-                  'flex cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm',
-                  i === active ? 'bg-panel-2 text-cyan' : 'hover:bg-panel-2',
-                )}
-              >
-                <span className="truncate">{o.title}</span>
-                <span className="shrink-0 font-mono text-xs text-dim">
-                  {o.type}
-                </span>
-              </li>
-            ))
+            <>
+              {objectHits.length > 0 && (
+                <li role="presentation">
+                  <p className="px-2 pt-1 pb-0.5 text-[11px] text-dim">
+                    {t('search.groupObjects')}
+                  </p>
+                  <ul role="group" aria-label={t('search.groupObjects')}>
+                    {objectHits.map((h, i) => option(h, i))}
+                  </ul>
+                </li>
+              )}
+              {alertHits.length > 0 && (
+                <li role="presentation">
+                  <p className="px-2 pt-1 pb-0.5 text-[11px] text-dim">
+                    {t('search.groupAlerts')}
+                  </p>
+                  <ul role="group" aria-label={t('search.groupAlerts')}>
+                    {alertHits.map((h, i) => option(h, objectHits.length + i))}
+                  </ul>
+                </li>
+              )}
+            </>
           )}
         </ul>
       )}

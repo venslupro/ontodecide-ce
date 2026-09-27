@@ -3,7 +3,8 @@
  * cursor-paged export of objects.jsonl, links.jsonl and audit.jsonl
  * (≤ 2,000 rows and ≤ 900 KB per page), purge in the order og_prop_index →
  * og_link → og_object → og_action_log → domain_event with a local tombstone
- * when done, and row counts.
+ * when done, row counts, and object/link counts of several workspaces for
+ * the platform admin list.
  */
 
 import {
@@ -26,6 +27,9 @@ export const GRAPH_EXPORT_FILES: readonly GraphExportFile[] = [
   'links.jsonl',
   'audit.jsonl',
 ];
+
+/** Workspaces per tenantStats call (one admin list page). */
+export const TENANT_STATS_MAX = 100;
 
 interface ExportCursor {
   f: number;
@@ -110,6 +114,23 @@ export function createTenantLifecycle(deps: {
     countTenant(tid): Promise<number> {
       requireTid(tid);
       return deps.store.count(tid);
+    },
+
+    async tenantStats(
+      tids,
+    ): Promise<Record<string, {objects: number; links: number}>> {
+      if (!Array.isArray(tids) || tids.length > TENANT_STATS_MAX) {
+        throw new AppError(
+          'VALIDATION_FAILED',
+          `At most ${TENANT_STATS_MAX} tenant ids per call`,
+        );
+      }
+      tids.forEach(requireTid);
+      const unique = [...new Set(tids)];
+      const found = await deps.store.stats(unique);
+      return Object.fromEntries(
+        unique.map(t => [t, found[t] ?? {objects: 0, links: 0}]),
+      );
     },
   };
 }

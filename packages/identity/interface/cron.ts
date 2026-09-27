@@ -2,12 +2,12 @@
  * @fileoverview identity-access cron (every 2 minutes) (详细设计 6.11.6):
  * ensureBootstrapAdmin → reminders → expire trials → one archive step →
  * one final delete → housekeeping (pending admin changes; hourly analytics
- * check and daily audit anchor). Each stage is isolated: a failure is
+ * check and daily audit anchor; B2 signing-key age every 12 ticks). Each stage is isolated: a failure is
  * logged and the next stage still runs.
  */
 
 import {AppError} from '@ontodecide/shared-kernel';
-import {MaintenanceService} from '../application';
+import {MaintenanceService, isSignKeyTick} from '../application';
 import type {IdentityServices} from './compose';
 
 /** Summary of one run (for logs and tests). */
@@ -17,6 +17,8 @@ export interface CronReport {
   archive: string;
   finalDeleted: number;
   hourly: boolean;
+  /** Whether this tick ran the B2 signing-key check. */
+  signKeyChecked: boolean;
   errors: string[];
 }
 
@@ -31,6 +33,7 @@ export async function runCron(
     archive: 'idle',
     finalDeleted: 0,
     hourly: false,
+    signKeyChecked: false,
     errors: [],
   };
   const stage = async (name: string, fn: () => Promise<void>) => {
@@ -59,6 +62,12 @@ export async function runCron(
   });
   await stage('housekeeping', () => s.housekeeping.run());
   await stage('pending_changes', () => s.maintenance.pendingChanges());
+  if (isSignKeyTick(now)) {
+    report.signKeyChecked = true;
+    await stage('sign_key', async () => {
+      await s.maintenance.signKeyCheck();
+    });
+  }
   if (MaintenanceService.isHourlyTick(now)) {
     report.hourly = true;
     await stage('analytics', async () => {

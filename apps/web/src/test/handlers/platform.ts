@@ -50,6 +50,8 @@ interface PlatformDb {
   codeAttemptsLeft: number;
   setupRequired: boolean;
   adminPasskeys: number;
+  /** Signed in with a recovery code; only passkey registration allowed. */
+  recoveryPending: boolean;
   terminated: boolean;
   archiveDeleted: boolean;
   settingsVersion: number;
@@ -68,6 +70,7 @@ function fresh(): PlatformDb {
     codeAttemptsLeft: 4,
     setupRequired: false,
     adminPasskeys: 2,
+    recoveryPending: false,
     terminated: false,
     archiveDeleted: false,
     settingsVersion: settings().version,
@@ -159,8 +162,21 @@ function needStepUp(r: RecordedRequest) {
     : problem(403, 'FORBIDDEN', 'step-up required');
 }
 
+const RECOVERY_ALLOWED = new Set([
+  'GET /admin/passkeys',
+  'POST /admin/passkeys/options',
+  'POST /admin/passkeys',
+]);
+
 function needAdmin(r: RecordedRequest) {
   if (platformDb.role !== 'admin') return problem(403, 'FORBIDDEN');
+  if (
+    platformDb.recoveryPending &&
+    !RECOVERY_ALLOWED.has(`${r.method} ${r.path.split('?')[0]}`)
+  )
+    return problem(403, 'FORBIDDEN', 'RECOVERY_PENDING', {
+      reason: 'RECOVERY_PENDING',
+    });
   if (r.headers['x-act-as-tenant'])
     return problem(403, 'FORBIDDEN', 'no act-as on /admin');
   return null;
@@ -254,6 +270,11 @@ export const platformHandlers: HttpHandler[] = [
     const r = await record(request);
     const b = r.body as {recoveryCode: string};
     if (b.recoveryCode !== 'RECOVERY-0001') return problem(400, 'CODE_INVALID');
+    platformDb.recoveryPending = true;
+    platformDb.me = {
+      ...adminMe(platformDb.adminPasskeys),
+      recoveryPending: true,
+    };
     return session();
   }),
   // —— me ——
@@ -335,6 +356,21 @@ export const platformHandlers: HttpHandler[] = [
       needAdmin(r) ?? HttpResponse.json({items: adminUsers(), nextCursor: null})
     );
   }),
+  http.get(`${API}/admin/users/:uid`, async ({request, params}) => {
+    const r = await record(request);
+    const bad = needAdmin(r);
+    if (bad) return bad;
+    const row = adminUsers().find(u => u.userId === params.uid);
+    if (!row) return problem(404, 'NOT_FOUND');
+    return HttpResponse.json({
+      ...row,
+      locale: 'zh-CN',
+      timeZone: 'Asia/Shanghai',
+      verifiedAt: '2026-09-27T06:20:00.000Z',
+      expiredAt: null,
+      archivePhase: null,
+    });
+  }),
   http.patch(`${API}/admin/users/:uid`, async ({request}) => {
     const r = await record(request);
     const bad = needAdmin(r) ?? needIdem(r) ?? needStepUp(r);
@@ -349,7 +385,9 @@ export const platformHandlers: HttpHandler[] = [
     const r = await record(request);
     const bad = needAdmin(r) ?? needIdem(r) ?? needStepUp(r);
     if (bad) return bad;
-    if (!(r.body as {reason?: string})?.reason)
+    // A reason is required only when deleting without an archive.
+    const archive = new URL(request.url).searchParams.get('archive');
+    if (archive === 'false' && !(r.body as {reason?: string})?.reason)
       return problem(400, 'VALIDATION_FAILED');
     return new HttpResponse(null, {status: 202});
   }),
@@ -430,8 +468,12 @@ export const platformHandlers: HttpHandler[] = [
   }),
   http.post(`${API}/admin/passkeys`, async ({request}) => {
     const r = await record(request);
-    const bad = needAdmin(r) ?? needStepUp(r);
+    // The caller's own recovery session needs no step-up.
+    const bad =
+      needAdmin(r) ?? (platformDb.recoveryPending ? null : needStepUp(r));
     if (bad) return bad;
+    const recovering = platformDb.recoveryPending;
+    platformDb.recoveryPending = false;
     platformDb.adminPasskeys += 1;
     platformDb.me = adminMe(platformDb.adminPasskeys);
     return HttpResponse.json(
@@ -443,7 +485,7 @@ export const platformHandlers: HttpHandler[] = [
           lastUsedAt: null,
         },
         total: platformDb.adminPasskeys,
-        ...(platformDb.adminPasskeys === 2
+        ...(platformDb.adminPasskeys === 2 || recovering
           ? {
               recoveryCodes: Array.from(
                 {length: 10},
