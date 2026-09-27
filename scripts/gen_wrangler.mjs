@@ -129,14 +129,35 @@ function readTfOutputs(file) {
 
 /**
  * Returns a value, or a placeholder when it is missing and `allowMissing`
- * is set; throws otherwise.
+ * is set (the item is recorded in `missing`); throws otherwise. Only ids
+ * and settings get placeholders — resource names always follow
+ * {project}-{env}-{service|module} (see {@link conventionalName}).
  */
-function required(value, label, allowMissing) {
+function required(value, label, allowMissing, missing) {
   if (value !== undefined && value !== null && value !== '') return value;
   if (!allowMissing) throw new Error(`${label} is missing`);
-  console.warn(`::warning::${label} is missing (not applied / set yet)`);
+  missing?.push(label);
   return `pending-${label.replace(/[^A-Za-z0-9-]+/g, '-')}`;
 }
+
+/**
+ * A resource name: Terraform's value when present (it must equal the
+ * conventional `{prefix}-{module}` name), else the conventional name.
+ */
+function conventionalName(tfValue, expected, label) {
+  if (tfValue === undefined || tfValue === null || tfValue === '') {
+    return expected;
+  }
+  if (tfValue !== expected) {
+    throw new Error(
+      `${label} is ${tfValue}; expected ${expected} ({project}-{env}-{service|module})`,
+    );
+  }
+  return tfValue;
+}
+
+/** Default B2 region (infra/variables.tf `b2_region`). */
+const B2_DEFAULT_REGION = 'us-east-005';
 
 /**
  * Loads the local dev secrets, generating them on first use so tokens and
@@ -168,12 +189,15 @@ export function loadDevSecrets(file = DEV_SECRETS_FILE) {
 export function buildVars(env, tf, opts = {}) {
   const {allowMissing = false, environ = process.env} = opts;
   const prefix = namePrefix(env);
+  /** Missing Terraform outputs (resource: its conventional name). */
+  const missingTf = [];
+  /** Missing secrets / variables. */
+  const missingEnv = [];
   if (env !== 'local') {
-    const tfPrefix = required(tf.name_prefix, 'name_prefix', allowMissing);
-    if (!tfPrefix.startsWith('pending-') && tfPrefix !== prefix) {
-      throw new Error(
-        `Terraform name_prefix ${tfPrefix} does not match ${prefix}`,
-      );
+    if (tf.name_prefix) {
+      conventionalName(tf.name_prefix, prefix, 'Terraform name_prefix');
+    } else {
+      required(undefined, 'name_prefix', allowMissing, []);
     }
   }
   const vars = {
@@ -189,11 +213,16 @@ export function buildVars(env, tf, opts = {}) {
       vars[`D1_${key}_ID`] = `local-${service}-db`;
     } else {
       const db = tf.d1?.[`${service}-db`];
-      vars[`D1_${key}_NAME`] = db?.name ?? name;
+      vars[`D1_${key}_NAME`] = conventionalName(
+        db?.name,
+        name,
+        `D1 ${service}`,
+      );
       vars[`D1_${key}_ID`] = required(
         db?.id,
-        `d1["${service}-db"].id`,
+        `D1 ${name}`,
         allowMissing,
+        missingTf,
       );
     }
   }
@@ -219,12 +248,9 @@ export function buildVars(env, tf, opts = {}) {
     return vars;
   }
 
-  const domain = tf.app?.domain ?? '';
-  let host = tf.app?.host;
-  if (!host) {
-    required(undefined, 'app.host', allowMissing);
-    host = domain ? `app.${domain}` : PAGES_HOST;
-  }
+  const domain = tf.app?.domain ?? environ.APP_DOMAIN ?? '';
+  // Derived from APP_DOMAIN when Terraform has not run yet.
+  const host = tf.app?.host || (domain ? `app.${domain}` : PAGES_HOST);
   const emailMode = environ.EMAIL_MODE || 'live';
   if (!['live', 'log'].includes(emailMode)) {
     throw new Error(`EMAIL_MODE must be live or log, got ${emailMode}`);
@@ -234,23 +260,29 @@ export function buildVars(env, tf, opts = {}) {
   if (environ.JWT_SIGNING_KEY) {
     jwks = JSON.stringify(publicJwkSet(signingKeys));
   } else {
-    required(undefined, 'env JWT_SIGNING_KEY', allowMissing);
+    required(undefined, 'secret JWT_SIGNING_KEY', allowMissing, missingEnv);
     jwks = JSON.stringify({keys: []});
   }
   Object.assign(vars, {
-    QUEUE_DOMAIN_EVENTS: required(
+    QUEUE_DOMAIN_EVENTS: conventionalName(
       tf.queues?.domain_events,
-      'queues.domain_events',
-      allowMissing,
+      `${prefix}-domain-events`,
+      'Queue domain-events',
     ),
-    QUEUE_DEAD_LETTER: required(
+    QUEUE_DEAD_LETTER: conventionalName(
       tf.queues?.dead_letter,
-      'queues.dead_letter',
-      allowMissing,
+      `${prefix}-dead-letter`,
+      'Queue dead-letter',
     ),
-    B2_ARCHIVE_BUCKET: required(tf.b2?.bucket, 'b2.bucket', allowMissing),
-    B2_REGION: required(tf.b2?.region, 'b2.region', allowMissing),
-    B2_ENDPOINT: required(tf.b2?.endpoint, 'b2.endpoint', allowMissing),
+    B2_ARCHIVE_BUCKET: conventionalName(
+      tf.b2?.bucket,
+      `${prefix}-archive`,
+      'B2 archive bucket',
+    ),
+    B2_REGION: tf.b2?.region || B2_DEFAULT_REGION,
+    B2_ENDPOINT:
+      tf.b2?.endpoint ||
+      `s3.${tf.b2?.region || B2_DEFAULT_REGION}.backblazeb2.com`,
     APP_DOMAIN: domain,
     APP_HOST: host,
     APP_ORIGIN: tf.app?.origin ?? `https://${host}`,
@@ -259,8 +291,9 @@ export function buildVars(env, tf, opts = {}) {
     JWT_PUBLIC_KEYS: jwks,
     CF_ACCOUNT_ID: required(
       environ.CLOUDFLARE_ACCOUNT_ID || environ.CF_ACCOUNT_ID,
-      'env CLOUDFLARE_ACCOUNT_ID',
+      'secret CF_ACCOUNT_ID',
       allowMissing,
+      missingEnv,
     ),
     MAIL_FROM:
       environ.MAIL_FROM ||
@@ -268,7 +301,21 @@ export function buildVars(env, tf, opts = {}) {
     EMAIL_MODE: emailMode,
   });
   if (emailMode === 'live' && !vars.MAIL_FROM) {
-    required(undefined, 'env MAIL_FROM', allowMissing);
+    required(undefined, 'variable MAIL_FROM', allowMissing, missingEnv);
+  }
+  if (missingTf.length) {
+    console.warn(
+      '::warning title=Terraform not applied yet::Production has no ' +
+        `Terraform outputs for ${missingTf.join(', ')} (nothing applied to ` +
+        'production yet). Rendered with the conventional names and ' +
+        'placeholder ids; deploys require terraform apply on main first.',
+    );
+  }
+  if (missingEnv.length) {
+    console.warn(
+      `::warning title=Deployment settings missing::${missingEnv.join(', ')} ` +
+        'not set (GitHub secrets / variables, see .env.example).',
+    );
   }
   return vars;
 }

@@ -112,25 +112,69 @@ test('prod without a domain drops routes and uses pages.dev', () => {
   );
 });
 
-test('prod rejects a mismatched prefix and missing outputs', () => {
+test('prod rejects a mismatched prefix, non-conventional names and missing ids', () => {
   assert.throws(
     () => buildVars('prod', {...TF, name_prefix: 'x-prd'}, {environ: ENVIRON}),
-    /does not match/,
+    /expected ontodecide-prd/,
+  );
+  // Names come from the convention; Terraform may only confirm them.
+  assert.throws(
+    () =>
+      buildVars(
+        'prod',
+        {...TF, queues: {...TF.queues, domain_events: 'domain-events'}},
+        {environ: ENVIRON},
+      ),
+    /expected ontodecide-prd-domain-events/,
   );
   assert.throws(
-    () => buildVars('prod', {...TF, queues: undefined}, {environ: ENVIRON}),
-    /queues.domain_events/,
+    () =>
+      buildVars(
+        'prod',
+        {...TF, b2: {...TF.b2, bucket: 'ontodecide-ce-archive'}},
+        {environ: ENVIRON},
+      ),
+    /expected ontodecide-prd-archive/,
   );
+  const noQueues = buildVars(
+    'prod',
+    {...TF, queues: undefined},
+    {environ: ENVIRON},
+  );
+  assert.equal(noQueues.QUEUE_DOMAIN_EVENTS, 'ontodecide-prd-domain-events');
   assert.throws(
     () => buildVars('prod', TF, {environ: {CLOUDFLARE_ACCOUNT_ID: 'a'}}),
     /JWT_SIGNING_KEY/,
   );
-  const vars = buildVars(
-    'prod',
-    {name_prefix: 'ontodecide-prd'},
-    {allowMissing: true, environ: {}},
+  assert.throws(
+    () => buildVars('prod', {...TF, d1: undefined}, {environ: ENVIRON}),
+    /D1 ontodecide-prd-identity-access-db is missing/,
   );
+});
+
+test('an empty production state renders conventional names and one warning', () => {
+  const warnings = [];
+  const warn = console.warn;
+  console.warn = m => warnings.push(m);
+  let vars;
+  try {
+    vars = buildVars('prod', {}, {allowMissing: true, environ: {}});
+  } finally {
+    console.warn = warn;
+  }
   assert.match(vars.D1_IDENTITY_ID, /^pending-/);
+  assert.equal(vars.D1_IDENTITY_NAME, 'ontodecide-prd-identity-access-db');
+  assert.equal(vars.QUEUE_DEAD_LETTER, 'ontodecide-prd-dead-letter');
+  assert.equal(vars.B2_ARCHIVE_BUCKET, 'ontodecide-prd-archive');
+  const tfWarnings = warnings.filter(w => w.includes('Terraform not applied'));
+  assert.equal(tfWarnings.length, 1);
+  assert.match(tfWarnings[0], /D1 ontodecide-prd-object-graph-db/);
+  // Every rendered resource name follows {project}-{env}-{service|module}.
+  for (const [k, v] of Object.entries(vars)) {
+    if (/^D1_.*_NAME$|_BUCKET$|^QUEUE_/.test(k)) {
+      assert.match(v, /^ontodecide-prd-[a-z0-9-]+$/, k);
+    }
+  }
 });
 
 test('local uses dev secrets, log mode, no AI and no routes', () => {
