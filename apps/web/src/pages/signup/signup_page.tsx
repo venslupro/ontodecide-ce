@@ -71,7 +71,10 @@ export function SignupPage() {
       />
       <p className="mt-6 text-center text-sm text-muted">
         {t('signup.haveAccount')}{' '}
-        <Link to="/login" className="text-cyan hover:underline">
+        <Link
+          to="/login"
+          className="text-cyan underline underline-offset-2 hover:decoration-2"
+        >
           {t('login.link')}
         </Link>
       </p>

@@ -243,7 +243,11 @@ test.describe('business pages', () => {
     await page.goto('/cockpit');
     await expect(page.getByRole('heading', {name: '态势总览'})).toBeVisible();
     await expect(page.getByRole('article', {name: '准时交付率'})).toBeVisible();
-    await page.getByText('供应商 S-017 产能下降 60%').click();
+    // The alert stream item (the trend chart lists the same title).
+    await page
+      .getByRole('button', {name: /供应商 S-017 产能下降 60%/})
+      .first()
+      .click();
     await expect(
       page.getByRole('heading', {name: '苏州精密零件有限公司'}),
     ).toBeVisible();
@@ -298,6 +302,7 @@ test.describe('business pages', () => {
     );
     await page.goto('/imports/new');
     await page.getByText(/CSV/).first().click();
+    await page.locator('#import-target-type').selectOption('Supplier');
     const next = page.getByRole('button', {name: /下一步/});
     if (await next.isVisible()) await next.click();
     await page.locator('input[type=file]').setInputFiles({
@@ -305,11 +310,14 @@ test.describe('business pages', () => {
       mimeType: 'text/csv',
       buffer: Buffer.from([header, ...rows].join('\n')),
     });
+    // Parsing runs in a Web Worker; each step's "next" enables when ready.
+    await expect(page.getByText(/已解析 250 行/)).toBeVisible();
     for (let i = 0; i < 3; i++) {
-      const n = page.getByRole('button', {name: /下一步/});
-      if (await n.isEnabled()) await n.click();
+      const n = page.getByRole('button', {name: /^下一步/});
+      await expect(n).toBeEnabled({timeout: 15_000});
+      await n.click();
     }
-    await page.getByRole('button', {name: /开始导入|运行/}).click();
+    await page.getByRole('button', {name: '开始导入', exact: true}).click();
     await expect(page.getByText(/imp-e2e|完成|DONE/).first()).toBeVisible({
       timeout: 30_000,
     });

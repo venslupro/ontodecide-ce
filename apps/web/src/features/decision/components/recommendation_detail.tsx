@@ -64,7 +64,7 @@ function ObjectLink({rid, label}: {rid: string; label?: string}) {
     <Link
       to="/objects/$rid"
       params={{rid}}
-      className="text-cyan hover:underline"
+      className="text-cyan underline underline-offset-2 hover:decoration-2"
     >
       {label ?? o.data?.title ?? shortRid(rid)}
     </Link>

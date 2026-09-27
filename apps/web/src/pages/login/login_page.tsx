@@ -72,7 +72,10 @@ export function LoginPage() {
           />
           <p className="mt-6 text-center text-sm text-muted">
             {t('login.noAccount')}{' '}
-            <Link to="/signup" className="text-cyan hover:underline">
+            <Link
+              to="/signup"
+              className="text-cyan underline underline-offset-2 hover:decoration-2"
+            >
               {t('signup.link')}
             </Link>
           </p>

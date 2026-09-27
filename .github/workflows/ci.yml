@@ -56,8 +56,13 @@ jobs:
         run: pnpm test:cpu
       - name: Script self-tests
         run: pnpm test:scripts
+      # This build is only tested (Playwright, Lighthouse), never deployed:
+      # it uses Cloudflare's public always-pass Turnstile test site key. The
+      # deploy workflow builds separately with the real site key.
       - name: Build web
         run: pnpm build:web
+        env:
+          VITE_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       # Initial JS ≤ 250 KB gzip; the explanation pages (/ended,
       # /archive-deletions) add ≤ 60 KB (前端详细设计 表 3).
       - name: Bundle budgets
