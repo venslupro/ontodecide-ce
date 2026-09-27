@@ -36,6 +36,7 @@ describe('compileChain', () => {
       compileChain('lookup(A:active;S:suspended;*:watch)').apply('S'),
     ).toBe('suspended');
     expect(compileChain('lookup(A:active;*:watch)').apply('Z')).toBe('watch');
+    expect(compileChain('lookup(A=active;*=watch)').apply('A')).toBe('active');
     expect(compileChain('iso3166').apply('Viet Nam')).toBe('VN');
     expect(compileChain('iso3166').apply('cn')).toBe('CN');
     expect(compileChain("split(';')").apply('M-100; M-101;')).toEqual([

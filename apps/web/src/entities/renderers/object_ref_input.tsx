@@ -3,27 +3,25 @@
  * objects by name/RID (300 ms debounce) and shows suggested candidates.
  */
 
-import type {ObjectDto} from '@ontodecide/object-graph/contract';
+import type {ObjectPage} from '@ontodecide/object-graph/contract';
 import {useQuery} from '@tanstack/react-query';
 import {Search} from 'lucide-react';
 import {useId, useState} from 'react';
 import {useTranslation} from 'react-i18next';
-import {api, asList} from '../../shared/api/client';
-import {qk} from '../../shared/api/query_keys';
+import {api} from '../../shared/api/client';
 import {cn} from '../../shared/lib/cn';
 import {useDebouncedValue} from '../../shared/lib/hooks';
 import {Input} from '../../shared/ui/input';
+import {shortRid} from '../schema/model';
 
-/** Searches objects. */
+/** Searches objects by title / primary key / RID (`GET /objects?q=`). */
 export async function searchObjects(
   q: string,
   type?: string,
   limit = 10,
-): Promise<ObjectDto[]> {
-  const res = await api.get<ObjectDto[] | {items: ObjectDto[]}>('/search', {
-    query: {q, type, limit},
-  });
-  return asList(res);
+): Promise<ObjectPage['items']> {
+  const res = await api.get<ObjectPage>('/objects', {query: {q, type, limit}});
+  return res?.items ?? [];
 }
 
 /** Object picker. */
@@ -48,7 +46,7 @@ export function ObjectRefInput({
   suggestions?: {rid: string; title: string}[];
   label?: string;
 }) {
-  const {t} = useTranslation('common');
+  const {t} = useTranslation('objects');
   const listId = useId();
   const [text, setText] = useState('');
   const [open, setOpen] = useState(false);
@@ -57,7 +55,7 @@ export function ObjectRefInput({
   );
   const q = useDebouncedValue(text.trim(), 300);
   const results = useQuery({
-    queryKey: qk.search(q, objectType),
+    queryKey: ['object', 'search', q, objectType ?? ''],
     queryFn: () => searchObjects(q, objectType),
     enabled: open && q.length >= 1,
     staleTime: 30_000,
@@ -110,9 +108,9 @@ export function ObjectRefInput({
           {options.length === 0 && (
             <li className="px-2 py-1.5 text-xs text-dim">
               {results.isFetching
-                ? t('state.loading')
+                ? t('picker.loading')
                 : q
-                  ? t('state.noResults')
+                  ? t('picker.noResults')
                   : t('picker.typeToSearch')}
             </li>
           )}
@@ -140,7 +138,7 @@ export function ObjectRefInput({
                 </span>
               ) : (
                 <span className="truncate font-mono text-[10px] text-dim">
-                  {o.rid.split('.').slice(-1)[0]?.slice(-8)}
+                  {shortRid(o.rid)}
                 </span>
               )}
             </li>

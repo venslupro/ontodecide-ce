@@ -1,97 +1,58 @@
 /**
- * @fileoverview D1 repository for dec_scenario.
+ * @fileoverview dec_scenario repository (workspace-scoped).
  */
 
 import {parseJson} from '@ontodecide/shared-kernel';
-import type {Perturbation, ScenarioResult} from '../contract';
-import type {ScenarioRecord, ScenarioRepository} from '../application';
+import {TenantRepository} from '@ontodecide/shared-kernel/d1';
+import type {ScenarioDto, ScenarioResult} from '../contract';
+import type {ScenarioRepository} from '../application';
 
 interface Row {
   id: string;
-  tenant_id: string;
-  name: string;
+  name: string | null;
   perturbations: string;
+  candidates: string | null;
   result: string | null;
-  created_by: string;
   created_at: number;
 }
 
-function toRecord(r: Row): ScenarioRecord {
-  const result = parseJson<ScenarioResult | null>(r.result, null);
-  return {
-    id: r.id,
-    tenantId: r.tenant_id,
-    name: r.name,
-    perturbations: parseJson<Perturbation[]>(r.perturbations, []),
-    ...(result ? {result} : {}),
-    createdBy: r.created_by,
-    createdAt: new Date(r.created_at).toISOString(),
-  };
+/** D1 implementation of {@link ScenarioRepository}. */
+export class D1ScenarioRepository
+  extends TenantRepository
+  implements ScenarioRepository
+{
+  async insert(s: ScenarioDto): Promise<void> {
+    await this.stmt(
+      `INSERT INTO dec_scenario
+         (tenant_id, id, name, perturbations, candidates, result, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+      s.id,
+      s.name,
+      JSON.stringify(s.perturbations),
+      JSON.stringify(s.candidates),
+      JSON.stringify(s.result),
+      Date.parse(s.createdAt),
+    ).run();
+  }
+
+  async get(id: string): Promise<ScenarioDto | null> {
+    const row = await this.stmt(
+      `SELECT id, name, perturbations, candidates, result, created_at
+       FROM dec_scenario WHERE tenant_id = ?1 AND id = ?2`,
+      id,
+    ).first<Row>();
+    return row ? toScenario(row) : null;
+  }
 }
 
-/** dec_scenario repository. */
-export class D1ScenarioRepository implements ScenarioRepository {
-  constructor(private readonly db: D1Database) {}
-
-  async insert(s: ScenarioRecord): Promise<void> {
-    await this.db
-      .prepare(
-        `INSERT INTO dec_scenario (id, tenant_id, name, perturbations, result, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        s.id,
-        s.tenantId,
-        s.name,
-        JSON.stringify(s.perturbations),
-        s.result ? JSON.stringify(s.result) : null,
-        s.createdBy,
-        new Date(s.createdAt).getTime(),
-      )
-      .run();
-  }
-
-  async get(tenantId: string, id: string): Promise<ScenarioRecord | null> {
-    const row = await this.db
-      .prepare('SELECT * FROM dec_scenario WHERE tenant_id = ? AND id = ?')
-      .bind(tenantId, id)
-      .first<Row>();
-    return row ? toRecord(row) : null;
-  }
-
-  async list(tenantId: string, limit: number): Promise<ScenarioRecord[]> {
-    const {results} = await this.db
-      .prepare(
-        'SELECT * FROM dec_scenario WHERE tenant_id = ? ORDER BY created_at DESC, id DESC LIMIT ?',
-      )
-      .bind(tenantId, limit)
-      .all<Row>();
-    return results.map(toRecord);
-  }
-
-  async setResult(
-    tenantId: string,
-    id: string,
-    result: ScenarioResult,
-  ): Promise<void> {
-    await this.db
-      .prepare(
-        'UPDATE dec_scenario SET result = ? WHERE tenant_id = ? AND id = ?',
-      )
-      .bind(JSON.stringify(result), tenantId, id)
-      .run();
-  }
-
-  async setPerturbations(
-    tenantId: string,
-    id: string,
-    perturbations: Perturbation[],
-  ): Promise<void> {
-    await this.db
-      .prepare(
-        'UPDATE dec_scenario SET perturbations = ? WHERE tenant_id = ? AND id = ?',
-      )
-      .bind(JSON.stringify(perturbations), tenantId, id)
-      .run();
-  }
+/** Maps a dec_scenario row. */
+export function toScenario(row: Row): ScenarioDto {
+  return {
+    id: row.id,
+    name: row.name ?? '',
+    perturbations: parseJson(row.perturbations, []),
+    candidates: parseJson(row.candidates, []),
+    result: parseJson(row.result, {} as ScenarioResult),
+    createdAt: new Date(row.created_at).toISOString(),
+  };
 }

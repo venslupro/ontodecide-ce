@@ -1,96 +1,100 @@
 /**
- * @fileoverview KPI use cases: list, save, delete, trend and refresh.
+ * @fileoverview KPI maintenance: incremental updates on object changes,
+ * recomputation from the object cache and 15-minute metric points.
  */
 
-import {AppError, type CallCtx, ulid} from '@ontodecide/shared-kernel';
-import type {KpiDef, KpiValue, MetricPoint} from '../contract';
-import {kpiMetric, trend, trendRangeMs} from '../domain';
-import type {SituationDeps} from './deps';
-import type {KpiRecord} from './ports';
-import {kpiValues, publish, refreshKpis, requireRole} from './support';
-import {validateKpi} from './validation';
+import {
+  METRIC_RETENTION_MS,
+  type ObjectView,
+  applyKpiDelta,
+  bucketStart,
+  computeKpi,
+  kpiContribution,
+  nextBucket,
+} from '../domain';
+import type {KpiRecord, RoomStore} from './ports';
+import {META, type RoomRuntime} from './support';
 
-/** Lists KPIs with current values (Viewer). */
-export class ListKpis {
-  constructor(private readonly deps: SituationDeps) {}
-
-  async execute(ctx: CallCtx): Promise<KpiValue[]> {
-    requireRole(ctx, 'Viewer');
-    const kpis = await this.deps.repos.kpis.list(ctx.tenantId);
-    return kpiValues(this.deps, ctx.tenantId, kpis);
+/** Recomputes a KPI from every cached object of its type. */
+export function recomputeKpi(
+  store: RoomStore,
+  k: KpiRecord,
+): KpiRecord['state'] {
+  const contributions: number[] = [];
+  for (const o of store.listObjects(k.objectType)) {
+    const c = kpiContribution(k, o);
+    if (c !== null) contributions.push(c);
   }
+  return computeKpi(k, contributions);
 }
 
-/** Creates or updates a KPI and computes its value (Modeler). */
-export class SaveKpi {
-  constructor(private readonly deps: SituationDeps) {}
+/**
+ * Tracks KPI changes over a batch of object changes. The object cache must
+ * already hold `after` when {@link KpiTracker.apply} runs (min / max
+ * recomputation reads it).
+ */
+export class KpiTracker {
+  private readonly kpis: KpiRecord[];
+  private readonly changed = new Set<string>();
 
-  async execute(ctx: CallCtx, input: KpiDef): Promise<KpiValue> {
-    requireRole(ctx, 'Modeler');
-    const def = validateKpi(input);
-    const {kpis} = this.deps.repos;
-    const existing = def.id ? await kpis.get(ctx.tenantId, def.id) : null;
-    if (def.id && !existing) throw new AppError('NOT_FOUND', 'KPI not found');
-    const record: KpiRecord = {
-      ...def,
-      id: existing?.id ?? ulid(this.deps.clock.now().getTime()),
-      value: existing?.value ?? null,
-      updatedAt: existing?.updatedAt ?? null,
-      createdAt: existing?.createdAt ?? this.deps.clock.now().getTime(),
-    };
-    await kpis.save(ctx.tenantId, record);
-    const [value] = await refreshKpis(this.deps, ctx, [record]);
-    return value;
+  constructor(private readonly store: RoomStore) {
+    this.kpis = store.listKpis();
   }
-}
 
-/** Deletes a KPI and its metric points (Modeler). */
-export class DeleteKpi {
-  constructor(private readonly deps: SituationDeps) {}
-
-  async execute(ctx: CallCtx, id: string): Promise<void> {
-    requireRole(ctx, 'Modeler');
-    const deleted = await this.deps.repos.kpis.delete(ctx.tenantId, id);
-    if (!deleted) throw new AppError('NOT_FOUND', 'KPI not found');
-    await this.deps.repos.metrics.deleteMetric(ctx.tenantId, kpiMetric(id));
-    await publish(this.deps, ctx.tenantId, 'kpi', {id, deleted: true});
-  }
-}
-
-/** KPI trend over 24 h (5-minute points) or 7 d (hourly) (Viewer). */
-export class GetKpiTrend {
-  constructor(private readonly deps: SituationDeps) {}
-
-  async execute(
-    ctx: CallCtx,
-    id: string,
-    range: '24h' | '7d',
-  ): Promise<MetricPoint[]> {
-    requireRole(ctx, 'Viewer');
-    if (range !== '24h' && range !== '7d') {
-      throw new AppError('VALIDATION_FAILED', 'range must be 24h or 7d');
+  /** Applies the change of one object. */
+  apply(before: ObjectView | null, after: ObjectView | null): void {
+    for (const k of this.kpis) {
+      if (k.objectType !== before?.type && k.objectType !== after?.type) {
+        continue;
+      }
+      const b = kpiContribution(k, before);
+      const a = kpiContribution(k, after);
+      if (b === a) continue;
+      const next =
+        applyKpiDelta(k, k.state, b, a) ?? recomputeKpi(this.store, k);
+      if (next.value !== k.state.value || next.cnt !== k.state.cnt) {
+        this.changed.add(k.id);
+      }
+      k.state = next;
     }
-    const kpi = await this.deps.repos.kpis.get(ctx.tenantId, id);
-    if (!kpi) throw new AppError('NOT_FOUND', 'KPI not found');
-    const now = this.deps.clock.now().getTime();
-    const metric = kpiMetric(id);
-    const points = await this.deps.repos.metrics.range(
-      ctx.tenantId,
-      [metric],
-      now - trendRangeMs(range),
-      now,
-    );
-    return trend(points.get(metric) ?? [], range, now);
+  }
+
+  /** Saves changed KPIs; returns them (empty when nothing changed). */
+  commit(now: number): KpiRecord[] {
+    const out = this.kpis.filter(k => this.changed.has(k.id));
+    for (const k of out) {
+      this.store.saveKpiState(k.id, k.state, now);
+      k.updatedAt = now;
+    }
+    return out;
   }
 }
 
-/** Recomputes every KPI of the tenant (Modeler). */
-export class RefreshKpis {
-  constructor(private readonly deps: SituationDeps) {}
-
-  async execute(ctx: CallCtx): Promise<KpiValue[]> {
-    requireRole(ctx, 'Modeler');
-    const kpis = await this.deps.repos.kpis.list(ctx.tenantId);
-    return refreshKpis(this.deps, ctx, kpis);
+/** Requests a metric flush at the next 15-minute boundary. */
+export function markMetricsDirty(rt: RoomRuntime): void {
+  const store = rt.deps.store;
+  if (store.getMeta(META.metricFlushAt) === null) {
+    store.setMeta(META.metricFlushAt, String(nextBucket(rt.now())));
   }
+}
+
+/**
+ * Writes one point per KPI whose value differs from its latest point, at
+ * the bucket containing `now`, and prunes points older than 7 days.
+ */
+export function flushMetrics(rt: RoomRuntime, now: number): number {
+  const store = rt.deps.store;
+  const ts = bucketStart(now);
+  let written = 0;
+  for (const k of store.listKpis()) {
+    const v = k.state.value;
+    if (v === null) continue;
+    const last = store.lastPoint(k.id);
+    if (last && last.value === v) continue;
+    store.putPoint({metric: k.id, ts, value: v});
+    written++;
+  }
+  store.prunePoints(now - METRIC_RETENTION_MS);
+  store.deleteMeta(META.metricFlushAt);
+  return written;
 }

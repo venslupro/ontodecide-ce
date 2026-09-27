@@ -138,13 +138,16 @@ describe('renderer registry', () => {
     renderWithProviders(
       <div>
         {getRenderer('objectRef:Supplier').cell(
-          'ri.t1.Supplier.S002',
+          'ri.Supplier.01J90000000000000000000022',
           p('objectRef:Supplier'),
         )}
       </div>,
     );
-    const link = await screen.findByRole('link');
-    expect(link).toHaveAttribute('href', '/objects/rid/ri.t1.Supplier.S002');
+    const link = await screen.findByRole('link', {name: 'Supplier·000022'});
+    expect(link).toHaveAttribute(
+      'href',
+      '/objects/ri.Supplier.01J90000000000000000000022',
+    );
   });
 
   it('binds inputs to react-hook-form with typed values', async () => {

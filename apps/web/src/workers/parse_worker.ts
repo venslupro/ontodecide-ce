@@ -1,19 +1,23 @@
 /**
- * @fileoverview Web Worker that parses an uploaded file off the main thread
- * (PapaParse streaming for CSV, SheetJS for XLSX, JSON arrays) and posts
- * `meta`, `batch` (every 500 rows), `done` / `error` messages. All logic
- * lives in the pure {@link parseFile}.
+ * @fileoverview Web Worker that parses an import file off the main thread
+ * (CSV / XLSX / JSON) and posts one {@link ParseResponse}. All logic lives
+ * in the pure `parse_core`. Loaded with
+ * `new Worker(new URL('./parse_worker.ts', import.meta.url), {type: 'module'})`.
  */
 
-import {parseFile, type ParseMessage, type ParseRequest} from './parse_core';
+import {
+  handleParseRequest,
+  type ParseRequest,
+  type ParseResponse,
+} from './parse_core';
 
 interface WorkerScope {
   onmessage: ((e: MessageEvent<ParseRequest>) => void) | null;
-  postMessage(message: ParseMessage): void;
+  postMessage(message: ParseResponse): void;
 }
 
 const scope = globalThis as unknown as WorkerScope;
 
 scope.onmessage = e => {
-  void parseFile(e.data, m => scope.postMessage(m));
+  void handleParseRequest(e.data).then(res => scope.postMessage(res));
 };

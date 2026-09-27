@@ -1,62 +1,59 @@
 /**
- * @fileoverview Session & client-global state (Zustand): user, in-memory
- * access token (never persisted), usage status and theme.
+ * @fileoverview Session & client-global state (Zustand): in-memory access
+ * token (never persisted), role from the token claims, the caller's account
+ * and workspace (GET /me), the admin view target, and the server clock skew.
+ * The UI is dark-only (修订说明书 11.1 #6).
  */
 
-import type {UserDto} from '@ontodecide/identity/contract';
-import {hasRole, type Role, type UsageStatus} from '@ontodecide/shared-kernel';
+import type {MeDto} from '@ontodecide/identity/contract';
+import type {AccessClaims, Quotas, UserRole} from '@ontodecide/shared-kernel';
+import {base64urlDecode, fromUtf8} from '@ontodecide/shared-kernel';
 import {create} from 'zustand';
 import {readPrefs, writePrefs} from '../../shared/lib/prefs';
 
-/** Signed-in user (subset of UserDto). */
-export interface SessionUser {
-  id: string;
-  tenantId: string;
-  email: string;
-  name: string;
-  role: Role;
-  markings: string[];
-  locale: string;
-  mustChangePassword: boolean;
-}
+/** GET /me as returned by the gateway (identity part + quotas). */
+export type Me = MeDto & {quotas?: Quotas};
 
-/** Theme preference. */
-export type ThemePref = 'light' | 'dark' | 'system';
+/** Admin view target (Act-as-Tenant). */
+export interface ActAsTarget {
+  tenantId: string;
+  email: string | null;
+}
 
 /** Session state. */
 export interface SessionState {
   status: 'unknown' | 'authenticated' | 'anonymous';
-  user?: SessionUser;
   accessToken?: string;
   /** Epoch ms when the access token expires. */
   expiresAt?: number;
-  usage: UsageStatus | null;
-  theme: ThemePref;
+  /** Claims decoded (not verified) from the access token. */
+  claims?: AccessClaims;
+  role?: UserRole;
+  me?: Me;
+  actAs?: ActAsTarget;
+  /** serverTime − localTime, from response Date headers. */
+  clockSkewMs: number;
+  /** Admin only: epoch ms when the 8-hour admin session ends. */
+  adminSessionEndsAt?: number;
   sidebarCollapsed: boolean;
-  setGrant(grant: {
-    accessToken: string;
-    expiresIn: number;
-    user?: unknown;
-  }): void;
-  setUser(user: UserDto | SessionUser): void;
+  setGrant(grant: {accessToken: string; expiresIn: number; me?: Me}): void;
+  setMe(me: Me): void;
   signOut(): void;
-  setUsage(usage: UsageStatus): void;
-  setTheme(theme: ThemePref): void;
+  setActAs(target: ActAsTarget | undefined): void;
+  setClockSkew(skewMs: number): void;
+  setAdminSessionEndsAt(at: number | undefined): void;
   toggleSidebar(): void;
 }
 
-/** Maps a UserDto to the session user. */
-export function toSessionUser(u: UserDto | SessionUser): SessionUser {
-  return {
-    id: u.id,
-    tenantId: u.tenantId,
-    email: u.email,
-    name: u.name,
-    role: u.role,
-    markings: u.markings ?? [],
-    locale: u.locale ?? 'zh-CN',
-    mustChangePassword: !!u.mustChangePassword,
-  };
+/** Decodes JWT claims without verifying (display and guards only). */
+export function decodeClaims(token: string): AccessClaims | undefined {
+  try {
+    return JSON.parse(
+      fromUtf8(base64urlDecode(token.split('.')[1] ?? '')),
+    ) as AccessClaims;
+  } catch {
+    return undefined;
+  }
 }
 
 const prefs = readPrefs();
@@ -64,35 +61,42 @@ const prefs = readPrefs();
 /** Session store. */
 export const useSession = create<SessionState>(set => ({
   status: 'unknown',
-  usage: null,
-  theme: prefs.theme ?? 'dark',
+  clockSkewMs: 0,
   sidebarCollapsed: !!prefs.sidebarCollapsed,
   setGrant(grant) {
+    const claims = decodeClaims(grant.accessToken);
     set(s => ({
       status: 'authenticated',
       accessToken: grant.accessToken,
       expiresAt: Date.now() + grant.expiresIn * 1000,
-      user: grant.user ? toSessionUser(grant.user as UserDto) : s.user,
+      claims,
+      role: claims?.role,
+      me: grant.me ?? s.me,
     }));
   },
-  setUser(user) {
-    set({user: toSessionUser(user)});
+  setMe(me) {
+    set({me});
   },
   signOut() {
     set({
       status: 'anonymous',
-      user: undefined,
       accessToken: undefined,
       expiresAt: undefined,
-      usage: null,
+      claims: undefined,
+      role: undefined,
+      me: undefined,
+      actAs: undefined,
+      adminSessionEndsAt: undefined,
     });
   },
-  setUsage(usage) {
-    set({usage});
+  setActAs(target) {
+    set({actAs: target});
   },
-  setTheme(theme) {
-    writePrefs({theme});
-    set({theme});
+  setClockSkew(skewMs) {
+    set({clockSkewMs: skewMs});
+  },
+  setAdminSessionEndsAt(at) {
+    set({adminSessionEndsAt: at});
   },
   toggleSidebar() {
     set(s => {
@@ -103,25 +107,28 @@ export const useSession = create<SessionState>(set => ({
 }));
 
 /** Current role (undefined when signed out). */
-export function useRole(): Role | undefined {
-  return useSession(s => s.user?.role);
+export function useRole(): UserRole | undefined {
+  return useSession(s => s.role);
 }
 
-/** Whether the signed-in user holds at least `min`. */
-export function useHasRole(min: Role): boolean {
-  const role = useRole();
-  return role ? hasRole([role], min) : false;
+/** Whether the signed-in user is the admin. */
+export function useIsAdmin(): boolean {
+  return useSession(s => s.role === 'admin');
 }
 
-/** Non-hook role check. */
-export function sessionHasRole(min: Role): boolean {
-  const role = useSession.getState().user?.role;
-  return role ? hasRole([role], min) : false;
+/** Server-corrected now (ms). */
+export function serverNow(): number {
+  return Date.now() + useSession.getState().clockSkewMs;
 }
 
-/** Resolves the theme preference to a concrete theme. */
-export function resolveTheme(pref: ThemePref): 'light' | 'dark' {
-  if (pref !== 'system') return pref;
-  if (typeof matchMedia === 'undefined') return 'dark';
-  return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+/**
+ * Whether the locally known trial end has passed (corrected clock). The
+ * admin never expires.
+ */
+export function trialKnownExpired(): boolean {
+  const s = useSession.getState();
+  if (s.role === 'admin') return false;
+  const texp = s.me?.workspace.trialExpiresAt ?? null;
+  if (texp) return Date.parse(texp) <= serverNow();
+  return s.claims?.texp !== undefined && s.claims.texp * 1000 <= serverNow();
 }

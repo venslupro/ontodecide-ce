@@ -1,50 +1,85 @@
 /**
- * @fileoverview Merges a tenant's published compiled schemas into the active
- * model.
+ * @fileoverview Single-version workspace ontology operations: reading,
+ * creating / replacing and removing a definition of one {@link DefKind}.
+ * Pure; the application layer validates and persists the result.
  */
 
-import {sha256Hex} from '@ontodecide/shared-kernel';
-import type {CompiledModel, CompiledSchema} from '../contract';
+import type {DefByKind, DefKind, OntologyDef} from '../contract';
 
-/** Version string of an empty model. */
-export const EMPTY_MODEL_VERSION = '0';
+/** Editable definition kinds (REST resource names). */
+export const DEF_KINDS: readonly DefKind[] = [
+  'object-types',
+  'link-types',
+  'action-types',
+];
 
-/**
- * Merges compiled schemas (one per api). Api names are unique across a
- * tenant's schemas (enforced at publish); on a clash the schema that sorts
- * last wins. An empty list yields an empty model with version `0`.
- */
-export async function mergeModel(
-  tenantId: string,
-  schemas: readonly CompiledSchema[],
-): Promise<CompiledModel> {
-  const sorted = [...schemas].sort((a, b) =>
-    a.apiName < b.apiName ? -1 : a.apiName > b.apiName ? 1 : 0,
+/** Whether a value is a {@link DefKind}. */
+export function isDefKind(value: unknown): value is DefKind {
+  return (
+    typeof value === 'string' &&
+    (DEF_KINDS as readonly string[]).includes(value)
   );
-  const model: CompiledModel = {
-    tenantId,
-    version: sorted.length
-      ? sorted.map(s => `${s.apiName}@${s.version}`).join('+')
-      : EMPTY_MODEL_VERSION,
-    hash: '',
-    schemas: sorted.map(s => ({apiName: s.apiName, version: s.version})),
-    objectTypes: {},
-    linkTypes: {},
-    actionTypes: {},
-    functions: {},
+}
+
+const FIELD = {
+  'object-types': 'objectTypes',
+  'link-types': 'linkTypes',
+  'action-types': 'actionTypes',
+} as const satisfies Record<DefKind, keyof OntologyDef>;
+
+/** Definitions of one kind. */
+export function listOf<K extends DefKind>(
+  def: OntologyDef,
+  kind: K,
+): DefByKind[K][] {
+  return def[FIELD[kind]] as DefByKind[K][];
+}
+
+/** Finds a definition by api name. */
+export function findDef<K extends DefKind>(
+  def: OntologyDef,
+  kind: K,
+  id: string,
+): DefByKind[K] | undefined {
+  return listOf(def, kind).find(d => d.apiName === id);
+}
+
+/** Returns a copy with `item` created (appended) or replaced in place. */
+export function putDef<K extends DefKind>(
+  def: OntologyDef,
+  kind: K,
+  id: string,
+  item: DefByKind[K],
+): OntologyDef {
+  const items = listOf(def, kind);
+  const idx = items.findIndex(d => d.apiName === id);
+  const next =
+    idx < 0 ? [...items, item] : items.map((d, i) => (i === idx ? item : d));
+  return {...def, [FIELD[kind]]: next};
+}
+
+/** Returns a copy without the definition `id`. */
+export function removeDef(
+  def: OntologyDef,
+  kind: DefKind,
+  id: string,
+): OntologyDef {
+  const items = listOf(def, kind) as {apiName: string}[];
+  return {...def, [FIELD[kind]]: items.filter(d => d.apiName !== id)};
+}
+
+/** An empty ontology (purged workspaces). */
+export function emptyOntology(): OntologyDef {
+  return {
+    objectTypes: [],
+    linkTypes: [],
+    actionTypes: [],
+    functions: [],
     simulationKpis: [],
-    indexPlan: [],
   };
-  for (const s of sorted) {
-    Object.assign(model.objectTypes, s.objectTypes);
-    Object.assign(model.linkTypes, s.linkTypes);
-    Object.assign(model.actionTypes, s.actionTypes);
-    Object.assign(model.functions, s.functions);
-    model.simulationKpis.push(...s.simulationKpis);
-    model.indexPlan.push(...s.indexPlan);
-  }
-  model.hash = await sha256Hex(
-    sorted.map(s => `${s.apiName}@${s.version}:${s.hash}`).join('\n'),
-  );
-  return model;
+}
+
+/** Fills missing collections of a stored definition. */
+export function normalizeOntology(def: Partial<OntologyDef>): OntologyDef {
+  return {...emptyOntology(), ...def};
 }

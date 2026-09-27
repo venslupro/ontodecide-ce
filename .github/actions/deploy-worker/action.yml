@@ -1,7 +1,8 @@
 # Deploys one production Worker: install → render wrangler.jsonc from
 # Terraform outputs → D1 migrations → deploy → secrets.
 # The caller's job env provides the Cloudflare, Terraform-state and secret
-# values (see deploy.yml).
+# values (see deploy.yml). Secrets that come from Terraform (Turnstile, B2
+# archive keys) are read from its sensitive outputs and masked.
 name: Deploy Worker
 description: Deploy one production Worker.
 
@@ -10,10 +11,12 @@ inputs:
     description: Worker directory under apps/.
     required: true
   admin-email:
-    description: BOOTSTRAP_ADMIN_EMAIL for identity-access.
+    description: BOOTSTRAP_ADMIN_EMAIL (identity-access secret).
     required: true
   secrets:
-    description: Space-separated env var names to upload as Worker secrets.
+    description: >-
+      Space-separated env var names to upload as Worker secrets (empty
+      values are skipped, so optional secrets keep their current value).
     required: false
     default: ''
 
@@ -50,8 +53,6 @@ runs:
         pnpm install --frozen-lockfile
     - name: Render Wrangler configs
       shell: bash
-      env:
-        BOOTSTRAP_ADMIN_EMAIL: ${{ inputs.admin-email }}
       run: |
         terraform -chdir=infra init -input=false > /dev/null
         terraform -chdir=infra output -json > tf-output.json
@@ -64,11 +65,12 @@ runs:
             console.log(`::add-mask::${v}`);
             fs.appendFileSync(process.env.GITHUB_ENV, `${k}<<__EOF__\n${v}\n__EOF__\n`);
           };
-          put("B2_KEY_ID", o.b2_integration_key?.value?.key_id);
-          put("B2_APP_KEY", o.b2_integration_key?.value?.key);
-          put("NEO4J_URL", o.neo4j?.value?.url);
-          put("NEO4J_USER", o.neo4j?.value?.username);
-          put("NEO4J_PASSWORD", o.neo4j_password?.value);
+          const b2 = o.b2_archive_keys?.value ?? {};
+          put("B2_WRITE_KEY_ID", b2.write_key_id);
+          put("B2_WRITE_APP_KEY", b2.write_key);
+          put("B2_SIGN_KEY_ID", b2.sign_key_id);
+          put("B2_SIGN_APP_KEY", b2.sign_key);
+          put("TURNSTILE_SECRET", o.turnstile_secret?.value);
         '
         node scripts/gen_wrangler.mjs --env prod --tf-output tf-output.json
         rm tf-output.json
@@ -77,16 +79,11 @@ runs:
       env:
         CONFIG: apps/${{ inputs.worker }}/wrangler.jsonc
       run: |
-        db="$(node -e '
-          const c = require("fs").readFileSync(process.argv[1], "utf8");
-          const j = JSON.parse(c.replace(/^\s*\/\/.*$/gm, ""));
-          console.log(j.d1_databases?.[0]?.database_name ?? "");
-        ' "${CONFIG}")"
-        if [[ -z "${db}" ]]; then
-          echo 'No D1 database.'
-        else
-          CI=true npx wrangler d1 migrations apply "${db}" --remote -c "${CONFIG}"
-        fi
+        # D1_RESET_LEGACY=true (GitHub variable, one deploy only) drops a
+        # V1.3 schema before the V2.4 migrations; see scripts/d1_migrate.mjs.
+        flags=()
+        [[ "${D1_RESET_LEGACY:-}" != 'true' ]] || flags+=(--reset-legacy)
+        node scripts/d1_migrate.mjs -c "${CONFIG}" "${flags[@]}"
     - name: Deploy
       shell: bash
       run: npx wrangler deploy -c "apps/${{ inputs.worker }}/wrangler.jsonc"
@@ -96,10 +93,21 @@ runs:
       env:
         CONFIG: apps/${{ inputs.worker }}/wrangler.jsonc
         NAMES: ${{ inputs.secrets }}
+        BOOTSTRAP_ADMIN_EMAIL: ${{ inputs.admin-email }}
       run: |
         # shellcheck disable=SC2086  # NAMES is a word list.
-        node -e '
+        json="$(node -e '
           const out = {};
-          for (const k of process.argv.slice(1)) if (process.env[k]) out[k] = process.env[k];
+          const skipped = [];
+          for (const k of process.argv.slice(1)) {
+            if (process.env[k]) out[k] = process.env[k];
+            else skipped.push(k);
+          }
+          if (skipped.length) console.error(`Not set (kept as is): ${skipped.join(" ")}`);
           process.stdout.write(JSON.stringify(out));
-        ' ${NAMES} | npx wrangler secret bulk -c "${CONFIG}"
+        ' ${NAMES})"
+        if [[ "${json}" == '{}' ]]; then
+          echo 'No secret values to upload.'
+        else
+          printf '%s' "${json}" | npx wrangler secret bulk -c "${CONFIG}"
+        fi

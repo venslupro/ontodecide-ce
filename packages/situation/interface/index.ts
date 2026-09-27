@@ -1,9 +1,9 @@
 /**
- * @fileoverview Situation interface layer: RPC object, queue, cron and
- * fetch dispatch.
+ * @fileoverview Situation interface layer: SituationRpc, TenantLifecycle,
+ * the domain-events consumer and the stream fetch handler.
  */
 
-export * from './cron';
 export * from './fetch';
+export * from './lifecycle';
 export * from './queue';
 export * from './rpc';

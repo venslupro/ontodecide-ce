@@ -1,5 +1,41 @@
-materialId,name,category,unitCost,products
-M-100,Aluminium housing,Mechanical,42.5,P-900;P-901
-M-101,Controller PCB,Electronics,88,P-900
-M-102,Power IC,Electronics,12.3,P-900;P-902
-M-103,Li-ion cell,Energy,31,P-901;P-902
+materialId,name,category,safetyStock,stock,unitCost,leadTimeDays,products
+M-001,Controller PCB,Electronics,200,280,5,7,P-001;P-004
+M-002,Aluminium Housing,Mechanical,250,425,63.5,18,P-002;P-011
+M-003,Li-ion Cell,Energy,300,600,32,29,P-003;P-018
+M-004,Retail Box,Packaging,350,210,90.5,12,P-004;P-005
+M-005,Thermal Paste,Chemicals,400,560,59,23,P-005;P-012
+M-006,Power IC,Electronics,450,765,27.5,34,P-006;P-019
+M-007,Steel Bracket,Mechanical,500,1000,86,17,P-007;P-006
+M-008,Battery Pack,Energy,550,1265,54.5,28,P-008;P-013
+M-009,Foam Insert,Packaging,600,840,23,11,P-009;P-020
+M-010,Conformal Coating,Chemicals,200,340,81.5,22,P-010;P-007
+M-011,MCU Chip,Electronics,250,150,50,33,P-011;P-014
+M-012,Precision Gear,Mechanical,300,690,18.5,16,P-012;P-001
+M-013,Power Adapter,Energy,350,490,77,27,P-013;P-008
+M-014,Pallet Wrap,Packaging,400,680,45.5,10,P-014;P-015
+M-015,Epoxy Resin,Chemicals,450,900,14,21,P-015;P-002
+M-016,Memory Module,Electronics,500,1150,72.5,32,P-016;P-009
+M-017,Bearing Set,Mechanical,550,770,41,15,P-017;P-016
+M-018,Charging Coil,Energy,600,360,9.5,26,P-018;P-003
+M-019,Label Roll,Packaging,200,400,68,9,P-019;P-010
+M-020,Solder Paste,Chemicals,250,575,36.5,20,P-020;P-017
+M-021,Wi-Fi Module,Electronics,300,420,5,31,P-001;P-004
+M-022,Hinge Assembly,Mechanical,350,595,63.5,14,P-002;P-011
+M-023,DC-DC Converter,Energy,400,800,32,25,P-003;P-018
+M-024,Carton Divider,Packaging,450,1035,90.5,8,P-004;P-005
+M-025,Cleaning Solvent,Chemicals,500,300,59,19,P-005;P-012
+M-026,Sensor Array,Electronics,550,935,27.5,30,P-006;P-019
+M-027,Fastener Pack,Mechanical,600,1200,86,13,P-007;P-006
+M-028,Solar Film,Energy,200,460,54.5,24,P-008;P-013
+M-029,Blister Tray,Packaging,250,350,23,7,P-009;P-020
+M-030,Adhesive Tape,Chemicals,300,510,81.5,18,P-010;P-007
+M-031,Display Panel,Electronics,350,700,50,29,P-011;P-014
+M-032,Heat Sink,Mechanical,400,240,18.5,12,P-012;P-001
+M-033,Supercapacitor,Energy,450,630,77,23,P-013;P-008
+M-034,Desiccant Pack,Packaging,500,850,45.5,34,P-014;P-015
+M-035,Silicone Gasket,Chemicals,550,1100,14,17,P-015;P-002
+M-036,Connector Kit,Electronics,600,1380,72.5,28,P-016;P-009
+M-037,Motor Shaft,Mechanical,200,280,41,11,P-017;P-016
+M-038,Fuse Block,Energy,250,425,9.5,22,P-018;P-003
+M-039,Shipping Carton,Packaging,300,180,68,33,P-019;P-010
+M-040,Flux Pen,Chemicals,350,805,36.5,16,P-020;P-017

@@ -1,52 +1,91 @@
 /**
- * @fileoverview Queue dispatch: `situation-events` and every `*-dlq`.
+ * @fileoverview domain-events consumer: groups messages by workspace and
+ * hands each group to its room. Transient failures retry with backoff;
+ * malformed messages and permanent errors are acknowledged and logged.
  */
 
-import type {SituationEventMsg} from '@ontodecide/object-graph/contract';
 import {
   AppError,
-  QUEUES,
+  type DomainEventMsg,
+  type ErrorCode,
+  type Logger,
   type QueueBatch,
-  baseQueueName,
+  type QueueMessage,
+  backoffSeconds,
 } from '@ontodecide/shared-kernel';
-import {
-  type AutomationIndexCache,
-  ProcessSituationEvent,
-  type SituationDeps,
-  StoreDeadLetters,
-} from '../application';
+import type {SituationRoomApi} from '../application';
+import type {RoomResolver} from './rpc';
 
-/** Builds the queue consumer. */
-export function createQueueHandler(
-  deps: SituationDeps,
-): (batch: QueueBatch<unknown>) => Promise<void> {
-  const processEvent = new ProcessSituationEvent(deps);
-  const storeDeadLetters = new StoreDeadLetters(deps);
+const PERMANENT: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
+  'VALIDATION_FAILED',
+  'NOT_FOUND',
+  'FORBIDDEN',
+]);
+
+/** Structural check of a domain-events message. */
+export function isDomainEvent(body: unknown): body is DomainEventMsg {
+  const m = body as Partial<DomainEventMsg> | null;
+  return (
+    !!m &&
+    typeof m === 'object' &&
+    typeof m.eventId === 'string' &&
+    m.eventId.length > 0 &&
+    typeof m.tid === 'string' &&
+    m.tid.length > 0 &&
+    Array.isArray(m.changes) &&
+    m.changes.every(
+      c =>
+        !!c &&
+        typeof c.rid === 'string' &&
+        typeof c.type === 'string' &&
+        Array.isArray(c.changed),
+    )
+  );
+}
+
+/** Builds the queue handler. */
+export function createDomainEventsConsumer(deps: {
+  rooms: RoomResolver<Pick<SituationRoomApi, 'applyEvents'>>;
+  logger: Logger;
+}): (batch: QueueBatch<unknown>) => Promise<void> {
+  const {rooms, logger} = deps;
   return async batch => {
-    const {name, dlq} = baseQueueName(batch.queue);
-    if (dlq) {
-      await storeDeadLetters.execute(batch.queue, batch.messages);
-      batch.ackAll();
-      return;
-    }
-    if (name !== QUEUES.situationEvents) {
-      throw new AppError('INTERNAL', `Unexpected queue ${batch.queue}`);
-    }
-    const cache: AutomationIndexCache = new Map();
+    const groups = new Map<
+      string,
+      {msgs: QueueMessage<unknown>[]; events: DomainEventMsg[]}
+    >();
     for (const m of batch.messages) {
-      const msg = m.body as SituationEventMsg;
-      try {
-        await processEvent.execute(msg, cache);
+      if (!isDomainEvent(m.body)) {
+        logger.warn('situation.event_invalid', {messageId: m.id});
         m.ack();
-      } catch (e) {
-        deps.logger.error('situation event failed', {
-          eventId: msg?.eventId,
-          tenantId: msg?.tenantId,
-          attempts: m.attempts,
-          error: e instanceof Error ? e.message : String(e),
-        });
-        m.retry();
+        continue;
       }
+      const g = groups.get(m.body.tid) ?? {msgs: [], events: []};
+      g.msgs.push(m);
+      g.events.push(m.body);
+      groups.set(m.body.tid, g);
     }
+    await Promise.all(
+      [...groups].map(async ([tid, g]) => {
+        try {
+          const r = await rooms(tid).applyEvents(tid, g.events);
+          for (const m of g.msgs) m.ack();
+          if (r.dropped) {
+            logger.info('situation.events_dropped', {tid, n: g.events.length});
+          }
+        } catch (e) {
+          const err = AppError.from(e);
+          if (PERMANENT.has(err.code)) {
+            logger.warn('situation.events_rejected', {tid, code: err.code});
+            for (const m of g.msgs) m.ack();
+            return;
+          }
+          logger.warn('situation.events_retry', {tid, code: err.code});
+          for (const m of g.msgs) {
+            m.retry({delaySeconds: backoffSeconds(m.attempts)});
+          }
+        }
+      }),
+    );
   };
 }

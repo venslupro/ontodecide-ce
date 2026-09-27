@@ -8,7 +8,7 @@ build/
 .turbo/
 *.tsbuildinfo
 
-# Cloudflare / Wrangler
+# Cloudflare / Wrangler (.wrangler/ also holds the local dev-secrets.json)
 .wrangler/
 # Rendered by scripts/gen_wrangler.mjs (the Pages config is hand-written).
 apps/*/wrangler.jsonc

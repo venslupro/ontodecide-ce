@@ -1,24 +1,37 @@
-import {describe, expect, it, vi} from 'vitest';
-import {decodeCtx, encodeCtx, hasMarking, hasRole, systemCtx} from './call_ctx';
-import {AppError, ERROR_STATUS} from './errors';
-import {isRid, newRid, parseRid, ulid} from './ids';
+/**
+ * @fileoverview Tests of the shared kernel: call context, ids, errors, HTTP, paging, quotas, tenant scoping.
+ */
+
+import {describe, expect, it} from 'vitest';
+import {
+  actorLabel,
+  decodeCtx,
+  encodeCtx,
+  isServiceCtx,
+  serviceCtx,
+} from './call_ctx';
+import {AppError, ERROR_CODES, ERROR_STATUS} from './errors';
+import {parseEtag, toEtag, isIdempotencyKey} from './http';
+import {isRid, isUlid, newRid, parseRid, ulid} from './ids';
 import {resolveText} from './i18n';
+import {clampLimit, decodeCursor, encodeCursor} from './page';
 import {backoffSeconds, baseQueueName} from './queue';
-import {usageLevel} from './usage';
-import {UsageMeter} from './usage_meter';
+import {mergeQuotas, nextUtcMidnight} from './quota';
+import {isTenantScoped} from './d1/tenant_repository';
 
 describe('call context', () => {
-  it('orders roles and checks markings', () => {
-    expect(hasRole(['Operator'], 'Viewer')).toBe(true);
-    expect(hasRole(['Operator'], 'Modeler')).toBe(false);
-    expect(hasRole(['Admin'], 'Modeler')).toBe(true);
-    const sys = systemCtx('t1');
-    expect(hasMarking(sys, 'PII')).toBe(true);
-    expect(hasMarking({...sys, markings: ['FINANCE']}, 'PII')).toBe(false);
+  it('builds service contexts and audit labels', () => {
+    const ctx = serviceCtx('T1', 'decision-engine');
+    expect(ctx).toMatchObject({tid: 'T1', sub: 'svc:decision-engine'});
+    expect(isServiceCtx(ctx)).toBe(true);
+    expect(actorLabel(ctx)).toBe('svc:decision-engine');
+    expect(actorLabel({...ctx, actor: {role: 'admin', actingAs: true}})).toBe(
+      'admin',
+    );
   });
 
   it('round-trips through the ctx header including non-ASCII', () => {
-    const ctx = {...systemCtx('t1'), locale: 'zh-CN', userId: '用户'};
+    const ctx = {...serviceCtx('t1', 'x'), requestId: '请求'};
     expect(decodeCtx(encodeCtx(ctx))).toEqual(ctx);
   });
 });
@@ -28,87 +41,89 @@ describe('ids', () => {
     const a = ulid(1000);
     const b = ulid(2000);
     expect(a).toHaveLength(26);
+    expect(isUlid(a)).toBe(true);
     expect(a < b).toBe(true);
-    const rid = newRid('t1', 'Supplier');
-    expect(parseRid(rid)).toMatchObject({
-      tenantId: 't1',
-      objectType: 'Supplier',
-    });
-    expect(isRid('ri.a.b')).toBe(false);
+    const rid = newRid('Supplier');
+    expect(parseRid(rid)).toMatchObject({objectType: 'Supplier'});
+    expect(isRid('ri.a')).toBe(false);
+    expect(isRid('ri.a.b.c')).toBe(false);
     expect(isRid(rid)).toBe(true);
   });
 });
 
-describe('AppError', () => {
-  it('maps codes to statuses and survives message-only transport', () => {
-    const err = new AppError('VERSION_CONFLICT', 'stale', {current: 3});
-    expect(err.status).toBe(412);
-    const back = AppError.from(new Error(err.message));
-    expect(back).toMatchObject({
-      code: 'VERSION_CONFLICT',
-      detail: 'stale',
-      extras: {current: 3},
+describe('errors', () => {
+  it('survives an RPC boundary with status overrides', () => {
+    const e = new AppError('VALIDATION_FAILED', 'precondition', {
+      status: 422,
+      extras: {unmet: ['x']},
     });
-    expect(back.toProblem('r1')).toMatchObject({
-      status: 412,
-      code: 'VERSION_CONFLICT',
-      requestId: 'r1',
-      current: 3,
+    const back = AppError.from(new Error(e.message));
+    expect(back.status).toBe(422);
+    expect(back.toProblem('tr1')).toMatchObject({
+      code: 'VALIDATION_FAILED',
+      status: 422,
+      traceId: 'tr1',
+      unmet: ['x'],
     });
     expect(AppError.from(new Error('boom')).code).toBe('INTERNAL');
-    expect(Object.values(ERROR_STATUS).every(s => s >= 400 && s < 600)).toBe(
-      true,
-    );
+  });
+
+  it('lists every code with a status', () => {
+    expect(ERROR_CODES).toContain('TRIAL_EXPIRED');
+    expect(ERROR_STATUS.SIGNUP_CLOSED).toBe(503);
+    expect(ERROR_STATUS.PRECONDITION_FAILED).toBe(412);
   });
 });
 
-describe('misc helpers', () => {
-  it('resolves i18n text with fallbacks', () => {
-    expect(resolveText({'zh-CN': '供应商', 'en-US': 'Supplier'}, 'en-US')).toBe(
-      'Supplier',
-    );
-    expect(resolveText({'zh-CN': '供应商'}, 'en-US')).toBe('供应商');
-    expect(resolveText('plain', 'en-US')).toBe('plain');
-    expect(resolveText(undefined, 'en-US', 'fb')).toBe('fb');
+describe('http helpers', () => {
+  it('formats and parses ETags', () => {
+    expect(toEtag(3)).toBe('"v3"');
+    expect(parseEtag('"v3"')).toBe(3);
+    expect(parseEtag('W/"v12"')).toBe(12);
+    expect(parseEtag('7')).toBe(7);
+    expect(parseEtag('nope')).toBeNull();
+    expect(isIdempotencyKey('0192f0c4-7a7b-7c1d')).toBe(true);
+    expect(isIdempotencyKey('short')).toBe(false);
+  });
+});
+
+describe('paging, queues and quotas', () => {
+  it('clamps limits and round-trips cursors', () => {
+    expect(clampLimit(undefined)).toBe(50);
+    expect(clampLimit(500)).toBe(100);
+    const c = encodeCursor({k: 'a/b+c'});
+    expect(decodeCursor(c)).toEqual({k: 'a/b+c'});
+    expect(decodeCursor('%%%')).toBeNull();
   });
 
-  it('normalizes queue names and backs off exponentially', () => {
-    expect(baseQueueName('object-writes-dlq')).toEqual({
-      name: 'object-writes',
-      dlq: true,
-    });
-    expect(baseQueueName('ingest')).toEqual({name: 'ingest', dlq: false});
-    expect(baseQueueName('ontodecide-prd-object-writes-dlq')).toEqual({
-      name: 'object-writes',
-      dlq: true,
-    });
-    expect(baseQueueName('ontodecide-prd-graph-sync')).toEqual({
-      name: 'graph-sync',
-      dlq: false,
-    });
-    expect([1, 2, 3, 10].map(backoffSeconds)).toEqual([2, 4, 8, 60]);
+  it('maps deployed queue names and backs off', () => {
+    expect(baseQueueName('ontodecide-prd-domain-events')).toBe('domain-events');
+    expect(baseQueueName('ontodecide-prd-dead-letter')).toBe('dead-letter');
+    expect(backoffSeconds(1)).toBe(2);
+    expect(backoffSeconds(10)).toBe(60);
   });
 
-  it('computes usage levels', () => {
-    expect(usageLevel(0.5)).toBe('ok');
-    expect(usageLevel(0.8)).toBe('warn');
-    expect(usageLevel(0.95)).toBe('stop');
+  it('merges quotas', () => {
+    const now = new Date('2026-09-28T10:00:00Z');
+    expect(nextUtcMidnight(now)).toBe('2026-09-29T00:00:00.000Z');
+    const q = mergeQuotas([{key: 'objects', used: 3, limit: 300}], now);
+    expect(q.objects).toEqual({used: 3, limit: 300});
+    expect(q.links).toEqual({used: 0, limit: 0});
   });
 
-  it('batches usage reports every N events', async () => {
-    const reporter = vi.fn(async () => undefined);
-    let now = 0;
-    const meter = new UsageMeter(reporter, 3, 30_000, () => now);
-    void meter.record('workers.requests');
-    void meter.record('workers.requests', 2);
-    expect(reporter).not.toHaveBeenCalled();
-    await meter.record('ai.neurons', 76);
-    expect(reporter).toHaveBeenCalledWith([
-      {resource: 'workers.requests', n: 3},
-      {resource: 'ai.neurons', n: 76},
-    ]);
-    now = 31_000;
-    await meter.record('kv.writes');
-    expect(reporter).toHaveBeenCalledTimes(2);
+  it('resolves localized text', () => {
+    expect(resolveText({'zh-CN': '中', 'en-US': 'en'}, 'en-US')).toBe('en');
+    expect(resolveText({'zh-CN': '中'}, 'en-US')).toBe('中');
+  });
+});
+
+describe('tenant scoping', () => {
+  it('accepts only SQL bound to the workspace', () => {
+    expect(isTenantScoped('SELECT * FROM t WHERE tenant_id = ?1')).toBe(true);
+    expect(
+      isTenantScoped('INSERT INTO og_object (tenant_id, rid) VALUES (?1, ?2)'),
+    ).toBe(true);
+    expect(isTenantScoped('SELECT * FROM t WHERE tenant_id = ?2')).toBe(false);
+    expect(isTenantScoped('DELETE FROM t')).toBe(false);
   });
 });

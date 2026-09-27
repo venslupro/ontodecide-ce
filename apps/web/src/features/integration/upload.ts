@@ -1,307 +1,323 @@
 /**
- * @fileoverview File import orchestration: presign → optional raw-file PUT
- * to B2 (progress bar 1) → ≤ 500-record batches, at most 3 in flight
- * (progress bar 2). Backend contract:
- *
- * - `seq` starts at 0 and is contiguous; `last: true` only on the final
- *   batch; every batch carries the `jobId` returned by presign.
- * - `Idempotency-Key = <jobId>:<seq>`.
- * - Failed batches are retried after 2 s, 4 s, 8 s (3 retries); 4xx errors
- *   other than 429 are not retried; 429 waits for `retryAfter`.
- * - presign `url: ''` means B2 is not configured → skip the archive PUT.
- *
- * Every side effect is injected ({@link UploadDeps}) so the module is unit
- * testable with fake timers.
+ * @fileoverview Upload runner (前端详细设计 算法描述 文件导入): POST /imports
+ * (reused when the job already exists for an AI draft) → PUT mapping →
+ * batches of ≤ 100 rows sent sequentially with seq 0..n-1 and `last` on the
+ * final one. Each batch body stays ≤ 512 KB (a batch that is too large is
+ * halved recursively before sending, or after a 413); failures are retried
+ * with the same seq after 2 s, 4 s, 8 s (idempotent on the server). The
+ * runner is pure logic over injected dependencies and resumable: pass the
+ * same {@link UploadState} again to continue after a failure. Only mapped
+ * JSON rows are sent — the raw file never leaves the browser.
  */
 
-import {INGEST_LIMITS, type TxnType} from '@ontodecide/integration/contract';
-import {ApiError} from '../../shared/api/errors';
-import {presignUpload, submitBatch, type BatchInput} from './api';
+import type {
+  BatchInput,
+  BatchResult,
+  CreateImportInput,
+  JobDto,
+  MappingSpec,
+  Row,
+} from '@ontodecide/integration/contract';
+import {CE_LIMITS} from '@ontodecide/shared-kernel';
+import {ApiError, isApiError} from '../../shared/api/errors';
 
-/** Max batches in flight. */
-export const UPLOAD_CONCURRENCY = 3;
+/** Retry delays after a failed request, milliseconds. */
+export const RETRY_DELAYS_MS: readonly number[] = [2000, 4000, 8000];
 
-/** Retry delays in milliseconds (3 retries). */
-export const RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
+/** Batch bounds. */
+export interface BatchLimits {
+  maxRows: number;
+  maxBytes: number;
+}
 
-/** Rough per-batch server time used for the estimate (ms). */
-export const EST_BATCH_MS = 900;
+/** Default bounds from CE_LIMITS. */
+export const BATCH_LIMITS: BatchLimits = {
+  maxRows: CE_LIMITS.batchRows,
+  maxBytes: CE_LIMITS.maxBodyBytes,
+};
 
-/** Assumed archive throughput for the estimate (bytes / s). */
-export const EST_ARCHIVE_BPS = 2 * 1024 * 1024;
+const encoder = new TextEncoder();
 
-/** Side effects used by {@link runUpload}. */
+/** UTF-8 size of a batch body as sent (worst-case seq digits). */
+export function batchBodyBytes(rows: readonly Row[], seq = 10_000): number {
+  return encoder.encode(JSON.stringify({seq, last: false, rows})).length;
+}
+
+/** A single row does not fit into one request body. */
+export class RowTooLargeError extends Error {
+  constructor(readonly row: number) {
+    super(`Row ${row} exceeds the request body limit`);
+    this.name = 'RowTooLargeError';
+  }
+}
+
+/** The upload was aborted by the user. */
+export class UploadAbortedError extends Error {
+  constructor() {
+    super('aborted');
+    this.name = 'UploadAbortedError';
+  }
+}
+
+/** A planned batch: the rows and the file row number of the first one. */
+export interface PlannedBatch {
+  firstRow: number;
+  rows: Row[];
+}
+
+/** Halves `batch` recursively until every part fits `maxBytes`. */
+export function splitToFit(
+  batch: PlannedBatch,
+  maxBytes: number,
+): PlannedBatch[] {
+  if (batchBodyBytes(batch.rows) <= maxBytes) return [batch];
+  if (batch.rows.length <= 1) throw new RowTooLargeError(batch.firstRow);
+  return halve(batch).flatMap(b => splitToFit(b, maxBytes));
+}
+
+function halve(batch: PlannedBatch): [PlannedBatch, PlannedBatch] {
+  const mid = Math.ceil(batch.rows.length / 2);
+  return [
+    {firstRow: batch.firstRow, rows: batch.rows.slice(0, mid)},
+    {firstRow: batch.firstRow + mid, rows: batch.rows.slice(mid)},
+  ];
+}
+
+/**
+ * Deterministic batch plan: chunks of ≤ `maxRows`, each halved until its
+ * JSON body is ≤ `maxBytes`. The index in the result is the seq.
+ */
+export function planBatches(
+  rows: readonly Row[],
+  limits: BatchLimits = BATCH_LIMITS,
+): PlannedBatch[] {
+  const out: PlannedBatch[] = [];
+  for (let i = 0; i < rows.length; i += limits.maxRows) {
+    const chunk = {firstRow: i + 1, rows: rows.slice(i, i + limits.maxRows)};
+    out.push(...splitToFit(chunk, limits.maxBytes));
+  }
+  return out;
+}
+
+/** Dependencies of the runner (API calls and a sleep for retries). */
 export interface UploadDeps {
-  presign(
-    sourceId: string,
-    fileName: string,
-    bytes: number,
-  ): Promise<{url: string; key: string; jobId: string}>;
-  putFile(
-    url: string,
-    file: Blob,
-    onProgress: (loaded: number, total: number) => void,
-    signal?: AbortSignal,
-  ): Promise<void>;
+  createImport(input: CreateImportInput): Promise<JobDto>;
+  putMapping(id: string, mapping: MappingSpec): Promise<JobDto>;
   submitBatch(
-    sourceId: string,
+    id: string,
     batch: BatchInput,
-    idempotencyKey: string,
     signal?: AbortSignal,
-  ): Promise<{jobId: string; queuedMessages: number}>;
+  ): Promise<BatchResult>;
+  getImport(id: string): Promise<JobDto>;
+  /** Waits `ms` (rejects when `signal` aborts). */
   sleep(ms: number, signal?: AbortSignal): Promise<void>;
 }
 
-/** Progress snapshot. */
+/** Progress accumulated from the batch results. */
 export interface UploadProgress {
-  phase: 'presign' | 'archive' | 'batches' | 'done';
-  /** 0..1 of the raw file PUT (1 when skipped). */
-  archive: number;
-  archiveSkipped: boolean;
+  jobId: string | null;
   batchesDone: number;
   batchesTotal: number;
-  inFlight: number;
-  /** Batches currently waiting for a retry. */
-  retrying: number;
-  jobId?: string;
+  rowsSent: number;
+  upserted: number;
+  skipped: number;
+  rejected: number;
+  /** Retry attempt of the current batch (0 = first try). */
+  attempt: number;
+}
+
+/** Mutable, resumable state of one upload. */
+export interface UploadState {
+  jobId: string | null;
+  mappingSet: boolean;
+  batches: PlannedBatch[] | null;
+  /** Index (= seq) of the next batch to send. */
+  next: number;
+  progress: UploadProgress;
+}
+
+/** Creates the state (optionally for a job created for the AI draft). */
+export function newUploadState(jobId: string | null = null): UploadState {
+  return {
+    jobId,
+    mappingSet: false,
+    batches: null,
+    next: 0,
+    progress: {
+      jobId,
+      batchesDone: 0,
+      batchesTotal: 0,
+      rowsSent: 0,
+      upserted: 0,
+      skipped: 0,
+      rejected: 0,
+      attempt: 0,
+    },
+  };
 }
 
 /** Input of {@link runUpload}. */
 export interface UploadInput {
-  sourceId: string;
   fileName: string;
-  file: Blob;
-  batches: Record<string, unknown>[][];
-  txnType?: TxnType;
+  mapping: MappingSpec;
+  /** Rows to submit (already projected and cut to the plan). */
+  rows: Row[];
+  limits?: BatchLimits;
 }
 
-/** Splits rows into batches of ≤ 500 records. */
-export function planBatches<T>(
-  rows: readonly T[],
-  size: number = INGEST_LIMITS.batchRecordsMax,
-): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
-  return out;
+/** Whether a failed request may be retried with the same seq. */
+export function isRetryable(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return !(err instanceof UploadAbortedError);
+  if (err.code === 'QUOTA_EXCEEDED') return false;
+  if (err.code === 'NETWORK') return true;
+  if (err.status === 408) return true;
+  if (err.status === 429) return err.code === 'RATE_LIMITED';
+  return err.status >= 500;
 }
 
-/** Estimated upload duration in seconds. */
-export function estimateSeconds(
-  batches: number,
-  bytes: number,
-  archive = true,
-): number {
-  const waves = Math.ceil(batches / UPLOAD_CONCURRENCY);
-  const ms =
-    waves * EST_BATCH_MS + (archive ? (bytes / EST_ARCHIVE_BPS) * 1000 : 0);
-  return Math.max(1, Math.ceil(ms / 1000));
-}
-
-/** Whether a failed batch may be retried, and after how long. */
-export function retryDelay(err: unknown, attempt: number): number | null {
-  if (attempt >= RETRY_DELAYS_MS.length) return null;
-  const backoff = RETRY_DELAYS_MS[attempt];
-  const status =
-    err instanceof ApiError
-      ? err.status
-      : (err as {status?: number} | null)?.status;
-  if (err instanceof ApiError && err.code === 'ABORTED') return null;
-  if (typeof status === 'number' && status === 429) {
-    const ra = err instanceof ApiError ? err.retryAfter : undefined;
-    return ra !== undefined ? Math.max(ra * 1000, 0) : backoff;
+function retryDelay(err: unknown, attempt: number): number {
+  const base = RETRY_DELAYS_MS[attempt] ?? 0;
+  if (err instanceof ApiError && err.retryAfter !== undefined) {
+    return Math.max(base, err.retryAfter * 1000);
   }
-  if (typeof status === 'number' && status >= 400 && status < 500) return null;
-  return backoff;
+  return base;
 }
 
-/** Idempotency key of one batch. */
-export function batchKey(jobId: string, seq: number): string {
-  return `${jobId}:${seq}`;
+function checkAbort(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new UploadAbortedError();
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  deps: UploadDeps,
+  onAttempt: (n: number) => void,
+  signal?: AbortSignal,
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    checkAbort(signal);
+    onAttempt(attempt);
+    try {
+      return await fn();
+    } catch (e) {
+      if (signal?.aborted || isApiError(e, 'ABORTED')) {
+        throw new UploadAbortedError();
+      }
+      if (!isRetryable(e) || attempt >= RETRY_DELAYS_MS.length) throw e;
+      await deps.sleep(retryDelay(e, attempt), signal);
+    }
+  }
 }
 
 /**
- * Runs the whole import. Resolves with the job id once every batch was
- * accepted; rejects with the first non-retryable error (remaining batches
- * are aborted).
+ * Runs (or resumes) an upload. Resolves with the final job from
+ * `GET /imports/{id}`. Throws the API error that stopped it (e.g.
+ * QUOTA_EXCEEDED, or the last error after 3 retries) or
+ * {@link UploadAbortedError}; `state` then allows resuming.
  */
 export async function runUpload(
   input: UploadInput,
   deps: UploadDeps,
-  onProgress: (p: UploadProgress) => void = () => {},
-  signal?: AbortSignal,
-): Promise<{jobId: string; archived: boolean; key: string}> {
-  const total = input.batches.length;
-  if (total === 0) throw new Error('No records to upload');
-  const p: UploadProgress = {
-    phase: 'presign',
-    archive: 0,
-    archiveSkipped: false,
-    batchesDone: 0,
-    batchesTotal: total,
-    inFlight: 0,
-    retrying: 0,
-  };
-  const emit = () => onProgress({...p});
+  state: UploadState,
+  opts: {
+    signal?: AbortSignal;
+    onProgress?: (p: UploadProgress) => void;
+  } = {},
+): Promise<JobDto> {
+  const {signal} = opts;
+  const limits = input.limits ?? BATCH_LIMITS;
+  const emit = () => opts.onProgress?.({...state.progress});
+  if (!state.batches) state.batches = planBatches(input.rows, limits);
+  state.progress.batchesTotal = state.batches.length;
   emit();
 
-  const presigned = await deps.presign(
-    input.sourceId,
-    input.fileName,
-    input.file.size,
-  );
-  const jobId = presigned.jobId;
-  p.jobId = jobId;
-  let archived = false;
-  if (presigned.url) {
-    p.phase = 'archive';
+  checkAbort(signal);
+  if (!state.jobId) {
+    const job = await deps.createImport({
+      fileName: input.fileName,
+      targetType: input.mapping.targetType,
+      totalRows: input.rows.length,
+    });
+    state.jobId = job.id;
+    state.progress.jobId = job.id;
     emit();
-    await deps.putFile(
-      presigned.url,
-      input.file,
-      (loaded, t) => {
-        p.archive = t > 0 ? loaded / t : 0;
-        emit();
-      },
+  }
+  const jobId = state.jobId;
+  if (!state.mappingSet) {
+    await withRetry(
+      () => deps.putMapping(jobId, input.mapping),
+      deps,
+      () => {},
       signal,
     );
-    archived = true;
-    p.archive = 1;
-  } else {
-    p.archiveSkipped = true;
-    p.archive = 1;
+    state.mappingSet = true;
   }
-  p.phase = 'batches';
-  emit();
 
-  const inner = new AbortController();
-  const abortAll = () => inner.abort();
-  signal?.addEventListener('abort', abortAll, {once: true});
-  let next = 0;
-  let failure: unknown = null;
-
-  const sendOne = async (seq: number) => {
-    const batch: BatchInput = {
-      jobId,
-      seq,
-      last: seq === total - 1,
-      records: input.batches[seq],
-      ...(input.txnType ? {txnType: input.txnType} : {}),
-    };
-    for (let attempt = 0; ; attempt++) {
-      try {
-        await deps.submitBatch(
-          input.sourceId,
-          batch,
-          batchKey(jobId, seq),
-          inner.signal,
-        );
-        return;
-      } catch (err) {
-        if (failure || inner.signal.aborted) throw err;
-        const delay = retryDelay(err, attempt);
-        if (delay === null) throw err;
-        p.retrying++;
+  const batches = state.batches;
+  while (state.next < batches.length) {
+    const seq = state.next;
+    const planned = batches[seq];
+    let result: BatchResult;
+    try {
+      result = await withRetry(
+        () =>
+          deps.submitBatch(
+            jobId,
+            {seq, last: seq === batches.length - 1, rows: planned.rows},
+            signal,
+          ),
+        deps,
+        n => {
+          state.progress.attempt = n;
+          if (n > 0) emit();
+        },
+        signal,
+      );
+    } catch (e) {
+      // 413: the body was not accepted (no seq stored); halve and re-plan.
+      if (
+        e instanceof ApiError &&
+        e.status === 413 &&
+        planned.rows.length > 1
+      ) {
+        batches.splice(seq, 1, ...halve(planned));
+        state.progress.batchesTotal = batches.length;
         emit();
-        try {
-          await deps.sleep(delay, inner.signal);
-        } finally {
-          p.retrying--;
-        }
+        continue;
       }
+      throw e;
     }
-  };
-
-  const lane = async () => {
-    while (!failure && next < total) {
-      const seq = next++;
-      p.inFlight++;
-      emit();
-      try {
-        await sendOne(seq);
-        p.batchesDone++;
-      } catch (err) {
-        if (!failure) failure = err;
-        inner.abort();
-      } finally {
-        p.inFlight--;
-        emit();
-      }
-    }
-  };
-
-  try {
-    await Promise.all(
-      Array.from({length: Math.min(UPLOAD_CONCURRENCY, total)}, lane),
-    );
-  } finally {
-    signal?.removeEventListener('abort', abortAll);
+    state.next = seq + 1;
+    const p = state.progress;
+    p.batchesDone = state.next;
+    p.rowsSent += planned.rows.length;
+    p.upserted += result.upserted;
+    p.skipped += result.skipped;
+    p.rejected += result.rejected.length;
+    p.attempt = 0;
+    emit();
   }
-  if (failure) throw failure;
-  p.phase = 'done';
-  emit();
-  return {jobId, archived, key: presigned.key};
+  checkAbort(signal);
+  return deps.getImport(jobId);
 }
 
-/** Abortable sleep (default {@link UploadDeps.sleep}). */
-export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+/** A sleep that rejects with {@link UploadAbortedError} on abort. */
+export function abortableSleep(
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new ApiError({code: 'ABORTED', status: 0}));
+      reject(new UploadAbortedError());
       return;
     }
-    const id = setTimeout(() => {
+    const timer = setTimeout(() => {
       signal?.removeEventListener('abort', onAbort);
       resolve();
     }, ms);
     const onAbort = () => {
-      clearTimeout(id);
-      reject(new ApiError({code: 'ABORTED', status: 0}));
+      clearTimeout(timer);
+      reject(new UploadAbortedError());
     };
     signal?.addEventListener('abort', onAbort, {once: true});
   });
-}
-
-/** PUTs a Blob with XMLHttpRequest (for upload progress events). */
-export function xhrPut(
-  url: string,
-  file: Blob,
-  onProgress: (loaded: number, total: number) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', url);
-    xhr.upload.onprogress = e =>
-      onProgress(e.loaded, e.lengthComputable ? e.total : file.size);
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        onProgress(file.size, file.size);
-        resolve();
-      } else {
-        reject(
-          new ApiError({
-            code: 'UPSTREAM_FAILED',
-            status: xhr.status,
-            detail: `archive PUT ${xhr.status}`,
-          }),
-        );
-      }
-    };
-    xhr.onerror = () =>
-      reject(
-        new ApiError({
-          code: 'NETWORK',
-          status: 0,
-          detail: 'archive PUT failed',
-        }),
-      );
-    xhr.onabort = () => reject(new ApiError({code: 'ABORTED', status: 0}));
-    signal?.addEventListener('abort', () => xhr.abort(), {once: true});
-    xhr.send(file);
-  });
-}
-
-/** Production dependencies (REST client + XHR + real timers). */
-export function browserUploadDeps(): UploadDeps {
-  return {presign: presignUpload, putFile: xhrPut, submitBatch, sleep};
 }

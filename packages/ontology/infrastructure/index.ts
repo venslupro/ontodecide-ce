@@ -1,5 +1,6 @@
 /**
- * @fileoverview Ontology infrastructure: D1 repository and schema cache.
+ * @fileoverview Ontology infrastructure: D1 repositories and the
+ * isolate-memory compiled-schema cache.
  */
 
 export * from './d1_schema_repository';

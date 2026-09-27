@@ -1,0 +1,162 @@
+/**
+ * @fileoverview Self-checks for gen_wrangler.mjs / gen_secrets.mjs
+ * (`node --test scripts/`; not part of the vitest projects).
+ */
+
+import assert from 'node:assert/strict';
+import {mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {test} from 'node:test';
+
+import {
+  TURNSTILE_TEST_SECRET,
+  buildVars,
+  loadDevSecrets,
+  renderAll,
+} from './gen_wrangler.mjs';
+import {newSigningJwk, publicJwkSet, setupCode} from './gen_secrets.mjs';
+
+const TF = {
+  name_prefix: 'ontodecide-prd',
+  d1: Object.fromEntries(
+    [
+      'identity-access',
+      'ontology-manager',
+      'data-integration',
+      'object-graph',
+      'decision-engine',
+    ].map(s => [`${s}-db`, {id: `id-${s}`, name: `ontodecide-prd-${s}-db`}]),
+  ),
+  queues: {
+    domain_events: 'ontodecide-prd-domain-events',
+    dead_letter: 'ontodecide-prd-dead-letter',
+  },
+  b2: {
+    bucket: 'ontodecide-prd-archive',
+    region: 'us-east-005',
+    endpoint: 's3.us-east-005.backblazeb2.com',
+  },
+  app: {
+    domain: 'example.com',
+    host: 'app.example.com',
+    origin: 'https://app.example.com',
+  },
+};
+
+const KEY = JSON.stringify(newSigningJwk('2026-09'));
+const PREV = JSON.stringify(newSigningJwk('2026-08'));
+const ENVIRON = {
+  JWT_SIGNING_KEY: KEY,
+  JWT_SIGNING_KEY_PREV: PREV,
+  CLOUDFLARE_ACCOUNT_ID: 'acc',
+  APP_VERSION: 'test',
+};
+
+test('prod with a domain renders the route and public keys only', () => {
+  const vars = buildVars('prod', TF, {environ: ENVIRON});
+  const c = renderAll('prod', vars, {});
+  const gw = c['api-gateway'];
+  assert.equal(gw.name, 'ontodecide-prd-api-gateway');
+  assert.deepEqual(gw.routes, [
+    {pattern: 'app.example.com/api/*', zone_name: 'example.com'},
+  ]);
+  const jwks = JSON.parse(gw.vars.JWT_PUBLIC_KEYS);
+  assert.deepEqual(
+    jwks.keys.map(k => k.kid),
+    ['2026-09', '2026-08'],
+  );
+  assert.ok(jwks.keys.every(k => !('d' in k)));
+  const ia = c['identity-access'];
+  assert.equal(ia.vars.WEBAUTHN_RP_ID, 'app.example.com');
+  assert.equal(ia.vars.MAIL_FROM, 'OntoDecide CE <noreply@mail.example.com>');
+  assert.equal(ia.vars.EMAIL_MODE, 'live');
+  assert.equal(ia.vars.CF_ACCOUNT_ID, 'acc');
+  assert.ok(!('JWT_SIGNING_KEY' in ia.vars));
+  assert.equal(ia.services.length, 5);
+  assert.ok(ia.services.every(s => s.entrypoint === 'TenantLifecycle'));
+  assert.ok(gw.services.every(s => s.entrypoint !== 'TenantLifecycle'));
+  assert.equal(
+    c['object-graph'].d1_databases[0].database_id,
+    'id-object-graph',
+  );
+  assert.equal(
+    c['situation-awareness'].queues.consumers[0].dead_letter_queue,
+    'ontodecide-prd-dead-letter',
+  );
+  assert.ok(c['decision-engine'].ai);
+  for (const cfg of Object.values(c)) {
+    assert.equal(cfg.workers_dev, false);
+    assert.equal(cfg.preview_urls, false);
+    assert.ok(!cfg.routes || cfg === gw);
+  }
+});
+
+test('prod without a domain drops routes and uses pages.dev', () => {
+  const tf = {
+    ...TF,
+    app: {
+      domain: '',
+      host: 'ontodecide-ce.pages.dev',
+      origin: 'https://ontodecide-ce.pages.dev',
+    },
+  };
+  const vars = buildVars('prod', tf, {
+    environ: {...ENVIRON, MAIL_FROM: 'x <a@b.c>'},
+  });
+  const c = renderAll('prod', vars, {});
+  assert.equal(c['api-gateway'].routes, undefined);
+  assert.equal(
+    c['api-gateway'].vars.APP_ORIGIN,
+    'https://ontodecide-ce.pages.dev',
+  );
+});
+
+test('prod rejects a mismatched prefix and missing outputs', () => {
+  assert.throws(
+    () => buildVars('prod', {...TF, name_prefix: 'x-prd'}, {environ: ENVIRON}),
+    /does not match/,
+  );
+  assert.throws(
+    () => buildVars('prod', {...TF, queues: undefined}, {environ: ENVIRON}),
+    /queues.domain_events/,
+  );
+  assert.throws(
+    () => buildVars('prod', TF, {environ: {CLOUDFLARE_ACCOUNT_ID: 'a'}}),
+    /JWT_SIGNING_KEY/,
+  );
+  const vars = buildVars(
+    'prod',
+    {name_prefix: 'ontodecide-prd'},
+    {allowMissing: true, environ: {}},
+  );
+  assert.match(vars.D1_IDENTITY_ID, /^pending-/);
+});
+
+test('local uses dev secrets, log mode, no AI and no routes', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'odgw-')), 'dev.json');
+  const secrets = loadDevSecrets(file);
+  assert.deepEqual(loadDevSecrets(file), secrets, 'stable across runs');
+  assert.equal(secrets.TURNSTILE_SECRET, TURNSTILE_TEST_SECRET);
+  const vars = buildVars('local', {}, {devSecrets: secrets});
+  const c = renderAll('local', vars, secrets);
+  assert.equal(c['identity-access'].vars.EMAIL_MODE, 'log');
+  assert.equal(
+    c['identity-access'].vars.JWT_SIGNING_KEY,
+    secrets.JWT_SIGNING_KEY,
+  );
+  assert.equal(c['api-gateway'].vars.JWT_SIGNING_KEY, undefined);
+  assert.equal(c['api-gateway'].vars.APP_ORIGIN, 'http://localhost:5173');
+  assert.equal(c['api-gateway'].routes, undefined);
+  assert.equal(c['decision-engine'].ai, undefined);
+  assert.equal(c['data-integration'].ai, undefined);
+});
+
+test('secret helpers', () => {
+  assert.match(
+    setupCode(),
+    /^([0-9A-HJKMNP-TV-Z]{4}-){3}[0-9A-HJKMNP-TV-Z]{4}$/,
+  );
+  assert.throws(() => publicJwkSet([KEY, KEY]), /Duplicate/);
+  assert.throws(() => publicJwkSet(['{}']), /Ed25519/);
+});

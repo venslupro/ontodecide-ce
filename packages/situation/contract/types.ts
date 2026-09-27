@@ -1,106 +1,68 @@
 /**
- * @fileoverview Situation awareness DTOs: KPIs, automations, alerts,
- * cockpit layout, realtime messages and dead letters.
+ * @fileoverview Situation awareness DTOs (详细设计 6.11.4). One SituationRoom
+ * Durable Object per workspace holds KPIs, automations, alerts, stream
+ * tickets and WebSocket connections in its SQLite storage (no D1, no cron).
  */
 
-import type {
-  CallCtx,
-  FilterExpr,
-  I18nText,
-  ObjectSetDef,
-  Rid,
-  UsageStatus,
-} from '@ontodecide/shared-kernel';
+import type {FilterExpr, I18nText, Rid} from '@ontodecide/shared-kernel';
+import type {AutomationSeed, KpiAggregate} from '@ontodecide/ontology/contract';
 
-/** KPI aggregation function. */
-export type KpiAggregate = {
-  fn: 'count' | 'sum' | 'avg' | 'min' | 'max';
-  prop?: string;
-};
-
-/** KPI definition. */
-export interface KpiDef {
-  id?: string;
-  name: I18nText;
-  objectSet: ObjectSetDef;
-  aggregate: KpiAggregate;
-  unit?: string;
-  target?: number;
-  higherIsBetter?: boolean;
-}
+/** Alert severity. */
+export type Severity = AutomationSeed['severity'];
 
 /** KPI with its current value. */
 export interface KpiValue {
   id: string;
   name: I18nText;
+  objectType: string;
+  aggregate: KpiAggregate;
   value: number | null;
-  /** Value 24h ago (for ▲▼ change). */
+  /** Value 24 h ago (for ▲▼). */
   previous: number | null;
   target: number | null;
   unit: string | null;
   higherIsBetter: boolean;
-  /** Up to 24 hourly points. */
-  spark: number[];
   updatedAt: string | null;
 }
 
-/** Trend point. */
+/** Trend point (15-minute resolution; written only when the value changes). */
 export interface MetricPoint {
   ts: string;
   value: number;
 }
 
-/** Alert severity. */
-export type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-
-/** Automation trigger. */
-export type AutomationTrigger =
-  /** Evaluated on each change of objects of `objectType`. */
-  | {kind: 'threshold'; objectType: string}
-  /** Fires when the Object Set size crosses the threshold. */
-  | {
-      kind: 'objectSetCount';
-      objectSet: ObjectSetDef;
-      op: 'gt' | 'lt';
-      value: number;
-    }
-  /** Evaluated hourly over every object of `objectSet`. */
-  | {kind: 'schedule'; objectSet: ObjectSetDef};
-
-/** Automation effect. */
-export type AutomationEffect =
-  | {kind: 'alert'}
-  /** Queues a recommendation job; the perturbation seeds the simulation. */
-  | {kind: 'recommend'; perturbation?: {property: string; change: number}}
-  /** Executes an action that does not require approval. */
-  | {kind: 'action'; actionType: string; params?: Record<string, unknown>};
-
-/** Automation rule (Palantir Automate equivalent). */
-export interface AutomationDef {
-  id?: string;
-  name: I18nText;
-  trigger: AutomationTrigger;
-  condition?: FilterExpr;
-  effects: AutomationEffect[];
-  severity: Severity;
-  /** 0..86400, default 3600. */
-  cooldownSec?: number;
-  enabled?: boolean;
+/** Trend series of one KPI. */
+export interface KpiTrend {
+  kpiId: string;
+  points: MetricPoint[];
 }
 
-/** Stored automation. */
-export interface AutomationDto extends AutomationDef {
-  id: string;
+/** Automation definition (alert-only; 修订说明书 12.2). */
+export interface AutomationDef {
+  name: I18nText;
+  trigger: 'threshold' | 'schedule';
+  objectType: string;
+  condition: FilterExpr;
+  /** `schedule` only: interval hours ≥ 1; ≤ 3 scheduled rules per workspace. */
+  everyHours?: number;
+  severity: Severity;
+  /** 0..86400, default 3600. */
   cooldownSec: number;
   enabled: boolean;
-  createdAt: string;
-  lastFiredAt?: string;
+}
+
+/** Stored automation (`version` → ETag). */
+export interface AutomationDto extends AutomationDef {
+  id: string;
+  version: number;
+  nextRunAt: string | null;
+  lastFiredAt: string | null;
 }
 
 /** Alert lifecycle state. */
 export type AlertStatus = 'OPEN' | 'ACKED' | 'CLOSED';
 
-/** Alert. */
+/** Alert. At most one OPEN alert per (automation, rid). */
 export interface AlertDto {
   id: string;
   automationId: string;
@@ -109,13 +71,12 @@ export interface AlertDto {
   title: string;
   severity: Severity;
   status: AlertStatus;
-  /** Object properties at raise time (latest hit while open/cooling). */
+  /** Object properties at the latest hit. */
   snapshot: Record<string, unknown>;
   hits: number;
   raisedAt: string;
-  ackedBy?: string;
-  closedAt?: string;
-  recommendationId?: string;
+  ackedAt: string | null;
+  closedAt: string | null;
 }
 
 /** Alert list filter. */
@@ -123,7 +84,15 @@ export interface AlertFilter {
   status?: AlertStatus;
   severity?: Severity;
   rid?: Rid;
-  limit?: number;
+}
+
+/** Objects most affected by the latest recommendation's simulation. */
+export interface ImpactedObject {
+  rid: Rid;
+  type: string;
+  title: string;
+  delta: number;
+  hop: number;
 }
 
 /** Recommendation summary pushed to the cockpit by decision-engine. */
@@ -132,78 +101,39 @@ export interface RecommendationSummary {
   status: string;
   summary: string;
   confidence: number;
+  rankedBy: 'ai' | 'rules';
   focus: Rid;
-  alertId?: string;
   expectedImpact: number;
   createdAt: string;
-  expiresAt?: string;
-  degraded?: boolean;
+  expiresAt: string;
+  impacted?: ImpactedObject[];
 }
 
-/** Cockpit first-screen data owned by situation-awareness. */
+/** Situation part of GET /situation/overview. */
 export interface SituationOverview {
   kpis: KpiValue[];
+  trends: KpiTrend[];
+  /** Open and acknowledged alerts, most severe first (≤ 50). */
   alerts: AlertDto[];
-  usage: UsageStatus;
-  recommendations: RecommendationSummary[];
+  impacted: ImpactedObject[];
+  /** False until the room has initialized KPIs from the template. */
+  initialized: boolean;
   generatedAt: string;
 }
 
-/** Realtime message pushed over the WebSocket. */
+/** Realtime message (heartbeats are protocol-level ping/pong, not listed). */
 export interface WsMsg {
   seq: number;
-  type: 'snapshot' | 'kpi' | 'alert' | 'recommendation' | 'usage';
+  type: 'snapshot' | 'kpi' | 'alert' | 'recommendation' | 'trial';
   data: unknown;
   occurredAt: string;
 }
 
-/** Cockpit widget. */
-export interface CockpitWidget {
-  id: string;
-  kind:
-    | 'kpi'
-    | 'trend'
-    | 'alerts'
-    | 'recommendations'
-    | 'objectTable'
-    | 'dataHealth'
-    | 'impacted';
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  binding?: {kpiId?: string; objectSetId?: string};
+/** Stream ticket (30 s, single use; format `{tid}.{random}`). */
+export interface StreamTicket {
+  ticket: string;
+  expiresIn: 30;
 }
 
-/** Workshop-style cockpit layout (12 columns). */
-export interface CockpitLayout {
-  id: string;
-  name: string;
-  columns: 12;
-  widgets: CockpitWidget[];
-}
-
-/** Dead-lettered queue message kept for inspection and replay. */
-export interface DeadLetterDto {
-  id: string;
-  queue: string;
-  body: unknown;
-  attempts: number;
-  receivedAt: string;
-  replayedAt?: string;
-}
-
-/** Message on the `decision-jobs` queue (produced here and by decision-engine). */
-export interface DecisionJobMsg {
-  ctx: CallCtx;
-  /** Equals the recommendation id. */
-  jobId: string;
-  alertId?: string;
-  scenarioId?: string;
-  focus: Rid;
-  perturbation?: {property: string; change: number};
-  locale?: string;
-}
-
-/** Usage thresholds. */
-export const USAGE_THRESHOLDS = {warn: 0.8, stop: 0.95} as const;
+/** Replay window for resumed connections. */
+export const WS_REPLAY_MAX = 200;

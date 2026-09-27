@@ -7,34 +7,38 @@ import {
   systemClock,
   type Clock,
   type Logger,
+  type TenantLifecycleRpc,
 } from '@ontodecide/shared-kernel';
 import {
   createOntologyHandlers,
-  type OntologyDeps,
-  type OntologyHandlers,
-  type SchemaCache,
-  type SchemaRepository,
+  createOntologyLifecycle,
+  type CompiledCache,
 } from '@ontodecide/ontology/application';
 import type {OntologyRpc} from '@ontodecide/ontology/contract';
 import {
-  D1SchemaRepository,
-  TieredSchemaCache,
+  D1LifecycleRepository,
+  D1TemplateRepository,
+  D1WorkspaceSchemaRepository,
+  MemoryCompiledCache,
 } from '@ontodecide/ontology/infrastructure';
-import {createOntologyRpc} from '@ontodecide/ontology/interface';
+import {
+  createOntologyRpc,
+  createTenantLifecycle,
+} from '@ontodecide/ontology/interface';
 import type {Env} from './env';
 
 /** Test / wiring overrides. */
 export interface Overrides {
   clock?: Clock;
   logger?: Logger;
+  cache?: CompiledCache;
 }
 
 /** Assembled ontology-manager dependencies. */
 export interface Container {
-  repo: SchemaRepository;
-  cache: SchemaCache;
-  handlers: OntologyHandlers;
+  cache: CompiledCache;
   rpc: OntologyRpc;
+  lifecycle: TenantLifecycleRpc;
 }
 
 /** Builds the container from the Worker bindings. */
@@ -48,10 +52,19 @@ export function createContainer(
     createLogger({
       service: 'ontology-manager',
       env: env.ENVIRONMENT ?? 'local',
+      version: env.APP_VERSION ?? 'dev',
     });
-  const repo = new D1SchemaRepository(env.ONTOLOGY_DB);
-  const cache = new TieredSchemaCache(env.SCHEMA_CACHE, clock, logger);
-  const deps: OntologyDeps = {repo, cache, clock, logger};
-  const handlers = createOntologyHandlers(deps);
-  return {repo, cache, handlers, rpc: createOntologyRpc(handlers)};
+  const db = env.ONTOLOGY_DB;
+  const cache = overrides.cache ?? new MemoryCompiledCache();
+  const handlers = createOntologyHandlers({
+    schemas: tid => new D1WorkspaceSchemaRepository(db, tid),
+    templates: new D1TemplateRepository(db),
+    cache,
+    clock,
+    logger,
+  });
+  const lifecycle = createTenantLifecycle(
+    createOntologyLifecycle({store: new D1LifecycleRepository(db), clock}),
+  );
+  return {cache, rpc: createOntologyRpc(handlers, logger), lifecycle};
 }

@@ -1,6 +1,21 @@
-supplierId,name,country,riskScore,capacity,onTimeRate,status,contactEmail,materials,share
-S-001,Shenzhen Precision Parts,CN,35,1200,0.96,active,ops@szpp.example,M-100;M-101,0.7
-S-002,Hanoi Circuit Works,VN,58,800,0.91,active,sales@hcw.example,M-101;M-102,0.3
-S-003,Penang Semicon,MY,22,1500,0.98,active,contact@penang.example,M-102,0.7
-S-004,Osaka Battery Co,JP,41,600,0.94,active,info@osakabat.example,M-103,1
-S-005,Bangkok Metal Forming,TH,18,900,0.97,active,hello@bmf.example,M-100,0.3
+supplierId,name,country,riskScore,capacity,onTimeRate,status,materials,share
+S-001,Shenzhen Precision Parts,CN,35,1200,0.96,active,M-001;M-002;M-003;M-004,0.7
+S-002,Hanoi Circuit Works,VN,58,800,0.91,active,M-005;M-006;M-007;M-008,0.7
+S-003,Penang Semicon,MY,76,1500,0.83,watch,M-009;M-010;M-011;M-012,0.7
+S-004,Osaka Battery Co,JP,22,600,0.98,active,M-013;M-014;M-015;M-016,0.7
+S-005,Busan Metalworks,KR,41,950,0.94,active,M-017;M-018;M-019;M-020,0.7
+S-006,Hsinchu Microdevices,TW,64,1100,0.89,active,M-021;M-022;M-023;M-024,0.7
+S-007,Stuttgart Components,DE,18,700,0.97,active,M-025;M-026;M-027;M-028,0.7
+S-008,Monterrey Plastics,MX,82,900,0.78,watch,M-029;M-030;M-031;M-032,0.7
+S-009,Bangkok Packaging,TH,30,2000,0.95,active,M-033;M-034;M-035;M-036,0.7
+S-010,Pune Chemicals,IN,47,1300,0.9,active,M-037;M-038;M-039;M-040,0.7
+S-011,Suzhou Electronics,CN,27,1000,0.95,active,M-001;M-011;M-021;M-031,0.3
+S-012,Da Nang Assembly,VN,52,650,0.9,active,M-002;M-012;M-022;M-032,0.3
+S-013,Johor Energy Systems,MY,39,850,0.93,active,M-003;M-013;M-023;M-033,0.3
+S-014,Nagoya Mechanics,JP,71,500,0.86,watch,M-004;M-014;M-024;M-034,0.3
+S-015,Incheon Display Tech,KR,33,750,0.96,active,M-005;M-015;M-025;M-035,0.3
+S-016,Taichung Tooling,TW,45,900,0.92,active,M-006;M-016;M-026;M-036,0.3
+S-017,Ohio Industrial Supply,US,24,1100,0.97,active,M-007;M-017;M-027;M-037,0.3
+S-018,Guadalajara Circuits,MX,61,600,0.88,active,M-008;M-018;M-028;M-038,0.3
+S-019,Chonburi Materials,TH,88,1400,0.72,suspended,M-009;M-019;M-029;M-039,0.3
+S-020,Chennai Polymers,IN,36,1250,0.94,active,M-010;M-020;M-030;M-040,0.3

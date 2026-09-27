@@ -112,6 +112,8 @@ export class SqliteD1 {
 
   constructor(path = ':memory:') {
     this.raw = new DatabaseSync(path);
+    // D1 always enforces foreign keys.
+    this.raw.exec('PRAGMA foreign_keys = ON');
   }
 
   prepare(sql: string): Statement {
@@ -156,8 +158,8 @@ export const REPO_ROOT = join(import.meta.dirname, '..', '..');
 
 /**
  * Creates an in-memory D1 with the migrations of one database applied.
- * `db` is a directory under /migrations (identity, ontology, integration,
- * object, situation, decision).
+ * `db` is a directory under /migrations (identity-access, ontology-manager,
+ * data-integration, object-graph, decision-engine).
  */
 export function createTestD1(db: string): D1Database {
   return new SqliteD1().migrate(join(REPO_ROOT, 'migrations', db)).asD1();

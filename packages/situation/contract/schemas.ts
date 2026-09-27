@@ -1,108 +1,34 @@
 /**
- * @fileoverview Zod schemas for situation awareness REST inputs.
+ * @fileoverview Zod schemas for situation REST inputs.
  */
 
 import {z} from 'zod';
+import {filterExprSchema} from '@ontodecide/shared-kernel';
 
-const i18nText = z.union([z.string().min(1), z.record(z.string(), z.string())]);
-const filterExpr = z.record(z.string(), z.unknown());
-const objectSetDef = z.object({
-  objectType: z.string().min(1),
-  filter: filterExpr.optional(),
-  searchAround: z
-    .array(z.object({link: z.string(), direction: z.enum(['out', 'in'])}))
-    .optional(),
-  orderBy: z
-    .array(z.object({prop: z.string(), dir: z.enum(['asc', 'desc'])}))
-    .optional(),
+const i18nText = z.union([z.string(), z.record(z.string(), z.string())]);
+
+/** POST /automations and PUT /automations/{id} body. */
+export const automationDefSchema = z
+  .object({
+    name: i18nText,
+    trigger: z.enum(['threshold', 'schedule']),
+    objectType: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/),
+    condition: filterExprSchema,
+    everyHours: z.number().int().min(1).max(24).optional(),
+    severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
+    cooldownSec: z.number().int().min(0).max(86_400).default(3600),
+    enabled: z.boolean().default(true),
+  })
+  .refine(d => d.trigger !== 'schedule' || d.everyHours !== undefined, {
+    message: 'everyHours is required for schedule triggers',
+    path: ['everyHours'],
+  });
+
+/** GET /alerts query. */
+export const alertQuerySchema = z.object({
+  status: z.enum(['OPEN', 'ACKED', 'CLOSED']).optional(),
+  severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
+  rid: z.string().optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
 });
-
-export const kpiDefSchema = z.object({
-  id: z.string().optional(),
-  name: i18nText,
-  objectSet: objectSetDef,
-  aggregate: z.object({
-    fn: z.enum(['count', 'sum', 'avg', 'min', 'max']),
-    prop: z.string().optional(),
-  }),
-  unit: z.string().max(20).optional(),
-  target: z.number().optional(),
-  higherIsBetter: z.boolean().optional(),
-});
-
-export const automationDefSchema = z.object({
-  id: z.string().optional(),
-  name: i18nText,
-  trigger: z.discriminatedUnion('kind', [
-    z.object({kind: z.literal('threshold'), objectType: z.string().min(1)}),
-    z.object({
-      kind: z.literal('objectSetCount'),
-      objectSet: objectSetDef,
-      op: z.enum(['gt', 'lt']),
-      value: z.number(),
-    }),
-    z.object({kind: z.literal('schedule'), objectSet: objectSetDef}),
-  ]),
-  condition: filterExpr.optional(),
-  effects: z
-    .array(
-      z.discriminatedUnion('kind', [
-        z.object({kind: z.literal('alert')}),
-        z.object({
-          kind: z.literal('recommend'),
-          perturbation: z
-            .object({property: z.string(), change: z.number().min(-1).max(1)})
-            .optional(),
-        }),
-        z.object({
-          kind: z.literal('action'),
-          actionType: z.string(),
-          params: z.record(z.string(), z.unknown()).optional(),
-        }),
-      ]),
-    )
-    .min(1),
-  severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
-  cooldownSec: z.number().int().min(0).max(86_400).optional(),
-  enabled: z.boolean().optional(),
-});
-
-export const updateAlertInputSchema = z.object({
-  status: z.enum(['ACKED', 'CLOSED']),
-});
-
-export const cockpitLayoutSchema = z.object({
-  id: z.string(),
-  name: z.string().min(1).max(100),
-  columns: z.literal(12),
-  widgets: z
-    .array(
-      z.object({
-        id: z.string(),
-        kind: z.enum([
-          'kpi',
-          'trend',
-          'alerts',
-          'recommendations',
-          'objectTable',
-          'dataHealth',
-          'impacted',
-        ]),
-        x: z.number().int().min(0).max(11),
-        y: z.number().int().min(0),
-        w: z.number().int().min(1).max(12),
-        h: z.number().int().min(1).max(12),
-        binding: z
-          .object({
-            kpiId: z.string().optional(),
-            objectSetId: z.string().optional(),
-          })
-          .optional(),
-      }),
-    )
-    .max(40),
-});
-
-export const replayDlqInputSchema = z
-  .object({ids: z.array(z.string()).optional()})
-  .default({});

@@ -1,244 +1,167 @@
 #!/usr/bin/env node
 /**
- * @fileoverview End-to-end smoke test over HTTP against a running stack
- * (`pnpm dev`, or a deployed environment via BASE_URL). Walks the whole
- * loop: login → import pack → 3 sources → batches → objects → risk update
- * → alert → recommendation → approve → executed.
+ * @fileoverview HTTP smoke test against a running stack (`pnpm dev`, or a
+ * deployment via SMOKE_BASE_URL). Checks what is observable from outside
+ * without reading e-mails:
  *
- *   BASE_URL=http://127.0.0.1:8787 node scripts/smoke.mjs
+ *   1. GET /api/v1/health → 200
+ *   2. GET /api/v1/openapi.yaml → 200, OpenAPI 3.2 document
+ *   3. unknown route → 404 application/problem+json with code + traceId
+ *   4. POST /auth/codes (signup) → 202
+ *   5. refresh with a foreign Origin → 403 (Origin check)
+ *   6. GET /me without a token → 401 UNAUTHENTICATED
+ *
+ * Optional full flow when SMOKE_CODE_READER is set: a shell command that
+ * prints the latest code for $SMOKE_EMAIL (e.g. a grep over the
+ * identity-access log with EMAIL_MODE=log). It then signs up, reads /me and
+ * loads the sample data.
+ *
+ *   SMOKE_BASE_URL   default http://127.0.0.1:8787 (gateway)
+ *   SMOKE_ORIGIN     default http://localhost:5173 (must equal APP_ORIGIN)
+ *   SMOKE_EMAIL      default smoke-<time>@example.com
+ *   SMOKE_TURNSTILE  default XXXX.DUMMY.TOKEN.XXXX (always-pass test secret)
  */
 
-import {readFileSync} from 'node:fs';
-import {dirname, join} from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {execSync} from 'node:child_process';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const BASE = (process.env.BASE_URL ?? 'http://127.0.0.1:8787') + '/api/v1';
-const EMAIL = process.env.SMOKE_EMAIL ?? 'admin@ontodecide.local';
-const PASSWORD = process.env.SMOKE_PASSWORD ?? 'Admin12345!';
+const BASE = (process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:8787').replace(
+  /\/$/,
+  '',
+);
+const API = `${BASE}/api/v1`;
+const ORIGIN = process.env.SMOKE_ORIGIN ?? 'http://localhost:5173';
+const EMAIL = process.env.SMOKE_EMAIL ?? `smoke-${Date.now()}@example.com`;
+const TURNSTILE = process.env.SMOKE_TURNSTILE ?? 'XXXX.DUMMY.TOKEN.XXXX';
 
-let token = '';
+let failures = 0;
 
-async function api(method, path, body, headers = {}) {
-  const res = await fetch(BASE + path, {
+/** Sends one request; returns {status, headers, text, json}. */
+async function call(method, path, {body, headers = {}, token} = {}) {
+  const res = await fetch(API + path, {
     method,
     headers: {
-      'content-type': 'application/json',
+      accept: 'application/json',
       'accept-language': 'en-US',
+      origin: ORIGIN,
+      ...(body === undefined ? {} : {'content-type': 'application/json'}),
       ...(token ? {authorization: `Bearer ${token}`} : {}),
       ...headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!res.ok) {
-    throw new Error(
-      `${method} ${path} → ${res.status} ${data?.code ?? ''} ${data?.detail ?? text}`,
-    );
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    // Not JSON (openapi.yaml).
   }
-  return data;
+  return {status: res.status, headers: res.headers, text, json};
 }
 
-function parseCsv(file) {
-  const [header, ...lines] = readFileSync(file, 'utf8').trim().split('\n');
-  const cols = header.split(',');
-  return lines.map(line =>
-    Object.fromEntries(line.split(',').map((v, i) => [cols[i], v])),
-  );
-}
-
-async function waitFor(label, fn, timeoutMs = 30_000) {
-  const start = Date.now();
-  for (;;) {
-    const v = await fn();
-    if (v) return v;
-    if (Date.now() - start > timeoutMs)
-      throw new Error(`Timed out waiting for ${label}`);
-    await new Promise(r => setTimeout(r, 500));
+/** Runs one named check; logs and counts failures. */
+async function check(name, fn) {
+  try {
+    await fn();
+    console.log(`✓ ${name}`);
+  } catch (e) {
+    failures++;
+    console.error(`✗ ${name}: ${e instanceof Error ? e.message : e}`);
   }
 }
 
-function step(msg) {
-  console.log(`✔ ${msg}`);
+function expect(cond, message) {
+  if (!cond) throw new Error(message);
 }
 
-const SOURCES = [
-  {
-    file: 'suppliers.csv',
-    def: {
-      name: 'Suppliers (smoke)',
-      kind: 'file',
-      config: {format: 'csv'},
-      mapping: {
-        targetType: 'Supplier',
-        primaryKey: {from: 'supplierId'},
-        fields: [
-          {to: 'supplierId', from: 'supplierId'},
-          {to: 'name', from: 'name', transform: 'trim'},
-          {to: 'country', from: 'country'},
-          {
-            to: 'riskScore',
-            from: 'riskScore',
-            transform: 'toNumber|clamp(0,100)',
-          },
-          {to: 'capacity', from: 'capacity', transform: 'toNumber'},
-          {to: 'onTimeRate', from: 'onTimeRate', transform: 'toNumber'},
-          {to: 'status', from: 'status'},
-          {to: 'contactEmail', from: 'contactEmail'},
-        ],
-        links: [
-          {
-            type: 'supplies',
-            toType: 'Material',
-            toKey: 'materials',
-            split: ';',
-            weightFrom: 'share',
-          },
-        ],
-      },
-    },
-  },
-  {
-    file: 'materials.csv',
-    def: {
-      name: 'Materials (smoke)',
-      kind: 'file',
-      config: {format: 'csv'},
-      mapping: {
-        targetType: 'Material',
-        primaryKey: {from: 'materialId'},
-        fields: [
-          {to: 'materialId', from: 'materialId'},
-          {to: 'name', from: 'name'},
-          {to: 'category', from: 'category'},
-          {to: 'unitCost', from: 'unitCost', transform: 'toNumber'},
-        ],
-        links: [
-          {type: 'usedIn', toType: 'Product', toKey: 'products', split: ';'},
-        ],
-      },
-    },
-  },
-  {
-    file: 'products.csv',
-    def: {
-      name: 'Products (smoke)',
-      kind: 'file',
-      config: {format: 'csv'},
-      mapping: {
-        targetType: 'Product',
-        primaryKey: {from: 'productId'},
-        fields: [
-          {to: 'productId', from: 'productId'},
-          {to: 'name', from: 'name'},
-          {to: 'dailyDemand', from: 'dailyDemand', transform: 'toNumber'},
-          {to: 'inventoryDays', from: 'inventoryDays', transform: 'toNumber'},
-          {
-            to: 'safetyStockDays',
-            from: 'safetyStockDays',
-            transform: 'toNumber',
-          },
-          {to: 'revenuePerUnit', from: 'revenuePerUnit', transform: 'toNumber'},
-        ],
-      },
-    },
-  },
-];
+function expectProblem(r, status, code) {
+  expect(r.status === status, `status ${r.status}, want ${status}: ${r.text}`);
+  const type = r.headers.get('content-type') ?? '';
+  expect(type.includes('application/problem+json'), `content-type ${type}`);
+  if (code) expect(r.json?.code === code, `code ${r.json?.code}, want ${code}`);
+  expect(typeof r.json?.traceId === 'string', 'traceId missing');
+}
 
 async function main() {
-  const health = await api('GET', '/health');
-  step(`gateway healthy (${health.version})`);
+  console.log(`Smoke test against ${API} (Origin ${ORIGIN})`);
 
-  const login = await api('POST', '/auth/login', {
-    email: EMAIL,
-    password: PASSWORD,
+  await check('health', async () => {
+    const r = await call('GET', '/health');
+    expect(r.status === 200, `status ${r.status}`);
   });
-  token = login.accessToken;
-  step(`logged in as ${login.user.email} (${login.user.role})`);
 
-  await api('POST', '/ontology/packs:import', {packId: 'supply-chain'});
-  const model = await api('GET', '/ontology/model');
-  step(
-    `supply-chain pack published: ${Object.keys(model.objectTypes).join(', ')}`,
-  );
-
-  const sourceIds = {};
-  for (const s of SOURCES) {
-    const existing = (await api('GET', '/sources')).find(
-      x => x.name === s.def.name,
-    );
-    const src = existing ?? (await api('POST', '/sources', s.def));
-    sourceIds[s.file] = src.id;
-    const rows = parseCsv(join(ROOT, 'samples/supply-chain', s.file));
-    const res = await api(
-      'POST',
-      `/sources/${src.id}/batches`,
-      {seq: 0, last: true, records: rows},
-      {
-        'idempotency-key': `smoke-${Date.now()}-${s.file}`,
-      },
-    );
-    const job = await waitFor(`job ${res.jobId}`, async () => {
-      const j = await api('GET', `/jobs/${res.jobId}`);
-      return j.finishedAt ? j : null;
+  await check('openapi.yaml', async () => {
+    const r = await call('GET', '/openapi.yaml', {
+      headers: {accept: 'application/yaml'},
     });
-    step(
-      `${s.file}: job ${job.status} received=${job.received} upserted=${job.upserted} merged=${job.merged} skipped=${job.skipped} rejected=${job.rejected}`,
-    );
+    expect(r.status === 200, `status ${r.status}`);
+    expect(/^openapi:\s*['"]?3\.2/m.test(r.text), 'not an OpenAPI 3.2 file');
+  });
+
+  await check('problem details on unknown route', async () => {
+    expectProblem(await call('GET', '/no-such-route'), 404);
+  });
+
+  await check('sign-up code accepted (202)', async () => {
+    const r = await call('POST', '/auth/codes', {
+      body: {
+        email: EMAIL,
+        purpose: 'signup',
+        turnstileToken: TURNSTILE,
+        locale: 'en-US',
+      },
+    });
+    expect(r.status === 202, `status ${r.status}: ${r.text}`);
+  });
+
+  await check('foreign Origin rejected (403)', async () => {
+    const r = await call('POST', '/auth/sessions/refresh', {
+      headers: {origin: 'https://evil.example'},
+    });
+    expectProblem(r, 403);
+  });
+
+  await check('/me without a token (401)', async () => {
+    expectProblem(await call('GET', '/me'), 401, 'UNAUTHENTICATED');
+  });
+
+  const reader = process.env.SMOKE_CODE_READER;
+  if (reader) await fullFlow(reader);
+  else console.log('– full flow skipped (set SMOKE_CODE_READER)');
+
+  if (failures > 0) {
+    console.error(`\n${failures} check(s) failed`);
+    process.exit(1);
   }
-
-  const products = await api('GET', '/objects/Product?limit=50');
-  step(`objects visible: ${products.items.length} products`);
-
-  // Raise the risk of S-002 above the automation threshold (riskScore ≥ 70).
-  const riskRows = parseCsv(join(ROOT, 'samples/supply-chain/suppliers.csv'))
-    .filter(r => r.supplierId === 'S-002')
-    .map(r => ({...r, riskScore: String(80 + Math.floor(Math.random() * 15))}));
-  await api('POST', `/sources/${sourceIds['suppliers.csv']}/batches`, {
-    seq: 0,
-    last: true,
-    records: riskRows,
-  });
-
-  const alert = await waitFor('HIGH alert', async () => {
-    const alerts = await api('GET', '/alerts?status=OPEN');
-    return alerts.find(a => a.severity === 'HIGH');
-  });
-  step(`alert raised: ${alert.title} (${alert.severity})`);
-
-  const rec = await waitFor(
-    'proposed recommendation',
-    async () => {
-      const recs = await api('GET', '/recommendations?status=Proposed');
-      return recs.find(r => r.alertId === alert.id) ?? null;
-    },
-    60_000,
-  );
-  step(
-    `recommendation ${rec.id}: "${rec.summary}" via ${rec.model} (confidence ${rec.confidence})`,
-  );
-
-  const approved = await api(
-    'POST',
-    `/recommendations/${rec.id}/approve`,
-    undefined,
-    {
-      'idempotency-key': `smoke-approve-${rec.id}`,
-    },
-  );
-  step(`approved → ${approved.status}`);
-  if (approved.status !== 'Executed')
-    throw new Error('Recommendation was not executed');
-
-  const overview = await api('GET', '/situation/overview');
-  step(
-    `cockpit: ${overview.kpis.length} KPIs, ${overview.alerts.length} alerts, usage level ${overview.usage.level}`,
-  );
-  console.log('\nSmoke test passed.');
+  console.log('\nSmoke test passed');
 }
 
-main().catch(err => {
-  console.error(`✘ ${err.message}`);
-  process.exit(1);
-});
+/** Sign-up → /me → sample data, reading the code with `reader`. */
+async function fullFlow(reader) {
+  let token = '';
+  await check('sign-up with the e-mailed code (201)', async () => {
+    const code = execSync(reader, {env: {...process.env, SMOKE_EMAIL: EMAIL}})
+      .toString()
+      .trim();
+    expect(/^\d{6}$/.test(code), `reader printed "${code}"`);
+    const r = await call('POST', '/auth/sessions', {
+      body: {email: EMAIL, code, purpose: 'signup'},
+    });
+    expect(r.status === 201, `status ${r.status}: ${r.text}`);
+    token = r.json?.accessToken;
+    expect(token, 'no accessToken');
+  });
+  if (!token) return;
+
+  await check('GET /me (200)', async () => {
+    const r = await call('GET', '/me', {token});
+    expect(r.status === 200, `status ${r.status}: ${r.text}`);
+  });
+
+  await check('load sample data (202)', async () => {
+    const r = await call('POST', '/workspace/sample-data', {token, body: {}});
+    expect(r.status === 202, `status ${r.status}: ${r.text}`);
+  });
+}
+
+await main();

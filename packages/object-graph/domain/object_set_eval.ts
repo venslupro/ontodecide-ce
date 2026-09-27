@@ -1,120 +1,95 @@
 /**
- * @fileoverview Object Set evaluation helpers: splitting a filter into the
- * part answerable from og_prop_index and an in-memory residual, in-memory
- * sorting and aggregate math.
+ * @fileoverview Object query planning (详细设计 6.11.3): only filters and
+ * sort keys on indexed properties are pushed down to D1; the rest is
+ * evaluated in memory, which is bounded because a workspace holds at most
+ * 300 objects.
  */
 
-import {filterProps, matchFilter} from '@ontodecide/shared-kernel';
+import {AppError, filterProps} from '@ontodecide/shared-kernel';
 import type {FilterExpr, OrderBy} from '@ontodecide/shared-kernel';
 
-/** Maximum candidates for in-memory filtering / sorting. */
-export const IN_MEMORY_MAX = 200;
-
-/** Maximum Search Around hops served from D1. */
-export const SEARCH_AROUND_MAX_HOPS = 2;
-
-/** A filter split into an indexed (pushed-down) part and a residual. */
+/** A filter split into a D1 part and an in-memory residual. */
 export interface FilterSplit {
-  indexed?: FilterExpr;
+  pushdown?: FilterExpr;
   residual?: FilterExpr;
 }
 
-function and(args: FilterExpr[]): FilterExpr | undefined {
-  if (args.length === 0) return undefined;
-  if (args.length === 1) return args[0];
-  return {op: 'and', args};
-}
-
-function flattenAnd(expr: FilterExpr): FilterExpr[] {
-  return expr.op === 'and' ? expr.args.flatMap(flattenAnd) : [expr];
+function allIndexed(expr: FilterExpr, indexed: ReadonlySet<string>): boolean {
+  return filterProps(expr).every(p => indexed.has(p));
 }
 
 /**
- * Splits a filter: conjuncts that only reference indexed properties are
- * pushed down; everything else becomes the residual.
+ * Splits a filter. A filter whose properties are all indexed is pushed down
+ * whole; for a top-level `and` the indexed conjuncts are pushed down and
+ * the others stay residual; anything else is residual.
  */
 export function splitFilter(
   expr: FilterExpr | undefined,
   indexed: ReadonlySet<string>,
 ): FilterSplit {
   if (!expr) return {};
-  const onlyIndexed = (e: FilterExpr): boolean =>
-    filterProps(e).every(p => indexed.has(p));
-  if (onlyIndexed(expr)) return {indexed: expr};
+  if (allIndexed(expr, indexed)) return {pushdown: expr};
   if (expr.op !== 'and') return {residual: expr};
-  const parts = flattenAnd(expr);
-  return {
-    indexed: and(parts.filter(onlyIndexed)),
-    residual: and(parts.filter(p => !onlyIndexed(p))),
-  };
+  const down = expr.args.filter(a => allIndexed(a, indexed));
+  const rest = expr.args.filter(a => !allIndexed(a, indexed));
+  const wrap = (args: FilterExpr[]): FilterExpr | undefined =>
+    args.length === 0
+      ? undefined
+      : args.length === 1
+        ? args[0]
+        : {op: 'and', args};
+  return {pushdown: wrap(down), residual: wrap(rest)};
 }
 
-/** Anything with a RID and properties. */
-export interface Sortable {
-  rid: string;
-  props: Record<string, unknown>;
-}
+/** Built-in sort keys (columns of og_object). */
+export const BUILTIN_SORT_KEYS = ['title', 'primaryKey', 'updatedAt'] as const;
 
-function cmp(a: unknown, b: unknown): number {
-  const na = a === null || a === undefined;
-  const nb = b === null || b === undefined;
-  if (na || nb) return na === nb ? 0 : na ? 1 : -1;
-  if (typeof a === 'number' && typeof b === 'number') return a - b;
-  const sa = typeof a === 'string' ? a : JSON.stringify(a);
-  const sb = typeof b === 'string' ? b : JSON.stringify(b);
-  return sa < sb ? -1 : sa > sb ? 1 : 0;
-}
-
-/** Stable in-memory sort; nulls last, ties broken by RID. */
-export function sortObjects<T extends Sortable>(
-  items: readonly T[],
-  orderBy: readonly OrderBy[] = [],
-): T[] {
-  return [...items].sort((x, y) => {
-    for (const o of orderBy) {
-      const a = x.props[o.prop];
-      const b = y.props[o.prop];
-      const nullish = (v: unknown) => v === null || v === undefined;
-      let c = cmp(a, b);
-      if (c !== 0 && o.dir === 'desc' && !nullish(a) && !nullish(b)) c = -c;
-      if (c !== 0) return c;
+/** How a query is ordered. */
+export type SortPlan =
+  | {kind: 'default'}
+  | {
+      kind: 'column';
+      key: (typeof BUILTIN_SORT_KEYS)[number];
+      dir: 'asc' | 'desc';
     }
-    return x.rid < y.rid ? -1 : x.rid > y.rid ? 1 : 0;
-  });
-}
-
-/** Filters items in memory. */
-export function filterObjects<T extends Sortable>(
-  items: readonly T[],
-  expr: FilterExpr | undefined,
-): T[] {
-  return expr ? items.filter(i => matchFilter(expr, i.props)) : [...items];
-}
-
-/** Aggregate function. */
-export type AggregateFn = 'count' | 'sum' | 'avg' | 'min' | 'max';
+  | {kind: 'indexed'; prop: string; dir: 'asc' | 'desc'};
 
 /**
- * Aggregates values. `count` counts every item; the others use finite
- * numbers only and return 0 for an empty input.
+ * Plans the order. Sorting is allowed only on built-in keys or on indexed
+ * properties of the queried type (VALIDATION_FAILED otherwise).
  */
-export function aggregateValues(
-  fn: AggregateFn,
-  values: readonly unknown[],
-): number {
-  if (fn === 'count') return values.length;
-  const nums = values.filter(
-    (v): v is number => typeof v === 'number' && Number.isFinite(v),
-  );
-  if (nums.length === 0) return 0;
-  switch (fn) {
-    case 'sum':
-      return nums.reduce((a, b) => a + b, 0);
-    case 'avg':
-      return nums.reduce((a, b) => a + b, 0) / nums.length;
-    case 'min':
-      return Math.min(...nums);
-    default:
-      return Math.max(...nums);
+export function planSort(
+  orderBy: OrderBy | undefined,
+  indexed: ReadonlySet<string>,
+): SortPlan {
+  if (!orderBy) return {kind: 'default'};
+  const dir = orderBy.dir === 'desc' ? 'desc' : 'asc';
+  if ((BUILTIN_SORT_KEYS as readonly string[]).includes(orderBy.prop)) {
+    return {
+      kind: 'column',
+      key: orderBy.prop as (typeof BUILTIN_SORT_KEYS)[number],
+      dir,
+    };
   }
+  if (indexed.has(orderBy.prop)) {
+    return {kind: 'indexed', prop: orderBy.prop, dir};
+  }
+  throw new AppError(
+    'VALIDATION_FAILED',
+    `orderBy ${orderBy.prop} is not an indexed property`,
+  );
+}
+
+/** Whether free text matches an object's title, primary key or RID. */
+export function matchesText(
+  q: string,
+  o: {rid: string; title: string; primaryKey: string},
+): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  return (
+    o.rid.toLowerCase() === needle ||
+    o.title.toLowerCase().includes(needle) ||
+    o.primaryKey.toLowerCase().includes(needle)
+  );
 }

@@ -1,19 +1,19 @@
 /**
- * @fileoverview Navigation menu definition; items are hidden by role.
+ * @fileoverview Navigation (前端详细设计 2.1): 运营 / 构建 / 我的, plus the
+ * admin-only 平台 group (display only; the gateway enforces role).
  */
 
-import type {Role} from '@ontodecide/shared-kernel';
 import {
-  Activity,
-  Bot,
   Boxes,
-  Database,
   FlaskConical,
-  Gauge,
-  Lightbulb,
+  LayoutGrid,
+  Layers,
   Network,
-  Shapes,
-  Users,
+  ShieldCheck,
+  Sparkles,
+  Upload,
+  User,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -22,80 +22,47 @@ export interface NavItem {
   to: string;
   labelKey: string;
   icon: LucideIcon;
-  minRole: Role;
-  group: 'monitor' | 'decide' | 'data' | 'admin';
 }
 
-/** Menu entries in display order. */
-export const NAV_ITEMS: NavItem[] = [
+/** A navigation group. */
+export interface NavGroup {
+  key: 'operate' | 'build' | 'mine' | 'platform';
+  items: NavItem[];
+  adminOnly?: boolean;
+}
+
+/** Menu in display order. */
+export const NAV_GROUPS: NavGroup[] = [
   {
-    to: '/cockpit',
-    labelKey: 'nav.cockpit',
-    icon: Gauge,
-    minRole: 'Viewer',
-    group: 'monitor',
+    key: 'operate',
+    items: [
+      {to: '/cockpit', labelKey: 'nav.cockpit', icon: LayoutGrid},
+      {to: '/objects', labelKey: 'nav.objects', icon: Boxes},
+      {to: '/graph', labelKey: 'nav.graph', icon: Network},
+      {to: '/scenarios', labelKey: 'nav.scenarios', icon: FlaskConical},
+      {to: '/recommendations', labelKey: 'nav.recommendations', icon: Sparkles},
+    ],
   },
   {
-    to: '/objects',
-    labelKey: 'nav.objects',
-    icon: Boxes,
-    minRole: 'Viewer',
-    group: 'monitor',
+    key: 'build',
+    items: [
+      {to: '/imports', labelKey: 'nav.imports', icon: Upload},
+      {to: '/ontology', labelKey: 'nav.ontology', icon: Layers},
+      {to: '/automations', labelKey: 'nav.automations', icon: Zap},
+    ],
   },
   {
-    to: '/graph',
-    labelKey: 'nav.graph',
-    icon: Network,
-    minRole: 'Viewer',
-    group: 'monitor',
+    key: 'mine',
+    items: [{to: '/account', labelKey: 'nav.account', icon: User}],
   },
   {
-    to: '/scenarios',
-    labelKey: 'nav.scenarios',
-    icon: FlaskConical,
-    minRole: 'Operator',
-    group: 'decide',
-  },
-  {
-    to: '/recommendations',
-    labelKey: 'nav.recommendations',
-    icon: Lightbulb,
-    minRole: 'Operator',
-    group: 'decide',
-  },
-  {
-    to: '/automations',
-    labelKey: 'nav.automations',
-    icon: Bot,
-    minRole: 'Operator',
-    group: 'decide',
-  },
-  {
-    to: '/sources',
-    labelKey: 'nav.sources',
-    icon: Database,
-    minRole: 'Operator',
-    group: 'data',
-  },
-  {
-    to: '/ontology',
-    labelKey: 'nav.ontology',
-    icon: Shapes,
-    minRole: 'Modeler',
-    group: 'data',
-  },
-  {
-    to: '/admin/users',
-    labelKey: 'nav.users',
-    icon: Users,
-    minRole: 'Admin',
-    group: 'admin',
-  },
-  {
-    to: '/admin/health',
-    labelKey: 'nav.health',
-    icon: Activity,
-    minRole: 'Admin',
-    group: 'admin',
+    key: 'platform',
+    adminOnly: true,
+    items: [{to: '/admin', labelKey: 'nav.admin', icon: ShieldCheck}],
   },
 ];
+
+/** Groups visible to a role. */
+export function visibleGroups(isAdmin: boolean): NavGroup[] {
+  return NAV_GROUPS.filter(g => !g.adminOnly || isAdmin);
+}

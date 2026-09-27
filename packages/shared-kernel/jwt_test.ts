@@ -1,51 +1,63 @@
+/**
+ * @fileoverview Tests of Ed25519 JWT signing, verification and key rotation.
+ */
+
 import {describe, expect, it} from 'vitest';
 import {AppError} from './errors';
-import {parseJwtKeys, signJwt, verifyJwt} from './jwt';
+import {
+  generateSigningKey,
+  parsePublicKeys,
+  parseSigningKey,
+  publicJwkOf,
+  signJwt,
+  verifyJwt,
+} from './jwt';
 
-describe('jwt', () => {
-  const keys = parseJwtKeys('k2:new-secret,k1:old-secret');
-
-  it('parses bare and kid-prefixed secrets', () => {
-    expect(parseJwtKeys('plain')).toEqual([{kid: 'k1', secret: 'plain'}]);
-    expect(keys.map(k => k.kid)).toEqual(['k2', 'k1']);
-    expect(() => parseJwtKeys(undefined)).toThrow(AppError);
-  });
-
-  it('signs with the first key and verifies with any key', async () => {
-    const token = await signJwt({sub: 'u1', exp: 2_000_000_000}, keys);
+describe('jwt (Ed25519)', () => {
+  it('signs with the private key and verifies with the public set', async () => {
+    const key = await generateSigningKey('2026-09');
+    const pub = parsePublicKeys(JSON.stringify({keys: [publicJwkOf(key)]}));
+    expect(pub[0].d).toBeUndefined();
+    const token = await signJwt({sub: 'u1', exp: 2_000_000_000}, key);
     const header = JSON.parse(
       atob(token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/')),
     );
-    expect(header).toMatchObject({alg: 'HS256', kid: 'k2'});
-    expect(
-      (await verifyJwt<{sub: string; exp?: number}>(token, keys)).sub,
-    ).toBe('u1');
-    const old = await signJwt({sub: 'u2'}, [keys[1]]);
-    expect((await verifyJwt<{sub: string; exp?: number}>(old, keys)).sub).toBe(
-      'u2',
-    );
+    expect(header).toMatchObject({alg: 'EdDSA', kid: '2026-09'});
+    expect(await verifyJwt(token, pub, 1_000)).toMatchObject({sub: 'u1'});
   });
 
-  it('rejects tampered, unknown-kid and expired tokens', async () => {
-    const token = await signJwt({sub: 'u1', exp: 100}, keys);
-    await expect(verifyJwt(token, keys, 99)).resolves.toMatchObject({
-      sub: 'u1',
-    });
-    await expect(verifyJwt(token, keys, 100)).rejects.toMatchObject({
-      code: 'AUTH_EXPIRED',
-    });
+  it('accepts old and new keys during rotation', async () => {
+    const oldKey = await generateSigningKey('old');
+    const newKey = await generateSigningKey('new');
+    const pub = [publicJwkOf(newKey), publicJwkOf(oldKey)];
+    const t = await signJwt({exp: 2_000_000_000}, oldKey);
+    await expect(verifyJwt(t, pub, 1)).resolves.toBeTruthy();
+  });
+
+  it('rejects tampering, unknown kids and expiry', async () => {
+    const key = await generateSigningKey('k');
+    const other = await generateSigningKey('k');
+    const pub = [publicJwkOf(key)];
+    const token = await signJwt({sub: 'u1', exp: 100}, key);
     const [h, , s] = token.split('.');
-    const forged = `${h}.${btoa(JSON.stringify({sub: 'admin', exp: 9e9})).replace(/=+$/, '')}.${s}`;
-    await expect(verifyJwt(forged, keys, 1)).rejects.toMatchObject({
-      code: 'AUTH_INVALID',
-    });
+    const forged = `${h}.${btoa('{"sub":"admin","exp":9999999999}').replace(/=+$/, '')}.${s}`;
+    await expect(verifyJwt(forged, pub, 1)).rejects.toThrow(AppError);
     await expect(
-      verifyJwt(token, parseJwtKeys('k9:x'), 1),
-    ).rejects.toMatchObject({
-      code: 'AUTH_INVALID',
+      verifyJwt(await signJwt({exp: 100}, other), pub, 1),
+    ).rejects.toMatchObject({code: 'UNAUTHENTICATED'});
+    await expect(
+      verifyJwt(await signJwt({exp: 100}, {...key, kid: 'x'}), pub, 1),
+    ).rejects.toMatchObject({code: 'UNAUTHENTICATED'});
+    await expect(verifyJwt(token, pub, 100)).rejects.toMatchObject({
+      code: 'UNAUTHENTICATED',
     });
-    await expect(verifyJwt('garbage', keys)).rejects.toMatchObject({
-      code: 'AUTH_INVALID',
-    });
+    await expect(verifyJwt('a.b', pub, 1)).rejects.toThrow(AppError);
+  });
+
+  it('validates the signing key secret', () => {
+    expect(() => parseSigningKey(undefined)).toThrow(AppError);
+    expect(() =>
+      parseSigningKey('{"kty":"OKP","crv":"Ed25519","x":"a","kid":"k"}'),
+    ).toThrow(AppError);
   });
 });

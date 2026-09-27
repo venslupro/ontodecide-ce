@@ -1,0 +1,218 @@
+{
+  "list": {
+    "title": "数据导入",
+    "description": "CSV / XLSX / JSON 文件在浏览器中解析，映射后分批写入对象图；原始文件不上传。",
+    "new": "新建导入",
+    "empty": "还没有导入作业",
+    "emptyHint": "导入一个供应商或物料文件，开始构建你的对象图。",
+    "col": {
+      "file": "文件",
+      "target": "目标类型",
+      "status": "状态",
+      "counts": "写入 / 跳过 / 拒绝",
+      "rows": "行数",
+      "created": "创建时间"
+    },
+    "sample": "示例场景",
+    "openAria": "打开导入作业 {name}",
+    "open": "查看"
+  },
+  "status": {
+    "RECEIVING": "接收中",
+    "DONE": "已完成",
+    "FAILED": "失败"
+  },
+  "wizard": {
+    "breadcrumb": "数据导入 / 新建",
+    "title": "新建导入",
+    "fileMeta": "{name} · {rows, plural, other {# 行}}",
+    "stepsLabel": "导入步骤",
+    "steps": {
+      "source": "选择来源",
+      "upload": "上传文件",
+      "mapping": "字段映射",
+      "validate": "校验",
+      "run": "预览与运行"
+    },
+    "back": "上一步",
+    "nextTo": "下一步：{step}",
+    "typeLoading": "正在加载本体…"
+  },
+  "source": {
+    "title": "选择来源",
+    "onlyFile": "社区版只支持文件导入：文件在浏览器中解析，原始文件不会上传。",
+    "formatLabel": "文件格式",
+    "formats": {
+      "csv": {
+        "title": "CSV",
+        "desc": "逗号分隔，首行为表头（UTF-8）"
+      },
+      "xlsx": {
+        "title": "Excel（XLSX）",
+        "desc": "读取第一个工作表的单元格值，不执行公式与宏"
+      },
+      "json": {
+        "title": "JSON",
+        "desc": "对象数组，或 items / data / records / rows 中的数组"
+      }
+    },
+    "target": "目标对象类型",
+    "targetPlaceholder": "请选择对象类型",
+    "targetHint": "每行成为一个该类型的对象（按主键合并）。"
+  },
+  "upload": {
+    "title": "上传文件",
+    "drop": "拖放文件到此处，或",
+    "pick": "选择文件",
+    "inputLabel": "导入文件",
+    "limit": "CSV / XLSX / JSON，≤ {mb} MB",
+    "notice": "文件只在浏览器中解析，原始文件不会上传；只提交映射后的行。",
+    "parsing": "正在浏览器中解析…",
+    "parsed": "已解析 {rows, plural, other {# 行}} · {cols, plural, other {# 列}}",
+    "truncated": "文件超过 {max, number} 行，只读取了前 {max, number} 行。",
+    "sample": "样例（前 {count} 行）",
+    "formatSwitched": "已按文件扩展名识别为 {format}。"
+  },
+  "parse": {
+    "errors": {
+      "FILE_TOO_LARGE": "文件超过 {mb} MB 上限。",
+      "UNSUPPORTED_FORMAT": "不支持的文件格式，请使用 CSV、XLSX 或 JSON。",
+      "EMPTY_FILE": "文件中没有数据行。",
+      "INVALID_JSON": "JSON 无效：需要对象数组，或 items / data / records / rows 中的数组。",
+      "NO_COLUMNS": "找不到表头列。",
+      "PARSE_FAILED": "文件解析失败。"
+    }
+  },
+  "mapping": {
+    "title": "字段映射 → 目标类型",
+    "col": {
+      "source": "源字段",
+      "sample": "样例",
+      "target": "目标属性",
+      "transform": "转换",
+      "status": "状态",
+      "actions": "操作"
+    },
+    "targetNone": "不导入",
+    "pk": "{name}（主键）",
+    "propGroup": "属性",
+    "linkGroup": "关系",
+    "linkOption": "关系 {link} → {to}",
+    "split": "分隔符",
+    "splitAria": "{field} 的分隔符",
+    "targetAria": "{field} 的目标属性",
+    "transformAria": "{field} 的转换链",
+    "chainError": "转换链无效：{step}",
+    "status": {
+      "confirmed": "已确认",
+      "deterministic": "确定性匹配",
+      "ai": "AI 建议",
+      "pending": "待确认"
+    },
+    "matchedBy": {
+      "exact": "同名",
+      "synonym": "同义词",
+      "similarity": "相似度",
+      "ai": "AI",
+      "manual": "手动"
+    },
+    "confirm": "确认",
+    "confirmAria": "确认 {field} 的映射",
+    "dismiss": "忽略",
+    "dismissAria": "忽略 {field} 的 AI 建议",
+    "confirmAll": "全部确认 AI 建议（{count}）",
+    "aiDraft": "AI 生成映射草稿",
+    "aiNote": "先做同名、同义词与相似度的确定性匹配，只把未匹配的字段交给 AI；AI 建议必须逐项确认。",
+    "aiRules": "今日 AI 映射草稿额度已用完：本次只做了确定性匹配，未使用 AI。",
+    "aiApplied": "AI 草稿已应用：{count, plural, =0 {没有新的 AI 建议} other {# 项 AI 建议需逐项确认}}。",
+    "noRowsLeft": "今日没有剩余导入行数，无法创建导入作业。",
+    "problems": {
+      "PRIMARY_KEY_UNMAPPED": "请把一个源字段映射到主键 {prop}。",
+      "REQUIRED_UNMAPPED": "必填属性 {prop} 未映射。",
+      "DUPLICATE_TARGET": "属性 {prop} 被映射了多次。",
+      "CHAIN_INVALID": "{source} 的转换链无效。",
+      "AI_UNCONFIRMED": "还有 {count} 项 AI 建议待确认。"
+    }
+  },
+  "validate": {
+    "title": "校验",
+    "checks": "逐行检查必填、类型、主键冲突与超出上限的行。",
+    "summary": {
+      "passed": "{count} 通过",
+      "rejected": "{count} 拒绝",
+      "overLimit": "{count} 超出上限"
+    },
+    "col": {
+      "row": "行",
+      "column": "列",
+      "reason": "原因"
+    },
+    "allPassed": "全部行通过校验。",
+    "more": "另有 {count} 行未列出。",
+    "overLimitRows": "第 {from}–{to} 行",
+    "overLimitReason": {
+      "importRows": "超出上限：今日剩余导入行数 {left}",
+      "objects": "超出上限：对象余量 {left}",
+      "batchMax": "超出上限：每天最多导入 {left} 行"
+    },
+    "backToMapping": "返回修改映射",
+    "rejectedNote": "被拒绝的行也会提交并计入今日导入行数，服务器会返回相同的拒绝原因。"
+  },
+  "codes": {
+    "PRIMARY_KEY_MISSING": "主键为空",
+    "PRIMARY_KEY_CONFLICT": "主键重复",
+    "REQUIRED": "必填项为空",
+    "TYPE": "类型不匹配",
+    "TRANSFORM_FAILED": "转换失败",
+    "OVER_LIMIT": "超出上限",
+    "LIMIT_EXCEEDED": "超出对象或关系上限",
+    "unknown": "已拒绝（{code}）"
+  },
+  "run": {
+    "preview": "预览",
+    "previewHint": "按映射转换后的前 {count} 行",
+    "plan": "上传计划",
+    "planLine": "浏览器内解析 → {batches, plural, other {# 批}} × {rows} 行（原始文件不上传）",
+    "eta": "预计 {seconds} 秒",
+    "remaining": "今日剩余导入行数 {left} / {limit}",
+    "overLimit": "{count, plural, other {# 行}}超出上限，已标出且不会提交。",
+    "nothing": "今日没有可用的导入额度，无法提交。",
+    "start": "开始导入",
+    "progressLabel": "上传进度",
+    "progress": "已提交 {done} / {total} 批 · {rows} 行",
+    "retrying": "第 {attempt} 次重试…",
+    "cancel": "取消",
+    "aborted": "上传已取消，可继续上传。",
+    "resume": "继续上传",
+    "failed": "上传中断：{message}",
+    "rowTooLarge": "第 {row} 行超过 512 KB 请求体上限。"
+  },
+  "job": {
+    "title": "导入作业",
+    "breadcrumb": "数据导入 / {id}",
+    "back": "返回导入列表",
+    "notFound": "找不到该导入作业。",
+    "totals": {
+      "totalRows": "计划行数",
+      "received": "已接收",
+      "upserted": "写入",
+      "skipped": "跳过",
+      "rejected": "拒绝"
+    },
+    "totalsLabel": "导入统计",
+    "target": "目标类型",
+    "created": "创建于 {at}",
+    "rejects": "拒绝原因",
+    "rejectsHint": "只显示行号、列与错误类型，不显示单元格内容（最多 200 条）。",
+    "noRejects": "没有被拒绝的行。",
+    "col": {
+      "row": "行",
+      "column": "列",
+      "code": "错误类型",
+      "detail": "说明"
+    },
+    "viewObjects": "查看 {type} 对象",
+    "mapping": "字段映射",
+    "mappingLine": "{from} → {to}"
+  }
+}

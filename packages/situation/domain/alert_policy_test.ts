@@ -1,73 +1,71 @@
 /**
- * @fileoverview Table-driven tests for alert de-duplication and cooldown.
+ * @fileoverview Tests of alert dedupe, cooldown and auto-close decisions.
  */
 
 import {describe, expect, it} from 'vitest';
-import {
-  type AlertDecision,
-  type LatestAlert,
-  canTransition,
-  decideAlert,
-} from './alert_policy';
+import {decideAlert, severityRank} from './alert_policy';
 
 const NOW = 1_000_000_000;
 
 describe('decideAlert', () => {
-  const cases: [string, LatestAlert | null, number, AlertDecision][] = [
-    ['no previous alert', null, 3600, {kind: 'create'}],
-    [
-      'OPEN alert',
-      {id: 'x', status: 'OPEN'},
-      3600,
-      {kind: 'update', alertId: 'x', reason: 'active'},
-    ],
-    [
-      'ACKED alert',
-      {id: 'x', status: 'ACKED'},
-      3600,
-      {kind: 'update', alertId: 'x', reason: 'active'},
-    ],
-    [
-      'CLOSED within cooldown',
-      {id: 'x', status: 'CLOSED', closedAt: NOW - 3599_000},
-      3600,
-      {kind: 'update', alertId: 'x', reason: 'cooldown'},
-    ],
-    [
-      'CLOSED exactly at cooldown end',
-      {id: 'x', status: 'CLOSED', closedAt: NOW - 3600_000},
-      3600,
-      {kind: 'create'},
-    ],
-    [
-      'CLOSED after cooldown',
-      {id: 'x', status: 'CLOSED', closedAt: NOW - 7200_000},
-      3600,
-      {kind: 'create'},
-    ],
-    [
-      'CLOSED with zero cooldown',
-      {id: 'x', status: 'CLOSED', closedAt: NOW},
-      0,
-      {kind: 'create'},
-    ],
-  ];
+  const open = {id: 'a1', status: 'OPEN' as const, closedAt: null};
+  const acked = {id: 'a1', status: 'ACKED' as const, closedAt: null};
+  const closed = (ago: number) => ({
+    id: 'a0',
+    status: 'CLOSED' as const,
+    closedAt: NOW - ago,
+  });
+  const base = {active: null, lastClosed: null, cooldownSec: 60, now: NOW};
 
-  it.each(cases)('%s', (_name, latest, cooldown, expected) => {
-    expect(decideAlert(latest, NOW, cooldown)).toEqual(expected);
+  it('raises when nothing is active', () => {
+    expect(decideAlert({...base, matches: true})).toEqual({kind: 'raise'});
+  });
+
+  it('dedupes: a hit on an active alert updates it', () => {
+    expect(decideAlert({...base, matches: true, active: open})).toEqual({
+      kind: 'hit',
+      alertId: 'a1',
+    });
+    expect(decideAlert({...base, matches: true, active: acked})).toEqual({
+      kind: 'hit',
+      alertId: 'a1',
+    });
+  });
+
+  it('cools down: a hit shortly after closing updates the closed alert', () => {
+    expect(
+      decideAlert({...base, matches: true, lastClosed: closed(59_000)}),
+    ).toEqual({kind: 'cooldown', alertId: 'a0'});
+    expect(
+      decideAlert({...base, matches: true, lastClosed: closed(60_000)}),
+    ).toEqual({kind: 'raise'});
+    expect(
+      decideAlert({
+        ...base,
+        cooldownSec: 0,
+        matches: true,
+        lastClosed: closed(1),
+      }),
+    ).toEqual({kind: 'raise'});
+  });
+
+  it('auto-closes when the condition stops holding', () => {
+    expect(decideAlert({...base, matches: false, active: open})).toEqual({
+      kind: 'close',
+      alertId: 'a1',
+    });
+    expect(decideAlert({...base, matches: false, active: acked})).toEqual({
+      kind: 'close',
+      alertId: 'a1',
+    });
+    expect(decideAlert({...base, matches: false})).toEqual({kind: 'none'});
   });
 });
 
-describe('canTransition', () => {
-  it.each([
-    ['OPEN', 'ACKED', true],
-    ['OPEN', 'CLOSED', true],
-    ['ACKED', 'CLOSED', true],
-    ['ACKED', 'ACKED', true],
-    ['ACKED', 'OPEN', false],
-    ['CLOSED', 'ACKED', false],
-    ['CLOSED', 'CLOSED', false],
-  ] as const)('%s → %s = %s', (from, to, ok) => {
-    expect(canTransition(from, to)).toBe(ok);
+describe('severityRank', () => {
+  it('orders severities', () => {
+    expect(severityRank('CRITICAL')).toBeGreaterThan(severityRank('HIGH'));
+    expect(severityRank('HIGH')).toBeGreaterThan(severityRank('MEDIUM'));
+    expect(severityRank('MEDIUM')).toBeGreaterThan(severityRank('LOW'));
   });
 });

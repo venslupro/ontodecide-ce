@@ -3,7 +3,7 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {createFormatters, fmt, setFormatLocale} from './format';
+import {createFormatters, fmt, setFormatLocale, shortTid} from './format';
 
 const zh = createFormatters('zh-CN');
 const en = createFormatters('en-US');
@@ -55,5 +55,33 @@ describe('formatters', () => {
     expect(fmt.compact(128000)).toBe('128K');
     setFormatLocale('zh-CN');
     expect(fmt.compact(128000)).toBe('12.8万');
+  });
+});
+
+describe('CE formatters', () => {
+  it('formats the remaining trial time', () => {
+    const H = 3_600_000;
+    expect(zh.remaining(29 * H)).toBe('1 天 05 小时');
+    expect(en.remaining(29 * H)).toBe('1d 05h');
+    expect(zh.remaining(5 * H + 3 * 60_000)).toBe('5 小时 03 分');
+    expect(en.remaining(59 * 60_000 + 12_000)).toBe('59m 12s');
+    expect(en.remaining(-5)).toBe('00m 00s');
+  });
+
+  it('formats times in the account time zone', () => {
+    const t = '2026-09-30T06:20:00Z';
+    expect(zh.dateTimeTz(t, 'Asia/Shanghai')).toBe('2026-09-30 14:20');
+    expect(norm(en.dateTimeTz(t, 'Asia/Shanghai'))).toBe(
+      'Sep 30, 2026, 2:20 PM',
+    );
+    expect(zh.shortDateTime(t, 'Asia/Shanghai')).toBe('09-30 14:20');
+    expect(en.tzName(t, 'Asia/Shanghai')).toBe('GMT+8');
+    expect(zh.dateTimeTz(t, 'Not/AZone')).toMatch(/^2026-09-30 \d\d:20$/);
+  });
+
+  it('formats bytes and short workspace ids', () => {
+    expect(zh.bytes(212_000)).toBe('212 KB');
+    expect(en.bytes(1_400_000)).toBe('1.4 MB');
+    expect(shortTid('ws-01J8ZABCDEFGHK4')).toBe('ws-01J8Z…K4');
   });
 });

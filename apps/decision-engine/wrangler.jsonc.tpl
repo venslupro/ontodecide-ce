@@ -1,39 +1,34 @@
-// decision-engine: simulation, AI recommendations, approval, outcome evaluation, LLM gateway.
+// decision-engine: scenarios (deterministic propagation), AI-ranked
+// recommendations with rule fallback, decisions. Entry points: DecisionRpc,
+// TenantLifecycle.
 {
   "name": "${PREFIX}-decision-engine",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
+  "preview_urls": false,
   "d1_databases": [{
     "binding": "DECISION_DB",
     "database_name": "${D1_DECISION_NAME}",
     "database_id": "${D1_DECISION_ID}",
-    "migrations_dir": "../../migrations/decision"
+    "migrations_dir": "../../migrations/decision-engine"
   }],
   "ai": {"binding": "AI"},
-  "vectorize": [{"binding": "VEC", "index_name": "${PREFIX}-decision-cases-bge-m3"}],
   "services": [
     {"binding": "OBJECTS", "service": "${PREFIX}-object-graph", "entrypoint": "ObjectGraphRpc"},
     {"binding": "SITUATION", "service": "${PREFIX}-situation-awareness", "entrypoint": "SituationRpc"},
     {"binding": "ONTOLOGY", "service": "${PREFIX}-ontology-manager", "entrypoint": "OntologyRpc"}
   ],
-  "queues": {
-    "producers": [{"binding": "DECISION_JOBS_QUEUE", "queue": "${PREFIX}-decision-jobs"}],
-    "consumers": [{
-      "queue": "${PREFIX}-decision-jobs",
-      "max_batch_size": 5,
-      "max_retries": 3,
-      "dead_letter_queue": "${PREFIX}-decision-jobs-dlq"
-    }]
-  },
-  "triggers": {"crons": ["0 1 * * *"]},
   "vars": {
+    "AI_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8",
+    "AI_FALLBACK_MODEL": "@cf/openai/gpt-oss-20b",
+    "REC_AI_USER_DAILY_LIMIT": "3",
+    "NEURONS_DAILY_BUDGET": "6500",
+    "NEURONS_RESERVE_FACTOR": "1.3",
+    "REC_EXPIRE_HOURS": "24",
     "ENVIRONMENT": "${ENVIRONMENT}",
-    "LLM_CHAIN": "workers-ai,gemini,groq",
-    "LLM_TENANT_DAILY_LIMIT": "50",
-    "LLM_USER_DAILY_LIMIT": "20",
-    "REC_EXPIRE_HOURS": "24"
+    "APP_VERSION": "${APP_VERSION}"
   },
-  "observability": {"enabled": true}
+  "observability": {"enabled": true, "head_sampling_rate": 0.5}
 }

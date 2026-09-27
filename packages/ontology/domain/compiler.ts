@@ -1,79 +1,58 @@
 /**
- * @fileoverview Schema compiler: derives lookups, index plan and a content
- * hash from a schema definition.
+ * @fileoverview Ontology compiler: derives property lookups, indexed and
+ * sensitive property lists and the index plan from a definition.
  */
 
-import {canonicalJson, sha256Hex} from '@ontodecide/shared-kernel';
 import type {
   CompiledObjectType,
   CompiledSchema,
-  DataType,
   IndexPlanEntry,
-  SchemaDef,
+  OntologyDef,
 } from '../contract';
 
-const NUM_INDEX_TYPES = new Set<string>(['integer', 'double', 'boolean']);
-
-/**
- * Index column kind for a data type; mirrors `indexValue` in the contract
- * (numbers and booleans → num, everything else → str).
- */
-export function indexKind(dataType: DataType): IndexPlanEntry['kind'] {
-  return NUM_INDEX_TYPES.has(dataType) ? 'num' : 'str';
+/** Identity of a compiled ontology. */
+export interface CompileMeta {
+  templateId: string;
+  templateVersion: string;
+  custom: boolean;
+  etag: number;
 }
 
-/** Content hash of a definition: sha256 of its canonical JSON. */
-export function schemaHash(def: SchemaDef): Promise<string> {
-  return sha256Hex(canonicalJson(def));
-}
-
-/** Compiles a schema definition published as `version`. */
-export async function compileSchema(
-  def: SchemaDef,
-  version: string,
-): Promise<CompiledSchema> {
+/** Compiles a (validated) definition. */
+export function compileOntology(
+  def: OntologyDef,
+  meta: CompileMeta,
+): CompiledSchema {
   const objectTypes: Record<string, CompiledObjectType> = {};
   const indexPlan: IndexPlanEntry[] = [];
   for (const t of def.objectTypes) {
-    const propsByName = Object.fromEntries(
-      t.properties.map(p => [p.apiName, p]),
-    );
-    const indexed = t.properties.filter(p => p.indexed);
+    const indexed = t.properties.filter(p => p.indexed).map(p => p.apiName);
     objectTypes[t.apiName] = {
       ...t,
-      schemaApi: def.apiName,
-      propsByName,
-      indexedProps: indexed.map(p => p.apiName),
+      propsByName: Object.fromEntries(t.properties.map(p => [p.apiName, p])),
+      indexedProps: indexed,
       sensitiveProps: t.properties.filter(p => p.sensitive).map(p => p.apiName),
     };
-    for (const p of indexed) {
-      indexPlan.push({
-        objectType: t.apiName,
-        prop: p.apiName,
-        kind: indexKind(p.dataType),
-      });
-    }
+    for (const prop of indexed) indexPlan.push({objectType: t.apiName, prop});
   }
   return {
-    apiName: def.apiName,
-    version,
-    hash: await schemaHash(def),
+    templateId: meta.templateId,
+    templateVersion: meta.templateVersion,
+    custom: meta.custom,
+    etag: meta.etag,
     objectTypes,
     linkTypes: Object.fromEntries(def.linkTypes.map(l => [l.apiName, l])),
     actionTypes: Object.fromEntries(def.actionTypes.map(a => [a.apiName, a])),
     functions: Object.fromEntries(def.functions.map(f => [f.apiName, f])),
-    simulationKpis: def.simulationKpis ?? [],
+    simulationKpis: def.simulationKpis,
     indexPlan,
   };
 }
 
-/** Index plan entries of `next` that are absent (or differ in kind) from `prev`. */
-export function indexChanges(
-  prev: readonly IndexPlanEntry[],
-  next: readonly IndexPlanEntry[],
-): IndexPlanEntry[] {
-  const key = (e: IndexPlanEntry) =>
-    `${e.objectType}\u0000${e.prop}\u0000${e.kind}`;
-  const old = new Set(prev.map(key));
-  return next.filter(e => !old.has(key(e)));
+/** Returns a compiled schema re-labelled with another identity. */
+export function withMeta(
+  compiled: CompiledSchema,
+  meta: CompileMeta,
+): CompiledSchema {
+  return {...compiled, ...meta};
 }

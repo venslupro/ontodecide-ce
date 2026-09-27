@@ -1,206 +1,168 @@
 /**
- * @fileoverview Realtime increment merge (KPIs overwrite, alerts dedupe
- * newest-first keep 200, recommendations invalidate) and the ≤ 1/s
- * rAF-throttled application to the query cache.
+ * @fileoverview Situation view model: recommendation frame merge, KPI
+ * deltas, alert ordering and markers, empty-workspace detection, and the
+ * registered stream merger writing into the overview cache.
  */
 
-import type {AlertDto, WsMsg} from '@ontodecide/situation/contract';
 import {QueryClient} from '@tanstack/react-query';
-import {afterEach, describe, expect, it, vi} from 'vitest';
-import {qk} from '../../shared/api/query_keys';
-import {createFrameBatcher} from '../../shared/lib/frame_batcher';
-import {alerts, kpis, overview, recSummaries, usage} from '../../test/fixtures';
+import {describe, expect, it} from 'vitest';
 import {
-  ALERT_KEEP,
+  makeAlerts,
+  makeKpis,
+  makeOverview,
+  makeRecommendations,
+  S017,
+} from '../../test/fixtures/business';
+import {situationKeys} from './api';
+import {
+  alertMarkers,
+  isEmptyWorkspace,
   kpiDelta,
   kpiOffTarget,
   kpiTrendIsGood,
-  mergeFrames,
-  type Overview,
+  mergeRecommendationFrames,
+  recImpact,
+  sortAlertsBySeverity,
+  trendOf,
+  type OverviewView,
 } from './model';
-import {applyFrames, useRealtimeStatus} from './stream';
+import {recommendationMerger} from './stream';
 
-let seq = 0;
-const frame = (type: WsMsg['type'], data: unknown): WsMsg => ({
-  seq: ++seq,
-  type,
-  data,
-  occurredAt: new Date().toISOString(),
+function overview(): OverviewView {
+  return {
+    ...makeOverview(),
+    pendingRecommendations: makeRecommendations().slice(0, 2),
+  };
+}
+
+const summary = (id: string, status: string) => ({
+  id,
+  status,
+  summary: `rec ${id}`,
+  confidence: 0.5,
+  rankedBy: 'rules' as const,
+  focus: S017,
+  expectedImpact: 0.1,
+  createdAt: '2026-09-28T09:00:00Z',
+  expiresAt: '2026-09-29T09:00:00Z',
 });
-const alert = (
-  id: string,
-  raisedAt: string,
-  extra: Partial<AlertDto> = {},
-): AlertDto => ({...alerts[0], id, raisedAt, ...extra});
 
-describe('mergeFrames', () => {
-  it('overwrites KPIs by id and keeps order', () => {
-    const r = mergeFrames(overview, [
-      frame('kpi', {...kpis[1], value: 50}),
-      frame('kpi', {...kpis[1], value: 52}),
+describe('mergeRecommendationFrames', () => {
+  it('prepends new Proposed items and removes decided ones', () => {
+    const next = mergeRecommendationFrames(overview(), [
+      {type: 'recommendation', data: summary('rec-9', 'Proposed')},
+      {type: 'recommendation', data: [summary('rec-203', 'Executed')]},
+    ])!;
+    expect(next.pendingRecommendations!.map(r => r.id)).toEqual([
+      'rec-9',
+      'rec-204',
     ]);
-    expect(r.overview!.kpis.map(k => k.id)).toEqual(
-      overview.kpis.map(k => k.id),
-    );
-    expect(r.overview!.kpis[1].value).toBe(52);
-    expect(r.overview!.kpis[0]).toBe(overview.kpis[0]);
   });
 
-  it('appends unknown KPIs and accepts arrays', () => {
-    const r = mergeFrames(overview, [
-      frame('kpi', [{...kpis[0], id: 'kpi-new', value: 1}]),
-    ]);
-    expect(r.overview!.kpis.at(-1)!.id).toBe('kpi-new');
-  });
-
-  it('dedupes alerts by id, newest first, and reports new ids', () => {
-    const updated = {...alerts[0], hits: 5};
-    const fresh = alert('al-new', '2026-09-24T07:59:00.000Z');
-    const r = mergeFrames(overview, [
-      frame('alert', updated),
-      frame('alert', fresh),
-    ]);
-    const ids = r.overview!.alerts.map(a => a.id);
-    expect(ids[0]).toBe('al-new');
-    expect(ids.filter(i => i === alerts[0].id)).toHaveLength(1);
-    expect(r.overview!.alerts.find(a => a.id === alerts[0].id)!.hits).toBe(5);
-    expect(r.newAlertIds).toEqual(['al-new']);
-  });
-
-  it('keeps at most 200 alerts', () => {
-    const many = Array.from({length: 250}, (_, i) =>
-      alert(`a${i}`, new Date(Date.UTC(2026, 8, 24, 0, i)).toISOString()),
-    );
-    const r = mergeFrames({...overview, alerts: []}, [frame('alert', many)]);
-    expect(r.overview!.alerts).toHaveLength(ALERT_KEEP);
-    expect(r.overview!.alerts[0].id).toBe('a249');
-  });
-
-  it('collects recommendation ids to invalidate and updates the pending list', () => {
-    const r = mergeFrames(overview, [
-      frame('recommendation', {...recSummaries[0], status: 'Executed'}),
-      frame('recommendation', {
-        ...recSummaries[0],
-        id: 'rec-2',
-        status: 'Proposed',
-      }),
-    ]);
-    expect(r.invalidateRecs.sort()).toEqual(['rec-1', 'rec-2']);
-    expect(r.overview!.recommendations.map(x => x.id)).toEqual(['rec-2']);
-  });
-
-  it('replaces the cache on snapshot and keeps data health', () => {
-    const snap: Overview = {
-      ...overview,
-      kpis: [],
-      alerts: [],
-      dataHealth: undefined,
-    };
-    const r = mergeFrames(overview, [
-      frame('kpi', kpis[0]),
-      frame('snapshot', snap),
-    ]);
-    expect(r.replaced).toBe(true);
-    expect(r.overview!.kpis).toEqual([]);
-    expect(r.overview!.dataHealth).toEqual(overview.dataHealth);
-  });
-
-  it('merges a SituationRoom snapshot ({kpis, alerts} only) over the overview', () => {
-    const r = mergeFrames(overview, [
-      frame('snapshot', {kpis: [kpis[0]], alerts: []}),
-    ]);
-    expect(r.overview!.kpis).toEqual([kpis[0]]);
-    expect(r.overview!.alerts).toEqual([]);
-    expect(r.overview!.recommendations).toEqual(overview.recommendations);
-    expect(r.overview!.usage).toEqual(overview.usage);
+  it('deduplicates by id and ignores other frame types', () => {
+    const prev = overview();
+    const same = mergeRecommendationFrames(prev, [{type: 'kpi', data: []}]);
+    expect(same).toBe(prev);
+    const twice = mergeRecommendationFrames(prev, [
+      {type: 'recommendation', data: summary('rec-204', 'Proposed')},
+      {type: 'recommendation', data: summary('rec-204', 'Proposed')},
+    ])!;
     expect(
-      mergeFrames(undefined, [frame('snapshot', {kpis: []})]).overview,
-    ).toMatchObject({alerts: [], recommendations: []});
+      twice.pendingRecommendations!.filter(r => r.id === 'rec-204'),
+    ).toHaveLength(1);
   });
 
-  it('extracts usage', () => {
-    const u = {...usage, level: 'stop' as const};
-    const r = mergeFrames(overview, [frame('usage', u)]);
-    expect(r.usage).toEqual(u);
-    expect(r.overview!.usage).toEqual(u);
+  it('takes impacted objects from the newest simulation', () => {
+    const impacted = [
+      {rid: S017, type: 'Supplier', title: 'x', delta: -0.5, hop: 0},
+    ];
+    const next = mergeRecommendationFrames(overview(), [
+      {
+        type: 'recommendation',
+        data: {...summary('rec-9', 'Proposed'), impacted},
+      },
+    ])!;
+    expect(next.impacted).toEqual(impacted);
   });
 
-  it('ignores increments before the first overview load', () => {
-    const r = mergeFrames(undefined, [
-      frame('kpi', kpis[0]),
-      frame('alert', alerts[0]),
+  it('keeps an absent cache absent', () => {
+    expect(mergeRecommendationFrames(undefined, [])).toBeUndefined();
+  });
+});
+
+describe('recommendationMerger', () => {
+  it('updates every overview range in the cache', () => {
+    const qc = new QueryClient();
+    qc.setQueryData(situationKeys.overview('24h'), overview());
+    qc.setQueryData(situationKeys.overview('7d'), overview());
+    recommendationMerger(qc, [
+      {
+        seq: 1,
+        type: 'recommendation',
+        data: summary('rec-9', 'Proposed'),
+        occurredAt: '',
+      },
     ]);
-    expect(r.overview).toBeUndefined();
+    for (const r of ['24h', '7d'] as const) {
+      const ov = qc.getQueryData<OverviewView>(situationKeys.overview(r))!;
+      expect(ov.pendingRecommendations![0].id).toBe('rec-9');
+    }
   });
 });
 
 describe('KPI helpers', () => {
-  it('computes delta and direction', () => {
-    expect(kpiDelta({value: 45.8, previous: 41.2})!.abs).toBeCloseTo(4.6);
-    expect(kpiDelta({value: 1, previous: null})).toBeNull();
-    expect(
-      kpiTrendIsGood({value: 50, previous: 40, higherIsBetter: false}),
-    ).toBe(false);
-    expect(
-      kpiTrendIsGood({value: 50, previous: 40, higherIsBetter: true}),
-    ).toBe(true);
-    expect(
-      kpiTrendIsGood({value: 40, previous: 40, higherIsBetter: true}),
-    ).toBeNull();
-    expect(kpiOffTarget({value: 45, target: 40, higherIsBetter: false})).toBe(
-      true,
-    );
-    expect(kpiOffTarget({value: 45, target: null, higherIsBetter: false})).toBe(
-      false,
-    );
+  const [otd, shortage, flat] = makeKpis();
+  it('computes deltas and direction', () => {
+    expect(kpiDelta(otd)!.abs).toBeCloseTo(-2.1);
+    expect(kpiTrendIsGood(otd)).toBe(false);
+    expect(kpiTrendIsGood(shortage)).toBe(false);
+    expect(kpiTrendIsGood(flat)).toBeNull();
+    expect(kpiDelta({value: null, previous: 1})).toBeNull();
+    expect(kpiDelta({value: 2, previous: 0})!.rel).toBeNull();
+  });
+
+  it('detects missed targets', () => {
+    expect(kpiOffTarget(otd)).toBe(true);
+    expect(kpiOffTarget({...otd, value: 96})).toBe(false);
+    expect(kpiOffTarget(shortage)).toBe(false);
+  });
+
+  it('finds trend points', () => {
+    expect(trendOf(makeOverview().trends, 'otd')).toHaveLength(12);
+    expect(trendOf(undefined, 'otd')).toEqual([]);
   });
 });
 
-describe('throttled application', () => {
-  afterEach(() => vi.useRealTimers());
-
-  it('flushes at most once per second inside rAF, merging bursts', () => {
-    vi.useFakeTimers();
-    const env = {
-      now: () => Date.now(),
-      raf: (cb: () => void) => setTimeout(cb, 16),
-      setTimeout: (cb: () => void, ms: number) => setTimeout(cb, ms),
-    };
-    const flushes: number[] = [];
-    const b = createFrameBatcher<number>(
-      items => flushes.push(items.length),
-      1000,
-      env,
-    );
-    for (let i = 0; i < 50; i++) b.push(i);
-    vi.advanceTimersByTime(20);
-    expect(flushes).toEqual([50]);
-    for (let i = 0; i < 10; i++) {
-      b.push(i);
-      vi.advanceTimersByTime(50);
-    }
-    // Still inside the 1 s window after the first flush → nothing yet.
-    expect(flushes).toEqual([50]);
-    vi.advanceTimersByTime(600);
-    expect(flushes).toEqual([50, 10]);
-    b.dispose();
+describe('alerts', () => {
+  it('sorts by severity then recency', () => {
+    const list = [...makeAlerts()].reverse();
+    expect(sortAlertsBySeverity(list).map(a => a.severity)).toEqual([
+      'CRITICAL',
+      'HIGH',
+      'MEDIUM',
+    ]);
   });
 
-  it('writes merged frames into the query cache and invalidates recommendations', () => {
-    const qc = new QueryClient();
-    qc.setQueryData(qk.overview(), overview);
-    qc.setQueryData(qk.recommendation('rec-1'), {id: 'rec-1'});
-    applyFrames(qc, [
-      frame('kpi', {...kpis[0], value: 9}),
-      frame('alert', alert('al-x', '2026-09-24T07:59:30.000Z')),
-      frame('recommendation', {...recSummaries[0], status: 'Approved'}),
+  it('builds markers inside the window', () => {
+    const from = Date.parse('2026-09-28T09:35:00Z');
+    expect(alertMarkers(makeAlerts(), from).map(m => m.title)).toEqual([
+      '供应商 S-017 产能下降 60%',
+      '物料 M-2231 低于安全库存',
     ]);
-    const ov = qc.getQueryData<Overview>(qk.overview())!;
-    expect(ov.kpis[0].value).toBe(9);
-    expect(ov.alerts[0].id).toBe('al-x');
-    expect(qc.getQueryState(qk.recommendation('rec-1'))!.isInvalidated).toBe(
-      true,
-    );
-    expect(useRealtimeStatus.getState().newAlertIds).toEqual(['al-x']);
+  });
+});
+
+describe('misc', () => {
+  it('reads the expected impact of a pending recommendation', () => {
+    const [rec] = makeRecommendations();
+    expect(recImpact(rec)).toBe(0.12);
+    expect(recImpact({...rec, expectedImpact: 0.3})).toBe(0.3);
+    expect(recImpact({...rec, candidates: [], ranking: []})).toBeNull();
+  });
+
+  it('detects an empty workspace', () => {
+    expect(isEmptyWorkspace(undefined, 0)).toBe(true);
+    expect(isEmptyWorkspace(makeOverview(), 11)).toBe(false);
+    expect(isEmptyWorkspace({kpis: [], alerts: []}, undefined)).toBe(true);
   });
 });

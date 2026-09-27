@@ -1,4 +1,5 @@
-# CI: typecheck, lint (gts + architecture guard), unit/integration tests,
+# CI: typecheck, lint (gts + architecture guard + SQL guard), OpenAPI
+# contract check, unit/integration tests,
 # web build with bundle budget, Worker dry-run bundles. Runs on every PR and
 # push to main; Deploy starts from a green run on main. Terraform checks live
 # in terraform.yml.
@@ -33,6 +34,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
+      - name: OpenAPI contract (apps/api-gateway/openapi.yaml)
+        run: node scripts/check_openapi.mjs apps/api-gateway/openapi.yaml
       - run: pnpm test
       - name: Build web
         run: pnpm build:web
@@ -41,6 +44,6 @@ jobs:
       - name: Worker bundles (dry-run)
         run: |
           node scripts/gen_wrangler.mjs --env local
-          for w in ontology-manager data-integration object-graph situation-awareness decision-engine identity-access api-gateway; do
+          for w in ontology-manager object-graph situation-awareness decision-engine data-integration identity-access api-gateway; do
             npx wrangler deploy --dry-run --outdir "dist/$w" -c "apps/$w/wrangler.jsonc"
           done

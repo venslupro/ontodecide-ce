@@ -1,50 +1,34 @@
 /**
- * @fileoverview Input validation for KPI and automation definitions (the
- * contract zod schemas plus strict filter validation).
+ * @fileoverview Input validation of situation use cases (REST bodies are
+ * parsed with the contract schemas; the room re-checks ontology references).
  */
 
-import {
-  filterExprSchema,
-  objectSetDefSchema,
-} from '@ontodecide/object-graph/contract';
-import {
-  type I18nText,
-  type ObjectSetDef,
-  parseOrThrow,
-} from '@ontodecide/shared-kernel';
-import {
-  type AutomationDef,
-  type KpiDef,
-  automationDefSchema,
-  kpiDefSchema,
-} from '../contract';
+import {AppError, type CallCtx, parseOrThrow} from '@ontodecide/shared-kernel';
+import {automationDefSchema} from '../contract/schemas';
+import type {AutomationDef} from '../contract/types';
+import type {OntologyPort} from './ports';
 
-function objectSet(def: unknown): ObjectSetDef {
-  return parseOrThrow(objectSetDefSchema, def) as ObjectSetDef;
+/** Parses an automation definition (VALIDATION_FAILED on mismatch). */
+export function parseAutomationDef(input: unknown): AutomationDef {
+  return parseOrThrow(automationDefSchema, input) as AutomationDef;
 }
 
-/** Validates a KPI definition. */
-export function validateKpi(input: unknown): KpiDef {
-  const def = parseOrThrow(kpiDefSchema, input) as KpiDef;
-  objectSet(def.objectSet);
-  return def;
-}
-
-/** Validates an automation definition. */
-export function validateAutomation(input: unknown): AutomationDef {
-  const def = parseOrThrow(automationDefSchema, input) as AutomationDef;
-  if (def.condition !== undefined)
-    parseOrThrow(filterExprSchema, def.condition);
-  if (def.trigger.kind !== 'threshold') objectSet(def.trigger.objectSet);
-  return def;
-}
-
-/** Stable comparison key of a display name (pack idempotency). */
-export function nameKey(name: I18nText): string {
-  if (typeof name === 'string') return name;
-  return JSON.stringify(
-    Object.entries(name)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-  );
+/** Rejects rules on object types the workspace ontology does not have. */
+export async function checkObjectType(
+  ontology: OntologyPort,
+  ctx: CallCtx,
+  objectType: string,
+): Promise<void> {
+  const schema = await ontology.getCompiledSchema(ctx);
+  if (!schema.objectTypes[objectType]) {
+    throw new AppError(
+      'VALIDATION_FAILED',
+      `Unknown object type ${objectType}`,
+      {
+        extras: {
+          errors: [{path: 'objectType', message: 'Unknown object type'}],
+        },
+      },
+    );
+  }
 }

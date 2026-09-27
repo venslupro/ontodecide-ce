@@ -4,52 +4,62 @@
  */
 
 import {WorkerEntrypoint} from 'cloudflare:workers';
-import type {ServiceModule} from '@ontodecide/shared-kernel';
-import type {OntologyRpc as Contract} from '@ontodecide/ontology/contract';
+import type {DefByKind, DefKind} from '@ontodecide/ontology/contract';
+import type {CallCtx} from '@ontodecide/shared-kernel';
 import type {Env} from './env';
 import {createService} from './service';
 
-let cache: {env: Env; svc: ServiceModule<Contract>} | undefined;
-const svc = (env: Env): ServiceModule<Contract> =>
-  cache?.env === env ? cache.svc : (cache = {env, svc: createService(env)}).svc;
+type Service = ReturnType<typeof createService>;
 
-/** Service-binding RPC entrypoint (`entrypoint: "OntologyRpc"`). */
-export class OntologyRpc extends WorkerEntrypoint<Env> implements Contract {
-  listSchemas(...a: Parameters<Contract['listSchemas']>) {
-    return svc(this.env).rpc.listSchemas(...a);
+let cached: {env: Env; svc: Service} | undefined;
+
+/** One service (and compiled-schema cache) per isolate and env. */
+function svc(env: Env): Service {
+  if (cached?.env !== env) cached = {env, svc: createService(env)};
+  return cached.svc;
+}
+
+/** Business RPC entry point (`entrypoint: "OntologyRpc"`). */
+export class OntologyRpc extends WorkerEntrypoint<Env> {
+  getCompiledSchema(ctx: CallCtx) {
+    return svc(this.env).rpc.getCompiledSchema(ctx);
   }
-  getSchema(...a: Parameters<Contract['getSchema']>) {
-    return svc(this.env).rpc.getSchema(...a);
+  getOntology(ctx: CallCtx) {
+    return svc(this.env).rpc.getOntology(ctx);
   }
-  getCompiledSchema(...a: Parameters<Contract['getCompiledSchema']>) {
-    return svc(this.env).rpc.getCompiledSchema(...a);
+  getTemplateSeeds(templateId: string) {
+    return svc(this.env).rpc.getTemplateSeeds(templateId);
   }
-  getActiveModel(...a: Parameters<Contract['getActiveModel']>) {
-    return svc(this.env).rpc.getActiveModel(...a);
+  listDefinitions<K extends DefKind>(ctx: CallCtx, kind: K) {
+    return svc(this.env).rpc.listDefinitions(ctx, kind);
   }
-  saveDraft(...a: Parameters<Contract['saveDraft']>) {
-    return svc(this.env).rpc.saveDraft(...a);
+  getDefinition<K extends DefKind>(ctx: CallCtx, kind: K, id: string) {
+    return svc(this.env).rpc.getDefinition(ctx, kind, id);
   }
-  diff(...a: Parameters<Contract['diff']>) {
-    return svc(this.env).rpc.diff(...a);
+  putDefinition<K extends DefKind>(
+    ctx: CallCtx,
+    kind: K,
+    id: string,
+    def: DefByKind[K],
+    ifMatch: number,
+  ) {
+    return svc(this.env).rpc.putDefinition(ctx, kind, id, def, ifMatch);
   }
-  publish(...a: Parameters<Contract['publish']>) {
-    return svc(this.env).rpc.publish(...a);
+  deleteDefinition(ctx: CallCtx, kind: DefKind, id: string, ifMatch: number) {
+    return svc(this.env).rpc.deleteDefinition(ctx, kind, id, ifMatch);
   }
-  listPacks(...a: Parameters<Contract['listPacks']>) {
-    return svc(this.env).rpc.listPacks(...a);
+}
+
+/** Lifecycle entry point (`entrypoint: "TenantLifecycle"`), bound only to identity-access. */
+export class TenantLifecycle extends WorkerEntrypoint<Env> {
+  exportTenant(tenantId: string, cursor: string | null) {
+    return svc(this.env).lifecycle.exportTenant(tenantId, cursor);
   }
-  getPack(...a: Parameters<Contract['getPack']>) {
-    return svc(this.env).rpc.getPack(...a);
+  purgeTenant(tenantId: string, maxRows: number) {
+    return svc(this.env).lifecycle.purgeTenant(tenantId, maxRows);
   }
-  importPack(...a: Parameters<Contract['importPack']>) {
-    return svc(this.env).rpc.importPack(...a);
-  }
-  exportPack(...a: Parameters<Contract['exportPack']>) {
-    return svc(this.env).rpc.exportPack(...a);
-  }
-  evaluateFunction(...a: Parameters<Contract['evaluateFunction']>) {
-    return svc(this.env).rpc.evaluateFunction(...a);
+  countTenant(tenantId: string) {
+    return svc(this.env).lifecycle.countTenant(tenantId);
   }
 }
 

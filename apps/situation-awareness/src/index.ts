@@ -1,119 +1,217 @@
 /**
- * @fileoverview Worker entry point of situation-awareness: the RPC
- * entrypoint, the Durable Object classes and the fetch / queue / cron
- * handlers.
+ * @fileoverview situation-awareness Worker entry point: SituationRpc (+
+ * fetch for the WebSocket upgrade), TenantLifecycle, the SituationRoom
+ * Durable Object and the domain-events consumer. The only file importing
+ * `cloudflare:workers`.
  */
 
-import {WorkerEntrypoint} from 'cloudflare:workers';
+import {DurableObject, WorkerEntrypoint} from 'cloudflare:workers';
 import type {
   CallCtx,
+  DomainEventMsg,
   QueueBatch,
-  ServiceModule,
-  UsageResource,
+  TenantLifecycleRpc,
 } from '@ontodecide/shared-kernel';
 import type {
-  AlertFilter,
-  AutomationDef,
-  CockpitLayout,
-  KpiDef,
-  RecommendationSummary,
-  SituationRpc as Contract,
-} from '@ontodecide/situation/contract';
+  SituationRoomApi,
+  SituationRoomCore,
+} from '@ontodecide/situation/application';
+import type {SituationRpc as Contract} from '@ontodecide/situation/contract';
+import type {SocketMeta} from '@ontodecide/situation/domain';
+import type {SqlStorageLike} from '@ontodecide/situation/infrastructure';
+import {
+  isWebSocketUpgrade,
+  problemResponse,
+} from '@ontodecide/situation/interface';
+import {DoRoomStorage, DoSocketHub, wrapSocket} from './durable_objects';
 import type {Env} from './env';
-import {createService} from './service';
+import {type SituationService, createRoomCore, createService} from './service';
 
-export {SituationRoom, UsageGuard} from './durable_objects';
-
-let cache: {env: Env; svc: ServiceModule<Contract>} | undefined;
-const svc = (env: Env): ServiceModule<Contract> =>
+let cache: {env: Env; svc: SituationService} | undefined;
+const svc = (env: Env): SituationService =>
   cache?.env === env ? cache.svc : (cache = {env, svc: createService(env)}).svc;
 
 /** Service-binding RPC entrypoint (`entrypoint: "SituationRpc"`). */
 export class SituationRpc extends WorkerEntrypoint<Env> implements Contract {
-  private get rpc(): Contract {
-    return svc(this.env).rpc;
-  }
-  /**
-   * WebSocket stream forwarded by api-gateway. The gateway's SITUATION
-   * binding targets this named entrypoint, so it must handle fetch too.
-   */
+  /** WebSocket upgrade forwarded by api-gateway. */
   override fetch(request: Request): Promise<Response> {
-    return svc(this.env).fetch!(request);
+    return svc(this.env).fetch(request);
   }
-  overview(ctx: CallCtx) {
-    return this.rpc.overview(ctx);
+  overview(...a: Parameters<Contract['overview']>) {
+    return svc(this.env).rpc.overview(...a);
   }
-  listKpis(ctx: CallCtx) {
-    return this.rpc.listKpis(ctx);
+  listAlerts(...a: Parameters<Contract['listAlerts']>) {
+    return svc(this.env).rpc.listAlerts(...a);
   }
-  saveKpi(ctx: CallCtx, def: KpiDef) {
-    return this.rpc.saveKpi(ctx, def);
+  acknowledgeAlert(...a: Parameters<Contract['acknowledgeAlert']>) {
+    return svc(this.env).rpc.acknowledgeAlert(...a);
   }
-  deleteKpi(ctx: CallCtx, id: string) {
-    return this.rpc.deleteKpi(ctx, id);
+  listAutomations(...a: Parameters<Contract['listAutomations']>) {
+    return svc(this.env).rpc.listAutomations(...a);
   }
-  kpiTrend(ctx: CallCtx, id: string, range: '24h' | '7d') {
-    return this.rpc.kpiTrend(ctx, id, range);
+  getAutomation(...a: Parameters<Contract['getAutomation']>) {
+    return svc(this.env).rpc.getAutomation(...a);
   }
-  refreshKpis(ctx: CallCtx) {
-    return this.rpc.refreshKpis(ctx);
+  createAutomation(...a: Parameters<Contract['createAutomation']>) {
+    return svc(this.env).rpc.createAutomation(...a);
+  }
+  putAutomation(...a: Parameters<Contract['putAutomation']>) {
+    return svc(this.env).rpc.putAutomation(...a);
+  }
+  deleteAutomation(...a: Parameters<Contract['deleteAutomation']>) {
+    return svc(this.env).rpc.deleteAutomation(...a);
+  }
+  issueStreamTicket(...a: Parameters<Contract['issueStreamTicket']>) {
+    return svc(this.env).rpc.issueStreamTicket(...a);
+  }
+  pushRecommendation(...a: Parameters<Contract['pushRecommendation']>) {
+    return svc(this.env).rpc.pushRecommendation(...a);
+  }
+}
+
+/** Lifecycle entrypoint, bound only to identity-access. */
+export class TenantLifecycle
+  extends WorkerEntrypoint<Env>
+  implements TenantLifecycleRpc
+{
+  exportTenant(tid: string, cursor: string | null) {
+    return svc(this.env).lifecycle.exportTenant(tid, cursor);
+  }
+  purgeTenant(tid: string, maxRows: number) {
+    return svc(this.env).lifecycle.purgeTenant(tid, maxRows);
+  }
+  countTenant(tid: string) {
+    return svc(this.env).lifecycle.countTenant(tid);
+  }
+  closeStreams(tid: string, code: number) {
+    return svc(this.env).lifecycle.closeStreams(tid, code);
+  }
+}
+
+/** One room per workspace (`idFromName(tid)`); logic in SituationRoomCore. */
+export class SituationRoom
+  extends DurableObject<Env>
+  implements SituationRoomApi
+{
+  private readonly core: SituationRoomCore;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.core = createRoomCore(env, {
+      sql: ctx.storage.sql as unknown as SqlStorageLike,
+      storage: new DoRoomStorage(ctx.storage),
+      sockets: new DoSocketHub(ctx),
+    });
+    // Protocol-level heartbeat answered without waking the object.
+    ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair('ping', 'pong'),
+    );
+  }
+
+  overview(...a: Parameters<SituationRoomApi['overview']>) {
+    return this.core.overview(...a);
+  }
+  listAlerts(...a: Parameters<SituationRoomApi['listAlerts']>) {
+    return this.core.listAlerts(...a);
+  }
+  acknowledgeAlert(...a: Parameters<SituationRoomApi['acknowledgeAlert']>) {
+    return this.core.acknowledgeAlert(...a);
   }
   listAutomations(ctx: CallCtx) {
-    return this.rpc.listAutomations(ctx);
+    return this.core.listAutomations(ctx);
   }
-  saveAutomation(ctx: CallCtx, def: AutomationDef) {
-    return this.rpc.saveAutomation(ctx, def);
+  getAutomation(...a: Parameters<SituationRoomApi['getAutomation']>) {
+    return this.core.getAutomation(...a);
   }
-  deleteAutomation(ctx: CallCtx, id: string) {
-    return this.rpc.deleteAutomation(ctx, id);
+  createAutomation(...a: Parameters<SituationRoomApi['createAutomation']>) {
+    return this.core.createAutomation(...a);
   }
-  dryRunAutomation(ctx: CallCtx, def: AutomationDef) {
-    return this.rpc.dryRunAutomation(ctx, def);
+  putAutomation(...a: Parameters<SituationRoomApi['putAutomation']>) {
+    return this.core.putAutomation(...a);
   }
-  listAlerts(ctx: CallCtx, filter?: AlertFilter) {
-    return this.rpc.listAlerts(ctx, filter);
+  deleteAutomation(...a: Parameters<SituationRoomApi['deleteAutomation']>) {
+    return this.core.deleteAutomation(...a);
   }
-  updateAlert(ctx: CallCtx, id: string, patch: {status: 'ACKED' | 'CLOSED'}) {
-    return this.rpc.updateAlert(ctx, id, patch);
+  issueStreamTicket(ctx: CallCtx) {
+    return this.core.issueStreamTicket(ctx);
   }
-  installPackContent(
-    ctx: CallCtx,
-    content: {automations?: unknown[]; kpis?: unknown[]},
-  ) {
-    return this.rpc.installPackContent(ctx, content);
+  pushRecommendation(...a: Parameters<SituationRoomApi['pushRecommendation']>) {
+    return this.core.pushRecommendation(...a);
   }
-  getLayout(ctx: CallCtx) {
-    return this.rpc.getLayout(ctx);
+  applyEvents(tid: string, events: DomainEventMsg[]) {
+    return this.core.applyEvents(tid, events);
   }
-  saveLayout(ctx: CallCtx, layout: CockpitLayout) {
-    return this.rpc.saveLayout(ctx, layout);
+  exportTenant(tid: string) {
+    return this.core.exportTenant(tid);
   }
-  pushRecommendation(ctx: CallCtx, dto: RecommendationSummary) {
-    return this.rpc.pushRecommendation(ctx, dto);
+  purgeTenant(tid: string) {
+    return this.core.purgeTenant(tid);
   }
-  recordUsage(batch: {resource: UsageResource; n: number}[]) {
-    return this.rpc.recordUsage(batch);
+  countTenant(tid: string) {
+    return this.core.countTenant(tid);
   }
-  getUsage(ctx: CallCtx) {
-    return this.rpc.getUsage(ctx);
+  closeStreams(tid: string, code: number) {
+    return this.core.closeStreams(tid, code);
   }
-  evaluateScheduled(now: string) {
-    return this.rpc.evaluateScheduled(now);
+
+  /** Redeems the ticket and accepts a hibernatable WebSocket. */
+  override async fetch(request: Request): Promise<Response> {
+    if (!isWebSocketUpgrade(request)) {
+      return problemResponse('VALIDATION_FAILED', 'WebSocket upgrade required');
+    }
+    const ticket = new URL(request.url).searchParams.get('ticket');
+    const redeemed = await this.core.redeemTicket(ticket);
+    if (!redeemed) {
+      return problemResponse('UNAUTHENTICATED', 'Invalid stream ticket');
+    }
+    const [client, server] = Object.values(new WebSocketPair());
+    const meta: SocketMeta = {
+      sub: redeemed.sub,
+      actingAs: redeemed.actingAs,
+      n: this.core.nextSocketNumber(),
+    };
+    this.ctx.acceptWebSocket(server, [redeemed.sub]);
+    server.serializeAttachment(meta);
+    await this.core.connected(wrapSocket(server));
+    return new Response(null, {status: 101, webSocket: client});
   }
-  listDeadLetters(ctx: CallCtx, queue?: string) {
-    return this.rpc.listDeadLetters(ctx, queue);
+
+  override async webSocketMessage(
+    ws: WebSocket,
+    message: string | ArrayBuffer,
+  ): Promise<void> {
+    if (typeof message === 'string') {
+      await this.core.message(wrapSocket(ws), message);
+    }
   }
-  replayDeadLetters(ctx: CallCtx, queue: string, ids?: string[]) {
-    return this.rpc.replayDeadLetters(ctx, queue, ids);
+
+  override async webSocketClose(
+    ws: WebSocket,
+    code: number,
+    reason: string,
+  ): Promise<void> {
+    try {
+      ws.close(code, reason);
+    } catch {
+      // Already closed.
+    }
+  }
+
+  override async webSocketError(ws: WebSocket): Promise<void> {
+    try {
+      ws.close(1011, 'error');
+    } catch {
+      // Already closed.
+    }
+  }
+
+  override async alarm(): Promise<void> {
+    await this.core.alarm();
   }
 }
 
 export default {
-  fetch: (request, env) => svc(env).fetch!(request),
+  fetch: () => new Response('Not found', {status: 404}),
   queue: (batch, env) =>
-    svc(env).queue!(batch as unknown as QueueBatch<unknown>),
-  scheduled: (event, env, ctx) =>
-    ctx.waitUntil(
-      svc(env).scheduled!(event.cron, new Date(event.scheduledTime)),
-    ),
+    svc(env).queue(batch as unknown as QueueBatch<unknown>),
 } satisfies ExportedHandler<Env>;

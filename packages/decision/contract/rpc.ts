@@ -1,66 +1,55 @@
 /**
- * @fileoverview RPC contract exposed by decision-engine (DecisionRpc).
+ * @fileoverview RPC contract of decision-engine (DecisionRpc entry point).
+ * Depends on object-graph, situation-awareness and ontology-manager; uses
+ * Workers AI directly (no AI Gateway, no external LLMs, no queue, no cron).
  */
 
-import type {CallCtx, Rid} from '@ontodecide/shared-kernel';
 import type {
-  CandidateAction,
-  MappingSuggestion,
-  Perturbation,
+  CallCtx,
+  PageRequest,
+  PageResult,
+  QuotaItem,
+} from '@ontodecide/shared-kernel';
+import type {
+  DecisionInput,
+  GenerateInput,
   RecStatus,
   RecommendationDto,
   ScenarioDto,
   ScenarioInput,
-  ScenarioResult,
-  TargetProp,
 } from './types';
 
-/** Decision engine RPC surface. */
+/** decision-engine RPC surface. */
 export interface DecisionRpc {
-  listScenarios(ctx: CallCtx): Promise<ScenarioDto[]>;
-  createScenario(ctx: CallCtx, input: ScenarioInput): Promise<ScenarioDto>;
+  /** Runs and stores a scenario (baseline / scenario / scenario + actions). */
+  runScenario(ctx: CallCtx, input: ScenarioInput): Promise<ScenarioDto>;
   getScenario(ctx: CallCtx, id: string): Promise<ScenarioDto>;
-  /** Runs synchronously; persists the result when `scenarioId` is given. */
-  runScenario(
-    ctx: CallCtx,
-    input: ScenarioInput & {scenarioId?: string},
-  ): Promise<ScenarioResult>;
-  /** Candidate actions for the objects impacted by the perturbations. */
-  listCandidateActions(
-    ctx: CallCtx,
-    perturbations: Perturbation[],
-  ): Promise<CandidateAction[]>;
-  /** Queues generation (decision-jobs); returns the recommendation id as jobId. */
-  generateRecommendation(
-    ctx: CallCtx,
-    req: {alertId?: string; scenarioId?: string; focus: Rid; locale?: string},
-  ): Promise<{jobId: string}>;
+  /** Proposed items past expires_at read (and persist) as Expired. */
   listRecommendations(
     ctx: CallCtx,
-    filter?: {status?: RecStatus; focus?: Rid; limit?: number},
-  ): Promise<RecommendationDto[]>;
+    q: {status?: RecStatus},
+    page: PageRequest,
+  ): Promise<PageResult<RecommendationDto>>;
   getRecommendation(ctx: CallCtx, id: string): Promise<RecommendationDto>;
-  /** Approves and executes via object-graph applyAction with a signed voucher. */
-  approve(ctx: CallCtx, id: string): Promise<RecommendationDto>;
-  reject(ctx: CallCtx, id: string, reason: string): Promise<RecommendationDto>;
-  feedback(
+  /**
+   * Generates synchronously. rankedBy = rules when the user's 3 daily AI
+   * rankings or the Neurons budget are used up, or both models fail.
+   */
+  generateRecommendation(
+    ctx: CallCtx,
+    input: GenerateInput,
+  ): Promise<RecommendationDto>;
+  /**
+   * Confirms (then executes ranking[0] as svc:decision-engine) or rejects.
+   * The same idempotency key returns the stored result; a state that does
+   * not allow the decision is CONFLICT.
+   */
+  decide(
     ctx: CallCtx,
     id: string,
-    input: {rating: number; comment?: string},
+    input: DecisionInput,
+    idempotencyKey: string,
   ): Promise<RecommendationDto>;
-  suggestMapping(
-    ctx: CallCtx,
-    sample: {
-      fields: string[];
-      rows: unknown[][];
-      targetType: string;
-      targetProps: TargetProp[];
-    },
-  ): Promise<MappingSuggestion>;
-  /** Remaining LLM calls today for the caller. */
-  llmQuota(
-    ctx: CallCtx,
-  ): Promise<{userRemaining: number; tenantRemaining: number}>;
-  /** Daily: evaluate executed recommendations ≥ 24h old; expire stale ones. */
-  evaluateOutcomes(now: string): Promise<{evaluated: number; expired: number}>;
+  /** aiRecsToday of the caller. */
+  usage(ctx: CallCtx): Promise<QuotaItem[]>;
 }

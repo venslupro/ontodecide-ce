@@ -1,141 +1,140 @@
 /**
- * @fileoverview Pure, environment-agnostic file parsing used by the parse
- * Web Worker (and on the main thread as a fallback when `Worker` is not
- * available, e.g. in jsdom). CSV is streamed with PapaParse (`header:
- * true`), XLSX is read with SheetJS (lazily imported) and JSON must be an
- * array of objects. Parsed rows are emitted as `batch` messages of ≤ 500
- * rows; the boundary values (20 MB / 10,000 rows) are enforced here.
+ * @fileoverview Pure, environment-agnostic file parsing for the import
+ * wizard (前端详细设计 算法描述 文件导入). Runs inside the parse Web Worker
+ * and on the main thread as a fallback (jsdom). The raw file never leaves
+ * the browser: only the parsed rows are handed to the wizard.
+ *
+ * - Size ≤ 5 MB (`CE_LIMITS.maxFileBytes`), checked before reading.
+ * - CSV via PapaParse (header row, BOM stripped, empty rows skipped).
+ * - XLSX via SheetJS (dynamically imported), first sheet, cell values only:
+ *   no formulas evaluated, no HTML, no styles, no VBA macros.
+ * - JSON: an array of objects, or `{items|data|records|rows: [...]}`.
+ *
+ * Parsing stops at {@link PARSE_LIMITS}.maxRows rows (a memory safety bound
+ * above the 2,000 import rows per day); the upload plan marks rows beyond
+ * the user's remaining quota as over-limit.
  */
 
-import {INGEST_LIMITS} from '@ontodecide/integration/contract';
+import {CE_LIMITS} from '@ontodecide/shared-kernel';
 import Papa from 'papaparse';
 
 /** Supported file formats. */
 export type FileFormat = 'csv' | 'xlsx' | 'json';
 
-/** A parsed source record (CSV/XLSX values are strings). */
+/** Every supported format, in display order. */
+export const FILE_FORMATS: readonly FileFormat[] = ['csv', 'xlsx', 'json'];
+
+/** A parsed source row (column → cell value). */
 export type SourceRow = Record<string, unknown>;
 
-/** Rows per emitted batch (= rows per upload batch). */
-export const PARSE_BATCH_ROWS = INGEST_LIMITS.batchRecordsMax;
-
-/** Rows included in the `meta` message as a sample. */
+/** Rows kept as a sample for the mapping step and the AI draft. */
 export const SAMPLE_ROWS = 20;
-
-/** Parse error codes (localized by the UI). */
-export type ParseErrorCode =
-  | 'FILE_TOO_LARGE'
-  | 'TOO_MANY_ROWS'
-  | 'UNSUPPORTED_FORMAT'
-  | 'EMPTY_FILE'
-  | 'INVALID_JSON'
-  | 'PARSE_FAILED';
-
-/** Messages posted by the parser (worker → main thread). */
-export type ParseMessage =
-  | {type: 'meta'; fields: string[]; sampleRows: SourceRow[]}
-  | {type: 'batch'; seq: number; rows: SourceRow[]}
-  | {type: 'done'; rows: number; ms: number}
-  | {type: 'error'; code: ParseErrorCode; detail?: string};
-
-/** Request sent to the parser (main thread → worker). */
-export interface ParseRequest {
-  name: string;
-  size: number;
-  /** The file itself, or its text (tests / pre-read input). */
-  data: Blob | string;
-  /** Overrides for the limits (tests). */
-  limits?: Partial<ParseLimits>;
-}
 
 /** Parser limits. */
 export interface ParseLimits {
-  bytesMax: number;
-  rowsMax: number;
-  batchRows: number;
+  /** Maximum file size in bytes. */
+  maxBytes: number;
+  /** Rows kept in memory; further rows are dropped (`truncated`). */
+  maxRows: number;
 }
 
-/** Default limits from the ingestion boundary values. */
-export const DEFAULT_PARSE_LIMITS: ParseLimits = {
-  bytesMax: INGEST_LIMITS.fileBytesMax,
-  rowsMax: INGEST_LIMITS.fileRowsMax,
-  batchRows: PARSE_BATCH_ROWS,
+/** Default limits. */
+export const PARSE_LIMITS: ParseLimits = {
+  maxBytes: CE_LIMITS.maxFileBytes,
+  maxRows: 10_000,
 };
+
+/** Parse error codes (localized by the UI as `imports:parse.errors.<code>`). */
+export type ParseErrorCode =
+  | 'FILE_TOO_LARGE'
+  | 'UNSUPPORTED_FORMAT'
+  | 'EMPTY_FILE'
+  | 'INVALID_JSON'
+  | 'NO_COLUMNS'
+  | 'PARSE_FAILED';
+
+/** A parse failure with a localizable code. */
+export class ParseError extends Error {
+  constructor(
+    readonly code: ParseErrorCode,
+    readonly detail?: string,
+  ) {
+    super(detail ? `${code}: ${detail}` : code);
+    this.name = 'ParseError';
+  }
+}
+
+/** Parsed table. */
+export interface ParsedTable {
+  format: FileFormat;
+  /** Column names in file order. */
+  fields: string[];
+  /** Every row kept (≤ `maxRows`). */
+  rows: SourceRow[];
+  /** First {@link SAMPLE_ROWS} rows. */
+  sampleRows: SourceRow[];
+  /** True when rows beyond `maxRows` were dropped. */
+  truncated: boolean;
+}
+
+/** Input of {@link parseFileData}. */
+export interface ParseInput {
+  name: string;
+  size: number;
+  type?: string;
+  /** File content: a Blob, its bytes or its text. */
+  data: Blob | ArrayBuffer | Uint8Array | string;
+}
+
+/** Message sent to the parse worker. */
+export interface ParseRequest {
+  name: string;
+  size: number;
+  type: string;
+  data: Blob;
+  limits?: Partial<ParseLimits>;
+}
+
+/** Message posted back by the parse worker. */
+export type ParseResponse =
+  | {ok: true; table: ParsedTable}
+  | {ok: false; code: ParseErrorCode; detail?: string};
 
 /** Detects the format from the file name (or MIME type). */
 export function detectFormat(name: string, mime = ''): FileFormat | null {
   const ext = name.toLowerCase().split('.').pop() ?? '';
-  if (ext === 'csv' || ext === 'txt' || mime === 'text/csv') return 'csv';
-  if (ext === 'xlsx' || ext === 'xls' || mime.includes('spreadsheetml'))
-    return 'xlsx';
+  if (ext === 'csv' || mime === 'text/csv') return 'csv';
+  if (ext === 'xlsx' || mime.includes('spreadsheetml')) return 'xlsx';
   if (ext === 'json' || mime === 'application/json') return 'json';
   return null;
 }
 
-/**
- * Collects rows, emitting `meta` once (after the sample is complete or at
- * the end) and `batch` messages every `batchRows` rows. Returns false from
- * {@link RowSink.push} when the row limit is exceeded.
- */
-export class RowSink {
-  private fields: string[] = [];
-  private sample: SourceRow[] = [];
-  private pending: SourceRow[] = [];
-  private metaSent = false;
-  private seq = 0;
-  /** Total rows accepted. */
-  count = 0;
-  /** Set when the row limit was exceeded. */
-  overflow = false;
-
-  constructor(
-    private readonly post: (m: ParseMessage) => void,
-    private readonly limits: ParseLimits,
-  ) {}
-
-  /** Sets the header fields (once). */
-  setFields(fields: string[]): void {
-    if (this.fields.length === 0) this.fields = fields;
+/** Cheap checks before reading the file: format, size, emptiness. */
+export function precheckFile(
+  file: {name: string; size: number; type?: string},
+  limits: Partial<ParseLimits> = {},
+): ParseError | null {
+  const max = limits.maxBytes ?? PARSE_LIMITS.maxBytes;
+  if (!detectFormat(file.name, file.type ?? '')) {
+    return new ParseError('UNSUPPORTED_FORMAT', file.name);
   }
+  if (file.size > max) return new ParseError('FILE_TOO_LARGE', String(max));
+  if (file.size === 0) return new ParseError('EMPTY_FILE');
+  return null;
+}
 
-  /** Adds one row; false when the row limit is exceeded. */
-  push(row: SourceRow): boolean {
-    if (this.count >= this.limits.rowsMax) {
-      this.overflow = true;
-      return false;
-    }
-    this.count++;
-    if (this.sample.length < SAMPLE_ROWS) this.sample.push(row);
-    if (!this.metaSent && this.sample.length >= SAMPLE_ROWS) this.sendMeta();
-    this.pending.push(row);
-    if (this.pending.length >= this.limits.batchRows) this.flush();
-    return true;
-  }
+function cleanHeader(h: unknown): string {
+  return String(h ?? '')
+    .replace(/^\uFEFF/, '')
+    .trim();
+}
 
-  private sendMeta(): void {
-    if (this.metaSent) return;
-    this.metaSent = true;
-    if (this.fields.length === 0) this.fields = unionKeys(this.sample);
-    this.post({type: 'meta', fields: this.fields, sampleRows: this.sample});
-  }
+function isBlankCell(v: unknown): boolean {
+  return v === undefined || v === null || String(v).trim() === '';
+}
 
-  private flush(): void {
-    if (this.pending.length === 0) return;
-    this.sendMeta();
-    this.post({type: 'batch', seq: this.seq++, rows: this.pending});
-    this.pending = [];
-  }
-
-  /** Emits the remaining rows and the `done` message. */
-  finish(startedAt: number, now: number): void {
-    this.sendMeta();
-    this.flush();
-    this.post({
-      type: 'done',
-      rows: this.count,
-      ms: Math.max(0, Math.round(now - startedAt)),
-    });
-  }
+function isBlankRow(row: SourceRow): boolean {
+  return Object.values(row).every(isBlankCell);
 }
 
 /** Ordered union of the keys of the rows. */
@@ -145,218 +144,246 @@ export function unionKeys(rows: readonly SourceRow[]): string[] {
   return [...seen];
 }
 
-function cleanHeader(h: string): string {
-  return h.replace(/^\uFEFF/, '').trim();
+/** Makes header names unique (`a`, `a_2`, …) and drops empty ones. */
+export function uniqueHeaders(raw: readonly unknown[]): (string | null)[] {
+  const used = new Set<string>();
+  return raw.map(h => {
+    const base = cleanHeader(h);
+    if (!base) return null;
+    let name = base;
+    for (let i = 2; used.has(name); i++) name = `${base}_${i}`;
+    used.add(name);
+    return name;
+  });
 }
 
-/** Streams CSV text or a CSV Blob into the sink. Resolves when finished. */
-export function parseCsv(
-  data: Blob | string,
-  sink: RowSink,
-): Promise<{error?: string}> {
-  return new Promise(resolve => {
-    let failure: string | undefined;
-    const step = (
-      res: Papa.ParseStepResult<Record<string, string>>,
-      parser: Papa.Parser,
-    ) => {
-      if (res.meta.fields) sink.setFields(res.meta.fields);
-      const row = res.data;
-      // Skip rows without any value (PapaParse keeps whitespace-only rows).
-      if (
-        !row ||
-        Object.values(row).every(
-          v => v === undefined || v === null || String(v).trim() === '',
-        )
-      )
-        return;
-      // Drop PapaParse's overflow bucket for rows with extra columns.
-      const {__parsed_extra: _extra, ...clean} = row as Record<
-        string,
-        string
-      > & {__parsed_extra?: unknown};
-      if (!sink.push(clean)) parser.abort();
-    };
-    const common = {
-      header: true as const,
-      skipEmptyLines: 'greedy' as const,
-      transformHeader: cleanHeader,
-      step,
-    };
-    if (typeof data === 'string') {
-      Papa.parse<Record<string, string>>(data.replace(/^\uFEFF/, ''), {
-        ...common,
-        complete: () => resolve({error: failure}),
-      });
-    } else {
-      Papa.parse<Record<string, string>>(data as File, {
-        ...common,
-        complete: () => resolve({error: failure}),
-        error: (e: Error) => {
-          failure = e.message;
-          resolve({error: failure});
-        },
-      });
+function finish(
+  format: FileFormat,
+  fields: string[],
+  rows: SourceRow[],
+  truncated: boolean,
+): ParsedTable {
+  if (fields.length === 0) throw new ParseError('NO_COLUMNS');
+  if (rows.length === 0) throw new ParseError('EMPTY_FILE');
+  return {
+    format,
+    fields,
+    rows,
+    sampleRows: rows.slice(0, SAMPLE_ROWS),
+    truncated,
+  };
+}
+
+/** Parses CSV text (header row; BOM stripped; empty rows skipped). */
+export function parseCsvText(
+  text: string,
+  limits: Partial<ParseLimits> = {},
+): ParsedTable {
+  const maxRows = limits.maxRows ?? PARSE_LIMITS.maxRows;
+  const res = Papa.parse<string[]>(text.replace(/^\uFEFF/, ''), {
+    header: false,
+    skipEmptyLines: 'greedy',
+    dynamicTyping: false,
+  });
+  const fatal = res.errors.find(
+    e => e.type === 'Quotes' && res.data.length === 0,
+  );
+  if (fatal) throw new ParseError('PARSE_FAILED', fatal.message);
+  const [head, ...body] = res.data;
+  if (!head) throw new ParseError('EMPTY_FILE');
+  const headers = uniqueHeaders(head);
+  const fields = headers.filter((h): h is string => h !== null);
+  const rows: SourceRow[] = [];
+  let truncated = false;
+  for (const cells of body) {
+    const row: SourceRow = {};
+    headers.forEach((h, i) => {
+      if (h !== null) row[h] = cells[i] ?? '';
+    });
+    if (isBlankRow(row)) continue;
+    if (rows.length >= maxRows) {
+      truncated = true;
+      break;
     }
-  });
+    rows.push(row);
+  }
+  return finish('csv', fields, rows, truncated);
 }
 
-/** Extracts the records array from parsed JSON (array, or {items|data|records}). */
+/** Extracts the records array of parsed JSON, or null when not tabular. */
 export function jsonRecords(value: unknown): SourceRow[] | null {
-  const arr = Array.isArray(value)
-    ? value
-    : value && typeof value === 'object'
-      ? (['items', 'data', 'records', 'rows'] as const)
-          .map(k => (value as Record<string, unknown>)[k])
-          .find(Array.isArray)
-      : undefined;
+  let arr: unknown;
+  if (Array.isArray(value)) {
+    arr = value;
+  } else if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    arr = ['items', 'data', 'records', 'rows']
+      .map(k => obj[k])
+      .find(Array.isArray);
+  }
   if (!Array.isArray(arr)) return null;
-  if (!arr.every(r => r !== null && typeof r === 'object' && !Array.isArray(r)))
-    return null;
-  return arr as SourceRow[];
+  const ok = arr.every(
+    r => r !== null && typeof r === 'object' && !Array.isArray(r),
+  );
+  return ok ? (arr as SourceRow[]) : null;
 }
 
-/** Reads a Blob as UTF-8 text (FileReader fallback for older runtimes / jsdom). */
-export function blobText(blob: Blob): Promise<string> {
-  if (typeof blob.text === 'function') return blob.text();
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result ?? ''));
-    r.onerror = () => reject(r.error ?? new Error('read failed'));
-    r.readAsText(blob);
+/** Parses JSON text (array of objects or a wrapper object). */
+export function parseJsonText(
+  text: string,
+  limits: Partial<ParseLimits> = {},
+): ParsedTable {
+  const maxRows = limits.maxRows ?? PARSE_LIMITS.maxRows;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.replace(/^\uFEFF/, ''));
+  } catch (e) {
+    throw new ParseError(
+      'INVALID_JSON',
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+  const all = jsonRecords(parsed);
+  if (!all) throw new ParseError('INVALID_JSON');
+  const kept = all.filter(r => !isBlankRow(r));
+  const rows = kept.slice(0, maxRows);
+  return finish('json', unionKeys(rows), rows, kept.length > rows.length);
+}
+
+function cellValue(v: unknown): unknown {
+  if (v instanceof Date) {
+    return Number.isNaN(v.getTime()) ? '' : v.toISOString();
+  }
+  return v ?? '';
+}
+
+/**
+ * Parses the first sheet of an XLSX workbook. Only stored cell values are
+ * read: formulas are not evaluated, HTML / styles / VBA are ignored.
+ */
+export async function parseXlsxBuffer(
+  buf: ArrayBuffer | Uint8Array,
+  limits: Partial<ParseLimits> = {},
+): Promise<ParsedTable> {
+  const maxRows = limits.maxRows ?? PARSE_LIMITS.maxRows;
+  const XLSX = await import('xlsx');
+  let wb: import('xlsx').WorkBook;
+  try {
+    wb = XLSX.read(buf instanceof Uint8Array ? buf : new Uint8Array(buf), {
+      type: 'array',
+      cellFormula: false,
+      cellHTML: false,
+      cellStyles: false,
+      bookVBA: false,
+      cellDates: true,
+    });
+  } catch (e) {
+    throw new ParseError(
+      'PARSE_FAILED',
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+  const first = wb.SheetNames[0];
+  const sheet = first ? wb.Sheets[first] : undefined;
+  if (!sheet || !sheet['!ref']) throw new ParseError('EMPTY_FILE');
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    raw: true,
+    defval: '',
+    blankrows: false,
   });
+  const headIndex = matrix.findIndex(r => !r.every(isBlankCell));
+  if (headIndex < 0) throw new ParseError('EMPTY_FILE');
+  const headers = uniqueHeaders(matrix[headIndex]);
+  const fields = headers.filter((h): h is string => h !== null);
+  const rows: SourceRow[] = [];
+  let truncated = false;
+  for (const cells of matrix.slice(headIndex + 1)) {
+    const row: SourceRow = {};
+    headers.forEach((h, i) => {
+      if (h !== null) row[h] = cellValue(cells[i]);
+    });
+    if (isBlankRow(row)) continue;
+    if (rows.length >= maxRows) {
+      truncated = true;
+      break;
+    }
+    rows.push(row);
+  }
+  return finish('xlsx', fields, rows, truncated);
 }
 
-/** Reads a Blob as an ArrayBuffer (FileReader fallback). */
-export function blobBuffer(blob: Blob): Promise<ArrayBuffer> {
-  if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
+function isBlob(v: unknown): v is Blob {
+  return typeof Blob !== 'undefined' && v instanceof Blob;
+}
+
+/** Reads a Blob as bytes (FileReader fallback for runtimes such as jsdom). */
+export function blobBytes(blob: Blob): Promise<Uint8Array> {
+  if (typeof blob.arrayBuffer === 'function') {
+    return blob.arrayBuffer().then(b => new Uint8Array(b));
+  }
   return new Promise((resolve, reject) => {
     const r = new FileReader();
-    r.onload = () => resolve(r.result as ArrayBuffer);
+    r.onload = () => resolve(new Uint8Array(r.result as ArrayBuffer));
     r.onerror = () => reject(r.error ?? new Error('read failed'));
     r.readAsArrayBuffer(blob);
   });
 }
 
-async function readText(data: Blob | string): Promise<string> {
-  return typeof data === 'string' ? data : blobText(data);
+async function asBytes(data: ParseInput['data']): Promise<Uint8Array> {
+  if (typeof data === 'string') return new TextEncoder().encode(data);
+  if (isBlob(data)) return blobBytes(data);
+  return data instanceof Uint8Array ? data : new Uint8Array(data);
+}
+
+async function asText(data: ParseInput['data']): Promise<string> {
+  if (typeof data === 'string') return data;
+  return new TextDecoder('utf-8').decode(await asBytes(data));
 }
 
 /**
- * Parses a file and posts `meta` → `batch`* → `done`, or `error` (possibly after some batches, which the receiver must discard).
- * `now` is injectable for deterministic tests.
+ * Parses one file. The size is checked before the content is read.
+ * Throws {@link ParseError}.
  */
-export async function parseFile(
-  req: ParseRequest,
-  post: (m: ParseMessage) => void,
-  now: () => number = () => (globalThis.performance ?? Date).now(),
-): Promise<void> {
-  const limits = {...DEFAULT_PARSE_LIMITS, ...req.limits};
-  const startedAt = now();
-  const mime = typeof req.data === 'string' ? '' : req.data.type;
-  const format = detectFormat(req.name, mime);
-  if (!format) {
-    post({type: 'error', code: 'UNSUPPORTED_FORMAT', detail: req.name});
-    return;
-  }
-  if (req.size > limits.bytesMax) {
-    post({type: 'error', code: 'FILE_TOO_LARGE', detail: String(req.size)});
-    return;
-  }
-  if (req.size === 0) {
-    post({type: 'error', code: 'EMPTY_FILE'});
-    return;
-  }
-  // Messages stream as rows are parsed; an `error` after some batches
-  // (row limit exceeded mid-file) tells the receiver to discard them.
-  const sink = new RowSink(post, limits);
+export async function parseFileData(
+  input: ParseInput,
+  limits: Partial<ParseLimits> = {},
+): Promise<ParsedTable> {
+  const pre = precheckFile(input, limits);
+  if (pre) throw pre;
+  const format = detectFormat(input.name, input.type ?? '')!;
   try {
-    if (format === 'csv') {
-      const {error} = await parseCsv(req.data, sink);
-      if (error) {
-        post({type: 'error', code: 'PARSE_FAILED', detail: error});
-        return;
-      }
-    } else if (format === 'json') {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(await readText(req.data));
-      } catch (e) {
-        post({
-          type: 'error',
-          code: 'INVALID_JSON',
-          detail: e instanceof Error ? e.message : String(e),
-        });
-        return;
-      }
-      const rows = jsonRecords(parsed);
-      if (!rows) {
-        post({type: 'error', code: 'INVALID_JSON'});
-        return;
-      }
-      if (rows.length > limits.rowsMax) {
-        post({
-          type: 'error',
-          code: 'TOO_MANY_ROWS',
-          detail: String(rows.length),
-        });
-        return;
-      }
-      sink.setFields(unionKeys(rows.slice(0, 1000)));
-      for (const r of rows) sink.push(r);
-    } else {
-      const XLSX = await import('xlsx');
-      const buf =
-        typeof req.data === 'string'
-          ? new TextEncoder().encode(req.data)
-          : await blobBuffer(req.data);
-      const wb = XLSX.read(buf, {type: 'array', cellDates: true});
-      const sheet = wb.SheetNames[0] ? wb.Sheets[wb.SheetNames[0]] : undefined;
-      if (!sheet || !sheet['!ref']) {
-        post({type: 'error', code: 'EMPTY_FILE'});
-        return;
-      }
-      const range = XLSX.utils.decode_range(sheet['!ref']);
-      const dataRows = range.e.r - range.s.r; // minus the header row
-      if (dataRows > limits.rowsMax) {
-        post({type: 'error', code: 'TOO_MANY_ROWS', detail: String(dataRows)});
-        return;
-      }
-      const header = (
-        XLSX.utils.sheet_to_json<unknown[]>(sheet, {header: 1, range: 0})[0] ??
-        []
-      )
-        .map(h => cleanHeader(String(h ?? '')))
-        .filter(h => h !== '');
-      sink.setFields(header);
-      const rows = XLSX.utils.sheet_to_json<SourceRow>(sheet, {
-        defval: '',
-        raw: false,
-      });
-      for (const r of rows) {
-        if (Object.values(r).every(v => String(v).trim() === '')) continue;
-        if (!sink.push(r)) break;
-      }
+    if (format === 'xlsx') {
+      return await parseXlsxBuffer(await asBytes(input.data), limits);
     }
+    const text = await asText(input.data);
+    return format === 'csv'
+      ? parseCsvText(text, limits)
+      : parseJsonText(text, limits);
   } catch (e) {
-    post({
-      type: 'error',
-      code: 'PARSE_FAILED',
-      detail: e instanceof Error ? e.message : String(e),
-    });
-    return;
+    if (e instanceof ParseError) throw e;
+    throw new ParseError(
+      'PARSE_FAILED',
+      e instanceof Error ? e.message : String(e),
+    );
   }
-  if (sink.overflow) {
-    post({
-      type: 'error',
-      code: 'TOO_MANY_ROWS',
-      detail: String(limits.rowsMax),
-    });
-    return;
+}
+
+/** Handles one worker request (shared by the worker and its tests). */
+export async function handleParseRequest(
+  req: ParseRequest,
+): Promise<ParseResponse> {
+  try {
+    const table = await parseFileData(
+      {name: req.name, size: req.size, type: req.type, data: req.data},
+      req.limits,
+    );
+    return {ok: true, table};
+  } catch (e) {
+    const err =
+      e instanceof ParseError
+        ? e
+        : new ParseError('PARSE_FAILED', e instanceof Error ? e.message : '');
+    return {ok: false, code: err.code, detail: err.detail};
   }
-  if (sink.count === 0) {
-    post({type: 'error', code: 'EMPTY_FILE'});
-    return;
-  }
-  sink.finish(startedAt, now());
 }

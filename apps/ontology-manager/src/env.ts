@@ -1,10 +1,10 @@
 /**
- * @fileoverview Bindings of the ontology-manager Worker.
+ * @fileoverview Bindings of the ontology-manager Worker (ARCHITECTURE 2.3).
  */
 
 /** ontology-manager environment. */
 export interface Env {
   ONTOLOGY_DB: D1Database;
-  SCHEMA_CACHE: KVNamespace;
   ENVIRONMENT?: string;
+  APP_VERSION?: string;
 }

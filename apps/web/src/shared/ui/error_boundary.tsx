@@ -1,10 +1,10 @@
 /**
  * @fileoverview React error boundary: shows an error id + reload and
- * reports the error through telemetry.
+ * logs it locally (no telemetry in CE).
  */
 
 import {Component, type ErrorInfo, type ReactNode} from 'react';
-import {reportError} from '../lib/telemetry';
+import {reportError} from '../lib/error_report';
 import {ErrorView} from './empty_state';
 
 interface Props {

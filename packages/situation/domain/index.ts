@@ -1,10 +1,9 @@
 /**
- * @fileoverview Situation domain: automation evaluation, alert policy, KPI
- * series helpers, usage status and the default cockpit layout.
+ * @fileoverview Situation domain: KPI math, automation rules, alert policy
+ * and realtime stream rules. Pure TypeScript, no I/O.
  */
 
 export * from './alert_policy';
 export * from './automation';
 export * from './kpi';
-export * from './layout';
-export * from './usage';
+export * from './stream';

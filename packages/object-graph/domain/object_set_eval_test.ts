@@ -1,80 +1,64 @@
+/**
+ * @fileoverview Tests of query planning (push-down vs in-memory).
+ */
+
 import {describe, expect, it} from 'vitest';
-import {
-  aggregateValues,
-  filterObjects,
-  sortObjects,
-  splitFilter,
-} from './object_set_eval';
+import {AppError} from '@ontodecide/shared-kernel';
+import type {FilterExpr} from '@ontodecide/shared-kernel';
+import {matchesText, planSort, splitFilter} from './object_set_eval';
 
-describe('object set helpers', () => {
-  const indexed = new Set(['riskScore', 'status']);
+const indexed = new Set(['a', 'b']);
+const eqA: FilterExpr = {op: 'eq', prop: 'a', value: 1};
+const eqB: FilterExpr = {op: 'gt', prop: 'b', value: 2};
+const eqC: FilterExpr = {op: 'contains', prop: 'c', value: 'x'};
 
-  it('pushes indexed conjuncts down and keeps the residual', () => {
-    expect(
-      splitFilter({op: 'gte', prop: 'riskScore', value: 70}, indexed),
-    ).toEqual({
-      indexed: {op: 'gte', prop: 'riskScore', value: 70},
+describe('splitFilter', () => {
+  it('pushes fully indexed filters down whole', () => {
+    const f: FilterExpr = {op: 'or', args: [eqA, {op: 'not', arg: eqB}]};
+    expect(splitFilter(f, indexed)).toEqual({pushdown: f});
+  });
+
+  it('splits a top-level and', () => {
+    expect(splitFilter({op: 'and', args: [eqA, eqC, eqB]}, indexed)).toEqual({
+      pushdown: {op: 'and', args: [eqA, eqB]},
+      residual: eqC,
     });
-    const split = splitFilter(
-      {
-        op: 'and',
-        args: [
-          {op: 'eq', prop: 'status', value: 'active'},
-          {
-            op: 'and',
-            args: [
-              {op: 'gt', prop: 'onTimeRate', value: 0.8},
-              {op: 'lt', prop: 'riskScore', value: 50},
-            ],
-          },
-        ],
-      },
-      indexed,
-    );
-    expect(split.indexed).toEqual({
-      op: 'and',
-      args: [
-        {op: 'eq', prop: 'status', value: 'active'},
-        {op: 'lt', prop: 'riskScore', value: 50},
-      ],
+    expect(splitFilter({op: 'and', args: [eqA, eqC]}, indexed)).toEqual({
+      pushdown: eqA,
+      residual: eqC,
     });
-    expect(split.residual).toEqual({op: 'gt', prop: 'onTimeRate', value: 0.8});
-    const or = {
-      op: 'or' as const,
-      args: [
-        {op: 'exists' as const, prop: 'x'},
-        {op: 'exists' as const, prop: 'status'},
-      ],
-    };
-    expect(splitFilter(or, indexed)).toEqual({residual: or});
+  });
+
+  it('keeps mixed disjunctions in memory', () => {
+    const f: FilterExpr = {op: 'or', args: [eqA, eqC]};
+    expect(splitFilter(f, indexed)).toEqual({residual: f});
     expect(splitFilter(undefined, indexed)).toEqual({});
   });
+});
 
-  it('sorts with nulls last and RID tie-break', () => {
-    const items = [
-      {rid: 'b', props: {v: 2}},
-      {rid: 'a', props: {v: 2}},
-      {rid: 'c', props: {}},
-      {rid: 'd', props: {v: 5}},
-    ];
-    expect(
-      sortObjects(items, [{prop: 'v', dir: 'desc'}]).map(i => i.rid),
-    ).toEqual(['d', 'a', 'b', 'c']);
-    expect(
-      sortObjects(items, [{prop: 'v', dir: 'asc'}]).map(i => i.rid),
-    ).toEqual(['a', 'b', 'd', 'c']);
-    expect(
-      filterObjects(items, {op: 'gt', prop: 'v', value: 2}).map(i => i.rid),
-    ).toEqual(['d']);
+describe('planSort', () => {
+  it('allows built-in and indexed keys only', () => {
+    expect(planSort(undefined, indexed)).toEqual({kind: 'default'});
+    expect(planSort({prop: 'title', dir: 'desc'}, indexed)).toEqual({
+      kind: 'column',
+      key: 'title',
+      dir: 'desc',
+    });
+    expect(planSort({prop: 'a', dir: 'asc'}, indexed)).toEqual({
+      kind: 'indexed',
+      prop: 'a',
+      dir: 'asc',
+    });
+    expect(() => planSort({prop: 'c', dir: 'asc'}, indexed)).toThrow(AppError);
   });
+});
 
-  it('aggregates', () => {
-    const v = [1, 2, 'x', null, 6];
-    expect(aggregateValues('count', v)).toBe(5);
-    expect(aggregateValues('sum', v)).toBe(9);
-    expect(aggregateValues('avg', v)).toBe(3);
-    expect(aggregateValues('min', v)).toBe(1);
-    expect(aggregateValues('max', v)).toBe(6);
-    expect(aggregateValues('avg', [])).toBe(0);
+describe('matchesText', () => {
+  it('matches title, primary key and exact rid', () => {
+    const o = {rid: 'ri.S.01ABC', title: 'Acme Metals', primaryKey: 'S-001'};
+    expect(matchesText('metal', o)).toBe(true);
+    expect(matchesText('s-00', o)).toBe(true);
+    expect(matchesText('ri.s.01abc', o)).toBe(true);
+    expect(matchesText('ri.S.01', o)).toBe(false);
   });
 });

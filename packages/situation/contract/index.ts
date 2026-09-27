@@ -1,7 +1,7 @@
 /**
- * @fileoverview Public contract of the Situation context.
+ * @fileoverview Public contract of the situation context.
  */
 
-export type * from './rpc';
+export * from './rpc';
 export * from './schemas';
 export * from './types';

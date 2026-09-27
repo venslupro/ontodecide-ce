@@ -1,44 +1,42 @@
 /**
- * @fileoverview ListActionLog: audit entries, newest first.
+ * @fileoverview listActionLog use case: action audit of one object, newest
+ * first, keyset-paged (limit ≤ 100).
  */
 
-import {clampLimit} from '@ontodecide/shared-kernel';
-import type {CallCtx, Rid} from '@ontodecide/shared-kernel';
-import type {ActionLogDto} from '../contract';
-import {filterByMarkings} from '../domain';
-import type {AppDeps} from './ports';
-import {requireRole, ridInTenant} from './support';
+import {
+  clampLimit,
+  decodeCursor,
+  encodeCursor,
+  isRid,
+} from '@ontodecide/shared-kernel';
+import type {CallCtx, PageRequest, Rid} from '@ontodecide/shared-kernel';
+import type {ActionLogDto} from '../contract/types';
+import type {GraphDeps} from './ports';
 
-/** Use case: list executed actions (optionally for one object). */
-export class ListActionLog {
-  constructor(private readonly d: AppDeps) {}
-
-  async handle(
-    ctx: CallCtx,
-    filter: {rid?: Rid; limit?: number} = {},
-  ): Promise<ActionLogDto[]> {
-    requireRole(ctx, 'Viewer');
-    if (filter.rid && !ridInTenant(ctx, filter.rid)) return [];
-    const model = await this.d.models.get(ctx);
-    const rows = await this.d.actionLogs.list(ctx.tenantId, {
-      rid: filter.rid,
-      limit: clampLimit(filter.limit),
-    });
-    return rows.map(r => {
-      const type =
-        model.objectTypes[model.actionTypes[r.actionType]?.targetType ?? ''];
-      return {
-        id: r.id,
-        actionType: r.actionType,
-        targetRid: r.targetRid,
-        params: r.params,
-        before: filterByMarkings(ctx, type, r.before).props,
-        after: filterByMarkings(ctx, type, r.after).props,
-        actor: r.actor,
-        ...(r.recommendationId ? {recommendationId: r.recommendationId} : {}),
-        writebackStatus: r.writebackStatus,
-        executedAt: r.executedAt,
-      };
-    });
-  }
+/** Action log entries of one object. */
+export async function listActionLog(
+  deps: GraphDeps,
+  ctx: CallCtx,
+  rid: Rid,
+  page: PageRequest,
+): Promise<{items: ActionLogDto[]; nextCursor: string | null}> {
+  if (!isRid(rid)) return {items: [], nextCursor: null};
+  const limit = clampLimit(page?.limit);
+  const c = decodeCursor<{t: number; id: string}>(page?.cursor);
+  const after =
+    c && typeof c.t === 'number' && typeof c.id === 'string'
+      ? {at: c.t, id: c.id}
+      : null;
+  const rows = await deps
+    .repos(ctx.tid)
+    .actions.listForTarget(rid, after, limit + 1);
+  const items = rows.slice(0, limit);
+  const last = items[items.length - 1];
+  return {
+    items,
+    nextCursor:
+      rows.length > limit && last
+        ? encodeCursor({t: Date.parse(last.executedAt), id: last.id})
+        : null,
+  };
 }

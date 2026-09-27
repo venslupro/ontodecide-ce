@@ -1,179 +1,85 @@
 /**
- * @fileoverview Data integration queries & mutations: sources, uploads,
- * batches, jobs, rejected records, data health and AI mapping drafts.
+ * @fileoverview Import API: jobs (list / one), create, mapping, synchronous
+ * batches (idempotent by seq) and the AI mapping draft (≤ 2 per day). The
+ * raw file never leaves the browser; only mapped-ready JSON rows are sent.
  */
 
 import type {
-  DataHealthDto,
+  BatchInput,
+  BatchResult,
+  CreateImportInput,
   JobDto,
-  RawRecordDto,
-  SourceDef,
-  SourceDto,
-  TxnType,
+  MappingDraft,
+  MappingDraftInput,
+  MappingSpec,
 } from '@ontodecide/integration/contract';
-import type {MappingSuggestion} from '@ontodecide/decision/contract';
-import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
-import {api, asList} from '../../shared/api/client';
-import {qk} from '../../shared/api/query_keys';
+import type {PageResult} from '@ontodecide/shared-kernel';
+import {useQuery} from '@tanstack/react-query';
+import {api} from '../../shared/api/client';
 
-/** Terminal job states. */
-export const JOB_DONE: ReadonlySet<JobDto['status']> = new Set([
-  'Succeeded',
-  'PartiallyFailed',
-  'Failed',
-]);
+/** Integration query keys (prefix `integration`). */
+export const integrationKeys = {
+  imports: () => ['integration', 'imports'] as const,
+  job: (id: string) => ['integration', 'job', id] as const,
+};
 
-/** All sources. */
-export function useSources() {
+/** Import jobs of the workspace (newest first). */
+export function useImports() {
   return useQuery({
-    queryKey: qk.sources(),
-    queryFn: async () => asList(await api.get<SourceDto[]>('/sources')),
+    queryKey: integrationKeys.imports(),
+    queryFn: () =>
+      api.get<PageResult<JobDto>>('/imports', {query: {limit: 100}}),
+    staleTime: 30_000,
   });
 }
 
-/** One source. */
-export function useSource(id: string | undefined) {
+/** One job with its first ≤ 200 rejects. */
+export function useImportJob(id: string | undefined) {
   return useQuery({
-    queryKey: qk.source(id ?? ''),
-    queryFn: () => api.get<SourceDto>(`/sources/${encodeURIComponent(id!)}`),
+    queryKey: integrationKeys.job(id ?? ''),
+    queryFn: () => api.get<JobDto>(`/imports/${encodeURIComponent(id!)}`),
     enabled: !!id,
+    staleTime: 10_000,
   });
 }
 
-/** Creates a source. */
-export function useCreateSource() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (def: SourceDef) => api.post<SourceDto>('/sources', def),
-    onSuccess: () => qc.invalidateQueries({queryKey: qk.sources()}),
+/** `POST /imports` (reserves `totalRows` of today's import rows). */
+export function createImport(input: CreateImportInput): Promise<JobDto> {
+  return api.post<JobDto>('/imports', input);
+}
+
+/** `PUT /imports/{id}/mapping` (before the first batch). */
+export function putMapping(id: string, mapping: MappingSpec): Promise<JobDto> {
+  return api.put<JobDto>(`/imports/${encodeURIComponent(id)}/mapping`, {
+    mapping,
   });
 }
 
-/** Updates a source. */
-export function useUpdateSource() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({id, patch}: {id: string; patch: Partial<SourceDef>}) =>
-      api.patch<SourceDto>(`/sources/${encodeURIComponent(id)}`, patch),
-    onSuccess: s => {
-      qc.setQueryData(qk.source(s.id), s);
-      void qc.invalidateQueries({queryKey: qk.sources()});
-    },
-  });
-}
-
-/** Deletes a source. */
-export function useDeleteSource() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.del(`/sources/${encodeURIComponent(id)}`),
-    onSuccess: () => qc.invalidateQueries({queryKey: qk.sources()}),
-  });
-}
-
-/** Presigned B2 upload for archiving the raw file (url may be empty when B2 is not configured). */
-export function presignUpload(
-  sourceId: string,
-  fileName: string,
-  bytes: number,
-) {
-  return api.post<{url: string; key: string; expiresAt: string; jobId: string}>(
-    `/sources/${encodeURIComponent(sourceId)}/uploads:presign`,
-    {fileName, bytes},
-  );
-}
-
-/** Batch body. */
-export interface BatchInput {
-  jobId?: string;
-  seq: number;
-  last: boolean;
-  records: Record<string, unknown>[];
-  txnType?: TxnType;
-}
-
-/** Submits one ≤ 500-record batch (202). */
+/** `POST /imports/{id}/batches` (synchronous; same seq → first result). */
 export function submitBatch(
-  sourceId: string,
+  id: string,
   batch: BatchInput,
-  idempotencyKey: string,
   signal?: AbortSignal,
-) {
-  return api.post<{jobId: string; queuedMessages: number}>(
-    `/sources/${encodeURIComponent(sourceId)}/batches`,
+): Promise<BatchResult> {
+  return api.post<BatchResult>(
+    `/imports/${encodeURIComponent(id)}/batches`,
     batch,
-    {
-      idempotencyKey,
-      signal,
-    },
+    {signal},
   );
 }
 
-/** Asks for an AI mapping draft (counts against the daily AI quota). */
-export function suggestMapping(
-  sourceId: string,
-  sample: {fields: string[]; rows: unknown[][]; targetType: string},
-) {
-  return api.post<MappingSuggestion>(
-    `/sources/${encodeURIComponent(sourceId)}/mapping:suggest`,
-    sample,
+/** `POST /imports/{id}/mapping-draft`. */
+export function requestMappingDraft(
+  id: string,
+  input: MappingDraftInput,
+): Promise<MappingDraft> {
+  return api.post<MappingDraft>(
+    `/imports/${encodeURIComponent(id)}/mapping-draft`,
+    input,
   );
 }
 
-/** Jobs (optionally for one source). */
-export function useJobs(sourceId?: string) {
-  return useQuery({
-    queryKey: qk.jobs(sourceId),
-    queryFn: async () =>
-      asList(await api.get<JobDto[]>('/jobs', {query: {sourceId}})),
-  });
-}
-
-/** One job; polls every 2 s until it reaches a terminal state. */
-export function useJob(id: string | undefined) {
-  return useQuery({
-    queryKey: qk.job(id ?? ''),
-    queryFn: () => api.get<JobDto>(`/jobs/${encodeURIComponent(id!)}`),
-    enabled: !!id,
-    refetchInterval: q =>
-      q.state.data && JOB_DONE.has(q.state.data.status) ? false : 2000,
-  });
-}
-
-/** Rejected records of a job. */
-export function useRejected(jobId: string | undefined, enabled = true) {
-  return useQuery({
-    queryKey: qk.rejected(jobId ?? ''),
-    queryFn: async () =>
-      asList(
-        await api.get<RawRecordDto[]>(
-          `/jobs/${encodeURIComponent(jobId!)}/rejected`,
-        ),
-      ),
-    enabled: !!jobId && enabled,
-  });
-}
-
-/** Replays rejected records with optional corrected payloads. */
-export function useReplay(jobId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (fixes?: {id: string; payload: Record<string, unknown>}[]) =>
-      api.post<{requeued: number}>(
-        `/jobs/${encodeURIComponent(jobId)}/replay`,
-        {fixes},
-      ),
-    onSuccess: () => {
-      void qc.invalidateQueries({queryKey: qk.job(jobId)});
-      void qc.invalidateQueries({queryKey: qk.rejected(jobId)});
-    },
-  });
-}
-
-/** Per-source data health. */
-export function useDataHealth() {
-  return useQuery({
-    queryKey: qk.dataHealth(),
-    queryFn: async () => asList(await api.get<DataHealthDto[]>('/data-health')),
-  });
+/** `GET /imports/{id}` (summary with the first ≤ 200 rejects). */
+export function getImport(id: string): Promise<JobDto> {
+  return api.get<JobDto>(`/imports/${encodeURIComponent(id)}`);
 }

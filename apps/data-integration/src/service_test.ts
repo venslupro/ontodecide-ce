@@ -1,174 +1,100 @@
 /**
- * @fileoverview Smoke test of the data-integration service module: wiring,
- * queue consumption through `queue`, cron through `scheduled`, and the real
- * aws4fetch presigner.
+ * @fileoverview data-integration service module wired like the e2e
+ * harness: rpcBinding fakes for ONTOLOGY / OBJECTS and a fake Workers AI.
  */
 
-import {AppError, FixedClock, silentLogger} from '@ontodecide/shared-kernel';
-import type {CallCtx} from '@ontodecide/shared-kernel';
-import type {IngestMsg, ObjectWriteMsg} from '@ontodecide/integration/contract';
-import type {CompiledModel, OntologyRpc} from '@ontodecide/ontology/contract';
-import {describe, expect, it} from 'vitest';
-// apps do not depend on @ontodecide/testing; import the fakes by path.
+import {AppError, FixedClock} from '@ontodecide/shared-kernel';
+import type {ObjectGraphRpc} from '@ontodecide/object-graph/contract';
+import type {OntologyRpc} from '@ontodecide/ontology/contract';
 import {
   createTestD1,
-  FetchMock,
-  QueueBus,
+  FakeWorkersAi,
   rpcBinding,
   testCtx,
 } from '@ontodecide/testing';
+import {describe, expect, it} from 'vitest';
+import {
+  FakeObjectGraph,
+  fakeOntology,
+} from '../../../packages/integration/interface/test_fixtures';
 import type {Env} from './env';
+import {configFrom} from './container';
 import {createService} from './service';
 
-function model(tenantId: string): CompiledModel {
-  const props = [
-    {
-      apiName: 'productId',
-      displayName: {},
-      dataType: 'string' as const,
-      required: true,
-    },
-    {
-      apiName: 'name',
-      displayName: {},
-      dataType: 'string' as const,
-      required: true,
-    },
-    {apiName: 'dailyDemand', displayName: {}, dataType: 'double' as const},
-  ];
+function env(overrides: Partial<Env> = {}): Env & {graph: FakeObjectGraph} {
+  const graph = new FakeObjectGraph();
   return {
-    tenantId,
-    version: '1.0.0',
-    hash: 'h',
-    schemas: [{apiName: 'supplyChain', version: '1.0.0'}],
-    objectTypes: {
-      Product: {
-        apiName: 'Product',
-        displayName: {},
-        primaryKey: 'productId',
-        titleProperty: 'name',
-        properties: props,
-        schemaApi: 'supplyChain',
-        propsByName: Object.fromEntries(props.map(p => [p.apiName, p])),
-        indexedProps: [],
-        sensitiveProps: [],
-      },
-    },
-    linkTypes: {},
-    actionTypes: {},
-    functions: {},
-    simulationKpis: [],
-    indexPlan: [],
+    INTEGRATION_DB: createTestD1('data-integration'),
+    ONTOLOGY: rpcBinding(fakeOntology() as OntologyRpc),
+    OBJECTS: rpcBinding(graph as unknown as ObjectGraphRpc),
+    graph,
+    ...overrides,
   };
 }
 
-function env(bus: QueueBus, extra: Partial<Env> = {}): Env {
-  const ontology: Pick<OntologyRpc, 'getActiveModel'> = {
-    getActiveModel: async (ctx: CallCtx) => model(ctx.tenantId),
-  };
-  return {
-    INTEGRATION_DB: createTestD1('integration'),
-    ONTOLOGY: rpcBinding(ontology) as OntologyRpc,
-    INGEST_QUEUE: bus.sender<IngestMsg>('ingest'),
-    OBJECT_WRITES_QUEUE: bus.sender<ObjectWriteMsg>('object-writes'),
-    CONNECTOR_ENC_KEY: 'k',
-    ...extra,
-  };
-}
+const clock = new FixedClock('2026-09-24T08:00:00Z');
 
-describe('createService', () => {
-  it('wires rpc, queue and scheduled handlers', async () => {
-    const bus = new QueueBus();
-    const clock = new FixedClock('2026-09-24T00:00:00Z');
-    const fetchMock = new FetchMock();
-    const svc = createService(env(bus), {
-      clock,
-      logger: silentLogger,
-      fetch: fetchMock.fetch,
+describe('data-integration service', () => {
+  it('reads limits from vars with design defaults', () => {
+    expect(configFrom(env())).toMatchObject({
+      importRowsDaily: 2000,
+      seedRowsDaily: 20000,
+      mappingAiDaily: 2,
+      neuronsDailyBudget: 1500,
     });
-    const ctx = testCtx();
-    const src = await svc.rpc.createSource(ctx, {
-      name: 'Products',
-      kind: 'file',
-      config: {},
-      mapping: {
-        targetType: 'Product',
-        primaryKey: {from: 'productId'},
-        fields: [
-          {to: 'name', from: 'name', transform: 'trim'},
-          {to: 'dailyDemand', from: 'dailyDemand', transform: 'toNumber'},
-        ],
-      },
-    });
-    const {jobId} = await svc.rpc.submitBatch(ctx, src.id, {
-      seq: 0,
-      last: true,
-      records: [
-        {productId: 'P-900', name: ' Edge Gateway X1 ', dailyDemand: '320'},
-      ],
-    });
-    await bus.drain({ingest: {handler: b => svc.queue!(b)}});
-    const [w] = bus.peek('object-writes') as ObjectWriteMsg[];
-    expect(w.cmds[0]).toMatchObject({
-      type: 'Product',
-      primaryKey: 'P-900',
-      props: {productId: 'P-900', name: 'Edge Gateway X1', dailyDemand: 320},
-    });
-    await svc.rpc.reportWriteResult(ctx, jobId, w.seq, w.last, {
-      upserted: 1,
-      merged: 0,
-      skipped: 0,
-      rejected: [],
-    });
-    expect((await svc.rpc.getJob(ctx, jobId)).status).toBe('Succeeded');
-    await svc.scheduled!('*/15 * * * *', clock.now());
-    expect(fetchMock.calls).toHaveLength(0);
-    // Presign without B2 credentials returns an empty URL.
-    expect((await svc.rpc.presignUpload(ctx, src.id, 'p.csv', 10)).url).toBe(
-      '',
-    );
-    try {
-      await svc.rpc.getSource(testCtx({tenantId: 't2'}), src.id);
-      throw new Error('expected failure');
-    } catch (e) {
-      expect(AppError.from(e).code).toBe('SOURCE_NOT_FOUND');
-    }
+    expect(
+      configFrom(env({IMPORT_ROWS_DAILY: '100', MAPPING_AI_DAILY: 'x'})),
+    ).toMatchObject({importRowsDaily: 100, mappingAiDaily: 2});
   });
 
-  it('presigns B2 PUT URLs with aws4fetch (path style, 15 min)', async () => {
-    const bus = new QueueBus();
-    const clock = new FixedClock('2026-09-24T00:00:00Z');
-    const svc = createService(
-      env(bus, {
-        B2_KEY_ID: 'kid',
-        B2_APP_KEY: 'secret',
-        B2_BUCKET: 'ontodecide-ce-raw-prod',
-        B2_ENDPOINT: 's3.us-west-004.backblazeb2.com',
-        B2_REGION: 'us-west-004',
-      }),
-      {clock, logger: silentLogger},
-    );
+  it('serves the RPC surface and the lifecycle', async () => {
+    const e = env({IMPORT_ROWS_DAILY: '100'});
+    const svc = createService(e, {clock});
     const ctx = testCtx();
-    const src = await svc.rpc.createSource(ctx, {
-      name: 'Products',
-      kind: 'file',
-      config: {},
-      mapping: {
-        targetType: 'Product',
-        primaryKey: {from: 'productId'},
-        fields: [],
-      },
+    const sample = await svc.rpc.loadSample(ctx);
+    expect(sample.status).toBe('DONE');
+    expect(e.graph.links.get(ctx.tid)!.size).toBe(160);
+    try {
+      await svc.rpc.createImport(ctx, {
+        fileName: 'a.csv',
+        targetType: 'Supplier',
+        totalRows: 101,
+      });
+      expect.unreachable();
+    } catch (err) {
+      expect(AppError.from(err).code).toBe('QUOTA_EXCEEDED');
+    }
+    expect(await svc.lifecycle!.countTenant(ctx.tid)).toBeGreaterThan(0);
+  });
+
+  it('uses the AI_MODEL binding when present and rules without it', async () => {
+    const ai = new FakeWorkersAi().script('@cf/test/model', {
+      response: {mappings: [{from: 'volume', to: 'capacity'}]},
     });
-    const res = await svc.rpc.presignUpload(ctx, src.id, 'products.csv', 100);
-    const url = new URL(res.url);
-    expect(url.origin).toBe('https://s3.us-west-004.backblazeb2.com');
-    expect(url.pathname).toBe(`/ontodecide-ce-raw-prod/${res.key}`);
-    expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
-    expect(url.searchParams.get('X-Amz-Date')).toBe('20260924T000000Z');
-    expect(url.searchParams.get('X-Amz-Credential')).toBe(
-      'kid/20260924/us-west-004/s3/aws4_request',
+    const withAi = createService(
+      env({AI: ai.asAi(), AI_MODEL: '@cf/test/model'}),
+      {clock},
     );
-    expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
-    expect(res.expiresAt).toBe('2026-09-24T00:15:00.000Z');
+    const without = createService(env(), {clock});
+    const ctx = testCtx();
+    const input = {
+      fields: ['supplierId', 'name', 'volume'],
+      sampleRows: [['S-1', 'A', '10']],
+      targetType: 'Supplier',
+    };
+    for (const [svc, want] of [
+      [withAi, 'ai'],
+      [without, 'rules'],
+    ] as const) {
+      const job = await svc.rpc.createImport(ctx, {
+        fileName: 'a.csv',
+        targetType: 'Supplier',
+        totalRows: 1,
+      });
+      expect((await svc.rpc.mappingDraft(ctx, job.id, input)).rankedBy).toBe(
+        want,
+      );
+    }
+    expect(ai.calls[0].model).toBe('@cf/test/model');
   });
 });

@@ -1,180 +1,143 @@
 /**
- * @fileoverview Ports of the decision application layer. Infrastructure
- * provides the adapters (D1, Workers AI, Gemini, Groq, Vectorize) and the
- * composition root wires service bindings.
+ * @fileoverview Ports of the decision application layer.
  */
 
-import type {QueueSender, Rid} from '@ontodecide/shared-kernel';
+import type {
+  Clock,
+  Logger,
+  PageRequest,
+  PageResult,
+} from '@ontodecide/shared-kernel';
 import type {ObjectGraphRpc} from '@ontodecide/object-graph/contract';
 import type {OntologyRpc} from '@ontodecide/ontology/contract';
-import type {
-  DecisionJobMsg,
-  SituationRpc,
-} from '@ontodecide/situation/contract';
-import type {
-  Perturbation,
-  RecStatus,
-  RecommendationDto,
-  ScenarioDto,
-  ScenarioResult,
-} from '../contract';
+import type {SituationRpc} from '@ontodecide/situation/contract';
+import type {RecStatus, ScenarioDto} from '../contract';
+import type {RecRecord, TokenUsage} from '../domain';
 
-/** Options of one completion. */
-export interface LlmOptions {
-  system?: string;
-  /** Ask the provider for a JSON object. */
-  json?: boolean;
-  maxTokens?: number;
-  temperature?: number;
-}
-
-/** A completion. */
-export interface LlmCompletion {
-  text: string;
-  /** Model id that produced the text. */
-  model: string;
-  /** Workers AI neurons consumed (estimated when not reported). */
-  neurons: number;
-}
-
-/** A language model (or a chain of them). */
-export interface LlmPort {
-  /** Cache namespace, e.g. `chain:workers-ai,gemini` or `fake:test`. */
-  readonly family: string;
-  complete(prompt: string, opts?: LlmOptions): Promise<LlmCompletion>;
-}
-
-/** Text embeddings (bge-m3 in production). */
-export interface Embedder {
-  readonly model: string;
-  embed(texts: string[]): Promise<number[][]>;
-}
-
-/** An evaluated case kept for recall (RAG). */
-export interface CaseRecord {
-  id: string;
-  tenantId: string;
-  summary: string;
-  outcome?: RecommendationDto['outcome'];
-  /** Text used for similarity. */
-  text: string;
-  createdAt: number;
-}
-
-/** A recalled case. */
-export interface SimilarCase {
-  id: string;
-  summary: string;
-  outcome?: RecommendationDto['outcome'];
-  score: number;
-}
-
-/** Stores and recalls similar cases. */
-export interface CaseStore {
-  add(c: CaseRecord): Promise<void>;
-  similar(tenantId: string, text: string, k: number): Promise<SimilarCase[]>;
-}
-
-/** Object graph operations used by decision (service binding OBJECTS). */
-export type GraphPort = Pick<
-  ObjectGraphRpc,
-  'impactSubgraph' | 'getObjects' | 'evaluateObjectSet' | 'applyAction'
->;
-
-/** Ontology operations used by decision (service binding ONTOLOGY). */
-export type ModelPort = Pick<OntologyRpc, 'getActiveModel'>;
-
-/** Situation operations used by decision (service binding SITUATION). */
-export type Notifier = Pick<SituationRpc, 'pushRecommendation' | 'recordUsage'>;
-
-/** Producer of decision-jobs messages. */
-export type JobQueue = Pick<QueueSender<DecisionJobMsg>, 'send'>;
-
-/** Stored recommendation (DTO plus internal columns). */
-export interface RecommendationRecord extends RecommendationDto {
-  tenantId: string;
-  requestedBy?: string;
-  executedAt?: string;
-}
-
-/** Recommendation list filter. */
-export interface RecommendationFilter {
-  status?: RecStatus;
-  focus?: Rid;
-  limit: number;
-}
-
-/** Recommendation persistence. */
-export interface RecommendationRepository {
-  insert(rec: RecommendationRecord): Promise<void>;
-  get(tenantId: string, id: string): Promise<RecommendationRecord | null>;
-  list(
-    tenantId: string,
-    filter: RecommendationFilter,
-  ): Promise<RecommendationRecord[]>;
-  /**
-   * Overwrites the mutable columns when the stored status still equals
-   * `expected` (compare-and-set). Returns false when it changed meanwhile.
-   */
-  update(rec: RecommendationRecord, expected: RecStatus): Promise<boolean>;
-  /** Draft/Proposed rows (all tenants) with expires_at ≤ now; system use. */
-  listExpired(now: number, limit: number): Promise<RecommendationRecord[]>;
-  /** Executed rows (all tenants) with executed_at ≤ before; system use. */
-  listExecutedBefore(
-    before: number,
-    limit: number,
-  ): Promise<RecommendationRecord[]>;
-}
-
-/** Stored scenario. */
-export interface ScenarioRecord extends ScenarioDto {
-  tenantId: string;
-}
-
-/** Scenario persistence. */
+/** Workspace-scoped scenario store (dec_scenario). */
 export interface ScenarioRepository {
-  insert(s: ScenarioRecord): Promise<void>;
-  get(tenantId: string, id: string): Promise<ScenarioRecord | null>;
-  list(tenantId: string, limit: number): Promise<ScenarioRecord[]>;
-  setResult(
-    tenantId: string,
+  insert(s: ScenarioDto): Promise<void>;
+  get(id: string): Promise<ScenarioDto | null>;
+}
+
+/** Fields written when a decision is claimed. */
+export interface DecisionClaim {
+  status: 'Confirmed' | 'Rejected';
+  key: string;
+  decidedBy: 'owner' | 'admin';
+  decidedAtMs: number;
+  rejectReason?: string;
+}
+
+/** Workspace-scoped recommendation store (dec_recommendation). */
+export interface RecommendationRepository {
+  insert(rec: RecRecord): Promise<void>;
+  get(id: string): Promise<RecRecord | null>;
+  list(
+    q: {status?: RecStatus},
+    page: PageRequest,
+  ): Promise<PageResult<RecRecord>>;
+  /** Persists Proposed → Expired for due rows (all, or one id). */
+  expireDue(nowMs: number, id?: string): Promise<number>;
+  /**
+   * Conditional UPDATE WHERE status = 'Proposed' AND expires_at > now AND
+   * no decision key yet. False when nothing changed. A key already used by
+   * another recommendation of the workspace is CONFLICT.
+   */
+  claimDecision(
     id: string,
-    result: ScenarioResult,
-  ): Promise<void>;
-  /** Replaces the stored perturbations (when a run supplies new ones). */
-  setPerturbations(
-    tenantId: string,
+    claim: DecisionClaim,
+    nowMs: number,
+  ): Promise<boolean>;
+  /**
+   * Starts an execution attempt (Confirmed with no attempt yet, or
+   * ExecFailed below `maxAttempts`): status Confirmed, attempts + 1.
+   */
+  beginExecution(
     id: string,
-    perturbations: Perturbation[],
+    key: string,
+    maxAttempts: number,
+  ): Promise<boolean>;
+  /** Records the outcome of the running attempt. */
+  finishExecution(
+    id: string,
+    status: 'Executed' | 'ExecFailed',
+    execution: RecRecord['execution'],
   ): Promise<void>;
 }
 
-/** LLM calls of a day. */
-export interface LlmDayUsage {
-  userCalls: number;
-  tenantCalls: number;
-}
-
-/** LLM output cache and per-day usage accounting. */
-export interface LlmStore {
-  getCached(
-    hash: string,
-    notBefore: number,
-  ): Promise<{output: string; model: string} | null>;
-  putCached(
-    hash: string,
-    output: string,
-    model: string,
-    now: number,
-  ): Promise<void>;
-  purgeCache(before: number): Promise<number>;
-  usage(day: string, tenantId: string, userId: string): Promise<LlmDayUsage>;
-  recordUsage(
+/** Daily capped counters (dec_usage). */
+export interface UsageCounter {
+  tryTake(
     day: string,
-    tenantId: string,
-    userId: string,
-    model: string,
-    calls: number,
-    neurons: number,
+    scope: string,
+    key: UsageKey,
+    n: number,
+    cap: number,
+  ): Promise<boolean>;
+  adjust(
+    day: string,
+    scope: string,
+    key: UsageKey,
+    delta: number,
   ): Promise<void>;
+  read(day: string, scope: string, key: UsageKey): Promise<number>;
+}
+
+/** Counter keys of dec_usage. */
+export type UsageKey = 'rec_ai' | 'neurons';
+
+/** One Workers AI call. */
+export interface AiRequest {
+  model: string;
+  /** Primary: thinking off + JSON schema; fallback: reasoning effort low. */
+  role: 'primary' | 'fallback';
+  system: string;
+  user: string;
+  jsonSchema: Record<string, unknown>;
+  maxTokens: number;
+  timeoutMs: number;
+}
+
+/** A model reply: a parsed object (tool call / JSON mode) or text. */
+export interface AiCompletion {
+  output: unknown;
+  usage?: TokenUsage;
+}
+
+/**
+ * Anti-corruption layer over Workers AI (AiPort). Throws on timeout,
+ * quota errors and model failures.
+ */
+export interface AiPort {
+  complete(req: AiRequest): Promise<AiCompletion>;
+}
+
+/** Runtime configuration (vars). */
+export interface DecisionConfig {
+  aiModel: string;
+  aiFallbackModel: string;
+  recAiUserDailyLimit: number;
+  neuronsDailyBudget: number;
+  neuronsReserveFactor: number;
+  recExpireHours: number;
+  aiTimeoutMs: number;
+}
+
+/** Everything the use cases need. */
+export interface DecisionDeps {
+  scenarios(tid: string): ScenarioRepository;
+  recommendations(tid: string): RecommendationRepository;
+  usage: UsageCounter;
+  /** Absent when Workers AI is not bound (local dev): rules only. */
+  ai?: AiPort;
+  objects: Pick<
+    ObjectGraphRpc,
+    'getObject' | 'listObjects' | 'getLinks' | 'impactSubgraph' | 'applyAction'
+  >;
+  ontology: Pick<OntologyRpc, 'getCompiledSchema'>;
+  situation: Pick<SituationRpc, 'pushRecommendation'>;
+  clock: Clock;
+  logger: Logger;
+  config: DecisionConfig;
 }

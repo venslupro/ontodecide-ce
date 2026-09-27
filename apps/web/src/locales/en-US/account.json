@@ -1,0 +1,68 @@
+{
+  "title": "Account & data",
+  "breadcrumb": "Workspace {tid} · just you (Owner)",
+  "breadcrumbAdmin": "Admin workspace {tid} · platform admin",
+  "lifecycle": {
+    "title": "Trial lifecycle",
+    "tzNote": "Times in your time zone",
+    "signup": "Sign-up",
+    "reminder": "Reminder",
+    "expiry": "Trial ends",
+    "link": "Download window",
+    "purge": "Deleted",
+    "linkDays": "{days} days"
+  },
+  "admin": {
+    "badge": "Platform admin · never expires · cannot be deleted",
+    "note": "Created at deployment, system-unique; every admin action is audited."
+  },
+  "account": {
+    "title": "Account",
+    "email": "E-mail",
+    "role": "Role",
+    "roleOwner": "Owner (one per workspace)",
+    "roleAdmin": "Platform admin (system-unique)",
+    "method": "Sign-in method",
+    "methodOwner": "E-mail code · passwordless",
+    "methodAdmin": "E-mail code + passkey",
+    "sessions": "Active sessions",
+    "language": "Language",
+    "timeZone": "Time zone"
+  },
+  "archive": {
+    "title": "Data archived at expiry",
+    "oneZip": "One ZIP",
+    "tag": "Archived",
+    "notArchived": "Sessions, counters and caches are not archived",
+    "onceNote": "The archive e-mail is sent only once, so export a copy now.",
+    "file": {
+      "ontology": "Ontology definitions",
+      "objects": "Objects & properties",
+      "links": "Links",
+      "imports": "Import jobs & field mappings",
+      "situation": "Alerts & automations",
+      "decisions": "Scenarios, recommendations & decisions",
+      "audit": "Action audit log"
+    }
+  },
+  "export": {
+    "button": "Export a copy now",
+    "done": "Export finished",
+    "failed": "Export failed",
+    "adminNote": "Exports the admin workspace's current data (JSON Lines)"
+  },
+  "danger": {
+    "title": "End the trial early and delete",
+    "body": "Stops the trial now. Your data is packed as a ZIP and the download link is e-mailed to you (valid 7 days); then the account and e-mail are deleted. Requires an e-mail code.",
+    "button": "End trial",
+    "dialogTitle": "End the trial early?",
+    "dialogBody": "This cannot be undone.",
+    "point1": "Your workspace data is packed as a ZIP and the link is e-mailed once (valid 7 days)",
+    "point2": "The account, e-mail and sessions are deleted; you cannot sign in again",
+    "point3": "We e-mail you a code to confirm this action",
+    "sendCode": "Send code",
+    "codeSent": "A code was sent to your e-mail; enter it within 10 minutes.",
+    "codeLabel": "6-digit code",
+    "confirm": "End trial"
+  }
+}

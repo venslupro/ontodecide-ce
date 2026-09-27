@@ -4,6 +4,9 @@
  * - Domain layers stay pure (no infrastructure, no Cloudflare runtime).
  * - Layers point inward: interface → application → domain.
  * - Contracts depend only on the shared kernel and other contracts.
+ * - data-integration never depends on decision (not even its contract).
+ * - Packages stay runtime-neutral: `cloudflare:workers` (WorkerEntrypoint,
+ *   DurableObject) is imported only by the Worker apps.
  */
 const CONTEXTS =
   '(identity|ontology|integration|object-graph|situation|decision)';
@@ -89,11 +92,27 @@ module.exports = {
       to: {path: `^packages/(${CONTEXTS.slice(1, -1)}|testing)/`},
     },
     {
+      name: 'integration-not-decision',
+      comment: 'Integration feeds the object graph; it never calls decision.',
+      severity: 'error',
+      from: {path: '^packages/integration/'},
+      // Resolved path, or the bare name when the workspace link is absent.
+      to: {path: ['^packages/decision/', '^@ontodecide/decision(/|$)']},
+    },
+    {
+      name: 'packages-no-workers-runtime',
+      comment: 'Only apps/* import cloudflare:workers; packages run in Node.',
+      severity: 'error',
+      from: {path: '^packages/'},
+      to: {path: '^cloudflare:workers$'},
+    },
+    {
       name: 'no-testing-in-production-code',
       severity: 'error',
       from: {
         path: '^(apps|packages)/',
-        pathNot: ['_test\\.tsx?$', '^packages/testing/', '^tests/'],
+        // Test fixtures (TEST_FILES) are test code, like *_test.ts.
+        pathNot: [...TEST_FILES, '^packages/testing/', '^tests/'],
       },
       to: {path: '^packages/testing/'},
     },

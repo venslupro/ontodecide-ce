@@ -1,76 +1,77 @@
 # OntoDecide CE
 
-> Ontology-driven decision intelligence — data → situation → decision → action → feedback — running entirely on free-tier infrastructure.
+> Ontology-driven decision intelligence — import → fuse → situation → simulate → recommend → confirm → act — as a free public **Community Edition** running entirely on free tiers.
 
-OntoDecide unifies data from ERP / WMS / TMS / IoT exports into an **ontology** of objects, properties and links. On top of that model it offers:
+Anyone can sign up with an e-mail code (no password, no credit card) and gets **one workspace for a 72-hour trial**. The user is its only **Owner**. Inside the workspace they can:
 
-* a real-time operations cockpit;
-* deterministic what-if simulation;
-* AI recommendations that stay inside an action whitelist and come with an evidence chain;
-* human approval that writes actions back to the business systems.
+* model an **ontology** of objects, properties, links and actions (starting from the shared *supply chain risk* template);
+* import CSV / XLSX / JSON files (parsed in the browser) or load a sample scenario;
+* watch a real-time **cockpit** (KPIs, trends, alerts);
+* run deterministic **what-if** simulations;
+* get **recommendations** that Workers AI ranks and explains, and execute them after confirming.
 
-The first scenario pack is **supply chain risk monitoring**.
+When the trial ends, the workspace data is packed into one ZIP in Backblaze B2. A download link valid for 7 days is e-mailed, and then the account, including the e-mail address, is deleted. The ZIP itself is deleted after 7 days. A single **bootstrap Admin** operates the platform. The Admin is system-unique, never expires, and cannot be deleted. It signs in with an e-mail code plus a passkey, and every one of its actions is audited.
 
-Design documents (V1.3): 总体设计说明书 · 详细设计说明书 · 前端详细设计说明书. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) maps them onto this repository.
+Design documents (V2.4): 社区版设计修订说明书 (authoritative), 总体设计说明书, 详细设计说明书, 前端详细设计说明书. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) maps them onto this repository; [`docs/ROLES.md`](docs/ROLES.md) describes Owner and Admin.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  B([Browser]) -->|https://ontodecide-ce.pages.dev| P[Pages ontodecide-ce<br/>SPA + /api/* proxy]
-  P -->|Service Binding GATEWAY| G[api-gateway<br/>JWT · RBAC · rate limit · idempotency · BFF]
+  B([Browser]) -->|app.example.com| P[Pages ontodecide-ce<br/>static SPA]
+  B -->|app.example.com/api/*<br/>Workers Route, same origin| G[api-gateway<br/>Ed25519 JWT · Act-as · rate limit · OpenAPI 3.2 · BFF]
   G --> I[identity-access]
   G --> O[ontology-manager]
   G --> D[data-integration]
   G --> OG[object-graph]
-  G --> S[situation-awareness]
+  G --> S[situation-awareness<br/>SituationRoom DO]
   G --> DE[decision-engine]
-  D -- ingest --> D
-  D -- object-writes --> OG
-  OG -- graph-sync --> OG
-  OG -- situation-events --> S
-  S -- decision-jobs --> DE
-  OG --> O
-  OG --> D
   D --> O
+  D --> OG
+  OG --> O
   S --> OG
+  S --> O
   DE --> OG
   DE --> S
   DE --> O
-  OG -.-> N[(Neo4j Aura Free<br/>read projection)]
-  D -.-> B2[(Backblaze B2)]
-  DE -.-> AI[Workers AI → Gemini → Groq]
+  OG -- domain-events --> S
+  I -. TenantLifecycle .-> O & D & OG & S & DE
+  I -.-> B2[(B2 archive)]
+  I -.-> M[Resend → Brevo]
+  D -.-> AI[Workers AI]
+  DE -.-> AI
 ```
 
-The system is 1 Pages project plus 7 Workers. Each business Worker owns exactly one D1 database, and every Worker has `workers_dev: false`: the only public entry point is the Pages domain.
+The system is 7 Workers plus 1 static Pages project. Five of the Workers each own one D1 database. situation-awareness keeps its data in one Durable Object per workspace. Only api-gateway is reachable from the Internet. The other Workers set `workers_dev: false` and are called only through Service Bindings. Queues: `domain-events` and `dead-letter`. Crons: identity-access `*/2` and object-graph `*/15`.
 
-Every deployed resource is named `{project}-{env}-{service|module}`, e.g. `ontodecide-prd-api-gateway` or `ontodecide-prd-graphdb` (`local` for `wrangler dev`). Two exceptions keep their names: the Pages project `ontodecide-ce` (the URL is always https://ontodecide-ce.pages.dev) and the Terraform state bucket `ontodecide-ce-tfstate`. The table below uses the `<service>` part; the deployed name is `ontodecide-prd-<service>`.
+Every deployed resource is named `{project}-{env}-{service|module}`, for example `ontodecide-prd-api-gateway`, `ontodecide-prd-object-graph-db`, `ontodecide-prd-domain-events` and `ontodecide-prd-archive`. Two resources are exceptions: the Pages project `ontodecide-ce` and the Terraform state bucket `ontodecide-ce-tfstate`.
 
 | Worker | Bounded context | Owns |
 | --- | --- | --- |
-| `api-gateway` | — (technical) | EdgeGuard DO (idempotency, precise rate limits), KV `ontodecide-prd-gateway-config` |
-| `identity-access` | Identity (generic) | D1 `ontodecide-prd-identity-access-db` |
-| `ontology-manager` | Ontology (core) | D1 `ontodecide-prd-ontology-manager-db`, KV `ontodecide-prd-schema-cache` |
-| `data-integration` | Integration (supporting) | D1 `ontodecide-prd-data-integration-db`, B2 `ontodecide-prd-raw`, queue `ontodecide-prd-ingest` |
-| `object-graph` | ObjectGraph (core) | D1 `ontodecide-prd-object-graph-db`, Neo4j `ontodecide-prd-graphdb`, queue `ontodecide-prd-graph-sync` |
-| `situation-awareness` | Situation (supporting) | D1 `ontodecide-prd-situation-awareness-db`, DOs `SituationRoom` + `UsageGuard`, all DLQs |
-| `decision-engine` | Decision (core) | D1 `ontodecide-prd-decision-engine-db`, Workers AI, Vectorize `ontodecide-prd-decision-cases-bge-m3` |
+| `api-gateway` | — (access layer) | nothing (4 Rate Limiting bindings) |
+| `identity-access` | Identity & tenant lifecycle | D1 `…-identity-access-db`, B2 `…-archive`, e-mail |
+| `ontology-manager` | Ontology (core) | D1 `…-ontology-manager-db` |
+| `data-integration` | Data fusion (supporting) | D1 `…-data-integration-db`, Workers AI (mapping drafts) |
+| `object-graph` | Object graph (core) | D1 `…-object-graph-db`, producer of `…-domain-events` |
+| `situation-awareness` | Situation (supporting) | Durable Object `SituationRoom` (SQLite) |
+| `decision-engine` | Decision (core) | D1 `…-decision-engine-db`, Workers AI (qwen3-30b-a3b, gpt-oss-20b fallback) |
 
 ## Repository layout
 
-Layout and naming follow Google TypeScript style (`gts`).
+Layout and naming follow Google TypeScript Style (`gts`).
 
 ```
-apps/<worker>/          wrangler.jsonc.tpl + src/{env,container,service,index}.ts
-apps/web/               React 19 SPA, Pages Functions proxy, Playwright e2e
-packages/shared-kernel/ CallCtx, Rid, DomainEvent, AppError/Problem, FilterExpr, JSONLogic, JWT, crypto
-packages/<context>/     contract/ domain/ application/ infrastructure/ interface/
-packages/testing/       D1 over node:sqlite, DO SQL storage, KV, queues with DLQ, RPC binding fakes
-migrations/<db>/        D1 migrations (one directory per database)
-infra/                  Terraform: D1, KV, Queues, B2, Neo4j Aura
-scripts/                gen_wrangler.mjs, dev.sh, smoke.mjs, bootstrap.sh, reset.sh
-samples/supply-chain/   demo CSVs for the built-in pack
-tests/e2e/              in-process full-loop test through the gateway
+apps/<worker>/            wrangler.jsonc.tpl + src/{env,container,service,index}.ts
+apps/api-gateway/openapi.yaml   OpenAPI 3.2.0 — the public API contract
+apps/web/                 React 19 SPA (dark theme, zh-CN / en-US), Playwright e2e
+packages/shared-kernel/   CallCtx, errors (RFC 9457), Ed25519 JWT, filters, limits, lifecycle types; ./d1 repositories
+packages/<context>/       contract/ domain/ application/ infrastructure/ interface/
+packages/testing/         D1 over node:sqlite, DO SQL storage, queues, RPC bindings, Workers AI and rate-limit fakes
+migrations/<service>/     D1 migrations (one directory per database)
+infra/                    Terraform: D1, Queues, B2 bucket + keys, Turnstile, zone DNS / redirects / WAF
+scripts/                  gen_wrangler.mjs, gen_secrets.mjs, dev.sh, smoke.mjs, check_sql.mjs, cleanup_legacy.sh
+samples/supply-chain/     demo CSVs matching the template
+tests/e2e/                in-process full-loop tests through the gateway
 ```
 
 ## Getting started
@@ -80,65 +81,80 @@ Requirements: Node.js ≥ 22.13 (for `node:sqlite` in tests), pnpm 9, and Terraf
 ```bash
 corepack enable && pnpm install
 pnpm typecheck && pnpm lint && pnpm test     # everything runs offline
-pnpm dev                                     # 7 workers on :8787 (local D1/KV/DO/Queues) + web on :5173
-pnpm smoke                                   # drives the full loop over HTTP against pnpm dev
+pnpm dev                                     # 7 workers on :8787 (local D1/DO/Queues) + web on :5173
+pnpm smoke                                   # HTTP smoke test against pnpm dev
 ```
 
-Local login is `admin@ontodecide.local` / `Admin12345!`. The bootstrap admin is created on the first login against an empty database.
-
-Once logged in, a first walkthrough:
-
-1. **Ontology** → import the *Supply chain* pack.
-2. **Sources** → create three file sources and upload `samples/supply-chain/*.csv`.
-3. Watch the **cockpit** update.
-4. Upload a supplier row with `riskScore ≥ 70`. A HIGH alert appears, followed by an AI recommendation.
-5. Approve it in **Recommendations**.
+Open the app at http://localhost:5173. Locally no e-mail is sent (`EMAIL_MODE=log`): the identity-access log prints each sign-in code. Turnstile uses Cloudflare's always-pass test keys, and without B2 keys archives are kept in memory. The local admin e-mail and setup code are in `.wrangler/dev-secrets.json`, which `gen_wrangler --env local` generates once. Note that `pnpm dev` resets the local `.wrangler/state` if it still holds a V1.3 schema.
 
 ## Deployment
 
-There is a single environment, **production** (GitHub environment `production`); resources are created and services deployed only from `main`. Terraform manages resources and Wrangler manages code. Each kind of configuration has exactly one source of truth, and the Cloudflare dashboard is read-only.
+There is one environment, **production** (GitHub environment `production`), deployed only from `main`. Each kind of configuration has exactly one source of truth.
 
 | What | Source of truth | Tool |
 | --- | --- | --- |
-| D1, KV, Queues, B2 bucket + key, Neo4j Aura | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
-| Pages project `ontodecide-ce` | `.github/workflows/deploy.yml` (web job) | Deploy workflow (created if missing) |
-| Worker bindings, vars, crons, DO migrations, queue consumers | `apps/*/wrangler.jsonc.tpl` | `scripts/gen_wrangler.mjs` renders ids from `terraform output -json` |
-| Pages binding (`GATEWAY` → `ontodecide-prd-api-gateway`) | `apps/web/wrangler.jsonc` | `wrangler pages deploy` |
-| D1 schema | `migrations/<db>/*.sql` | `wrangler d1 migrations apply` |
-| Secrets | GitHub Secrets | `wrangler secret bulk` |
-| Vectorize index | `scripts/bootstrap.sh` | wrangler (idempotent) |
+| D1 ×5, Queues ×2, B2 archive bucket + keys, Turnstile, zone DNS / redirects / WAF rule | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
+| Workers: code, bindings, vars, routes, crons, DO migrations, queue consumers | `apps/*/wrangler.jsonc.tpl` | Wrangler (`scripts/gen_wrangler.mjs` renders ids from `terraform output -json`) |
+| Pages project `ontodecide-ce` + custom domain | `.github/workflows/deploy.yml` (web job) | Wrangler (created if missing) |
+| D1 schema | `migrations/<service>/*.sql` | `wrangler d1 migrations apply` |
+| Secrets | GitHub Secrets + sensitive Terraform outputs | `wrangler secret bulk` |
 
-The workflows run as one chain on `main`, each started by the previous one finishing, so services never deploy before the infrastructure for the same commit is applied:
+The release chain is unchanged:
 
 ```
 push to main → CI → Terraform → Deploy
 ```
 
-* **`ci.yml`** runs typecheck, lint (gts + dependency-cruiser), tests, the web build with the 250 KB bundle budget, and Worker dry-run bundles.
-* **`terraform.yml`** runs Format → Validate → Lint → Plan → Apply. Format, Validate, Lint and Plan run on every PR and on `main` (after every green CI run). Apply runs **only on `main`**, only when the plan has changes, and only after a reviewer approves the `production` environment. A nightly run checks for drift.
-* **`deploy.yml`** runs Build (production configs rendered from Terraform outputs, Worker dry-run bundles, web build) on every PR and on `main`. Deploying happens **only on `main`**, after Terraform succeeds (or manually): after one approval on the `production` environment, each service deploys (migrations → deploy → secrets) in its own job, and a job waits for the services it binds to:
+* **`ci.yml`** runs typecheck, lint (gts, dependency-cruiser and the SQL tenant-scope check), tests, the web build with the 250 KB bundle budget, and Worker dry-run bundles.
+* **`terraform.yml`** runs Format → Validate → Lint → Plan on every PR and on `main`. Apply runs only on `main`, only when the plan has changes, and only after a reviewer approves the `production` environment. A nightly run checks for drift.
+* **`deploy.yml`** runs Build (production configs, dry-run bundles, web build) on every PR. On `main` it pauses for one approval, then deploys each service in its own job in dependency order:
 
   ```
-  ontology-manager ──► data-integration ──► object-graph ──► situation-awareness ──► decision-engine ──► api-gateway ──► Pages
-  identity-access  ─────────────────────────────────────────────────────────────────────────────────────┘
+  ontology-manager ─► object-graph ─► situation-awareness ─► decision-engine ─┐
+                          └──────────► data-integration ─────────────────────┤
+                                                        identity-access ◄────┘ ─► api-gateway ─► Pages
   ```
 
-**Secrets:** `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `B2_MASTER_KEY_ID/KEY`, `B2_STATE_KEY_ID/KEY`, `NEO4J_AURA_CLIENT_ID/SECRET`, `JWT_SECRET` (`kid:secret[,kid:secret]`), `APPROVAL_SECRET`, `WRITEBACK_SECRET`, `CONNECTOR_ENC_KEY`, `BOOTSTRAP_ADMIN_PASSWORD`, and optionally `GEMINI_API_KEY` / `GROQ_API_KEY`.
+Set `APP_DOMAIN` (GitHub variable) to the purchased domain; its zone must already exist in the Cloudflare account. The SPA is then served at `https://app.<domain>` and the API at `https://app.<domain>/api/*` (Workers Route, same origin). Until it is set, the SPA falls back to `https://ontodecide-ce.pages.dev` with a Pages Function forwarding `/api/*` to the gateway. The full list with comments is in [`.env.example`](.env.example).
 
-**Variable:** `BOOTSTRAP_ADMIN_EMAIL`.
+**GitHub secrets:**
+- Cloudflare: `CF_API_TOKEN` (Workers, D1, Queues, Pages, Turnstile, account rulesets/lists; zone DNS, settings, WAF and redirect rules), `CF_ACCOUNT_ID`.
+- Backblaze: `B2_MASTER_KEY_ID` / `B2_MASTER_KEY`, and optionally `B2_STATE_KEY_ID` / `B2_STATE_KEY`.
+- Signing and encryption: `JWT_SIGNING_KEY` (Ed25519 JWK; add `JWT_SIGNING_KEY_PREV` during a key rotation), `EMAIL_PEPPER`, `EMAIL_ENC_KEY`, `BOOTSTRAP_ADMIN_SETUP_CODE`. Generate all four with `pnpm gen:secrets`.
+- E-mail: `RESEND_API_KEY`, `BREVO_API_KEY`.
+- Optional: `CF_ANALYTICS_TOKEN` (read-only Analytics token, for the account-wide 80% check).
+- `NEO4J_AURA_CLIENT_ID` / `NEO4J_AURA_CLIENT_SECRET`: keep only until the V1.3 cleanup below is done.
+
+The Turnstile secret and the B2 archive keys come from Terraform outputs, so you don't set them yourself.
+
+**GitHub variables:**
+- `BOOTSTRAP_ADMIN_EMAIL`, set on the `production` environment.
+- `APP_DOMAIN`.
+- `MAIL_FROM`: defaults to `noreply@mail.<domain>`, and is required when no domain is set.
+- Optional: `EMAIL_MODE`, `DMARC_POLICY`, `MAIL_DNS_RECORDS`, `ARCHIVE_SIGN_SLOT`, `D1_RESET_LEGACY`.
+
+**Upgrading an existing V1.3 deployment** (one time):
+1. Merge to `main`. Terraform stops managing the old resources without deleting them: the KV namespaces, the 10 queues, the raw bucket and its key, the situation D1 and the Neo4j instance (`infra/legacy.tf`).
+2. Set the variable `D1_RESET_LEGACY=true` for **one** deploy. The V2.4 schema replaces the V1.3 one, and **all data in the five databases is dropped**; without the flag, the deploy stops before touching them.
+3. Remove `D1_RESET_LEGACY`. Run `scripts/cleanup_legacy.sh`, which deletes the released resources and old Worker secrets, skipping anything still bound. Then delete `infra/legacy.tf`, the neo4jaura provider, the AURA secrets, and the old secrets `JWT_SECRET`, `APPROVAL_SECRET`, `WRITEBACK_SECRET`, `CONNECTOR_ENC_KEY`, `BOOTSTRAP_ADMIN_PASSWORD`, `GEMINI_API_KEY`, `GROQ_API_KEY` and variables `APP_BASE_URL`, `EMAIL_FROM`.
+4. In both the Resend and Brevo dashboards, turn off open and click tracking, so the archive download links in e-mails are not rewritten. Enable HSTS on the zone in the dashboard; the provider does not manage it cleanly.
+
+Before go-live, the design asks for three live checks:
+- `/api/*` on `app.<domain>` reaches the Worker Route, not Pages.
+- Workers AI qwen3 accepts `enable_thinking: false` and JSON-schema output. The code falls back automatically either way.
+- The Rate Limiting bindings work on the Free plan.
 
 ## Free-tier guardrails
 
-* **UsageGuard** counts daily usage per resource. It warns at 80%; at 95% it pauses non-critical writes (QUOTA_EXCEEDED 503), while reads and approvals still work.
-* **D1 writes** are kept down in two ways. Writes are skipped when the props hash is unchanged. Each write batch produces one aggregated situation event.
-* **Degradation paths:**
-  * Neo4j unavailable → 2-hop D1 traversal, with `degraded: true` in the response.
-  * LLM chain exhausted → rule-based recommendations.
-  * WebSocket down → 30-second polling.
-* **Per-call limits** keep each invocation within the 10 ms CPU budget:
-  * the browser parses files;
-  * each ingest message carries at most 50 records;
-  * simulation is capped at 500 nodes and 3 hops.
+* Admission control: ≤ 20 sign-ups per day, ≤ 60 active trial workspaces, a purge backlog of ≤ 10, and sign-up closes automatically at 80% of any account-wide quota.
+* Personal limits: ≤ 300 objects, ≤ 900 links, ≤ 2,000 imported rows per day, ≤ 3 AI recommendations and ≤ 2 AI mapping drafts per day.
+* D1 writes are kept low in four ways:
+  * `WITHOUT ROWID` tables;
+  * a single index on property values;
+  * single-statement `json_each` batch writes;
+  * skipping writes when the props hash is unchanged.
+* Scarce actions use atomic capped counters.
+* Degradation paths: when the AI quota runs out or a model fails, recommendations fall back to rule ranking (labelled 「规则排序」). When Resend is over quota, e-mail goes through Brevo. When the WebSocket fails, the cockpit polls every 30 s.
 
 ## License
 

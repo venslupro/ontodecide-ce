@@ -1,105 +1,72 @@
 /**
- * @fileoverview Outbox dispatcher: delivers domain_event rows to the
- * graph-sync and situation-events queues and marks them dispatched.
+ * @fileoverview domain-events delivery: the queue publisher (splits events
+ * larger than 64 KB by rid) and the cross-workspace outbox store used by
+ * the redelivery cron (SystemRepository).
  */
 
-import type {QueueSender} from '@ontodecide/shared-kernel';
-import type {GraphSyncMsg, SituationEventMsg} from '../contract';
-import type {Outbox, OutboxEvent} from '../application/ports';
-import {chunks} from './rows';
+import {parseJson} from '@ontodecide/shared-kernel';
+import type {DomainEventMsg, QueueSender} from '@ontodecide/shared-kernel';
+import {
+  SystemRepository,
+  hasTombstone,
+  sweepTombstones,
+} from '@ontodecide/shared-kernel/d1';
+import type {
+  EventPublisher,
+  OutboxRelayStore,
+  PendingEvent,
+} from '../application/ports';
+import {splitEvent} from '../domain';
 
-/** Messages per sendBatch call (Cloudflare limit is 100 / 256 KB). */
-const SEND_BATCH = 50;
-
-/** D1 + Queues outbox. */
-export class QueueOutbox implements Outbox {
+/** Publishes domain events to the `domain-events` queue. */
+export class QueueEventPublisher implements EventPublisher {
   constructor(
-    private readonly db: D1Database,
-    private readonly graphSync: QueueSender<GraphSyncMsg>,
-    private readonly situation: QueueSender<SituationEventMsg>,
+    private readonly queue: Pick<QueueSender<DomainEventMsg>, 'send'>,
+    private readonly maxBytes?: number,
   ) {}
 
-  async dispatch(events: readonly OutboxEvent[], now: Date): Promise<void> {
-    if (!events.length) return;
-    const graph = events.filter(e => e.topic === 'graph-sync');
-    const sit = events.filter(e => e.topic === 'situation-events');
-    for (const part of chunks(graph, SEND_BATCH)) {
-      await this.graphSync.sendBatch(
-        part.map(e => ({body: e.payload as GraphSyncMsg})),
-      );
+  async publish(msg: DomainEventMsg): Promise<void> {
+    for (const part of splitEvent(msg, this.maxBytes)) {
+      await this.queue.send(part);
     }
-    for (const part of chunks(sit, SEND_BATCH)) {
-      await this.situation.sendBatch(
-        part.map(e => ({body: e.payload as SituationEventMsg})),
-      );
+  }
+}
+
+/** Outbox rows of every workspace (cron only). */
+export class D1OutboxRelay
+  extends SystemRepository
+  implements OutboxRelayStore
+{
+  async oldest(olderThanMs: number, limit: number): Promise<PendingEvent[]> {
+    const {results} = await this.sql(
+      `SELECT tenant_id, id, payload FROM domain_event
+       WHERE occurred_at <= ?1 ORDER BY occurred_at, id LIMIT ?2`,
+      olderThanMs,
+      limit,
+    ).all<{tenant_id: string; id: string; payload: string}>();
+    const out: PendingEvent[] = [];
+    for (const r of results) {
+      const msg = parseJson<DomainEventMsg | null>(r.payload, null);
+      if (msg) out.push({tid: r.tenant_id, id: r.id, msg});
+      // An undecodable row would block the queue head forever.
+      else await this.delete(r.tenant_id, r.id);
     }
-    const byTenant = new Map<string, string[]>();
-    for (const e of events) {
-      byTenant.set(e.tenantId, [...(byTenant.get(e.tenantId) ?? []), e.id]);
-    }
-    await this.db.batch(
-      [...byTenant].map(([tenantId, ids]) =>
-        this.db
-          .prepare(
-            `UPDATE domain_event SET dispatched_at = ?
-             WHERE tenant_id = ? AND id IN (SELECT value FROM json_each(?))`,
-          )
-          .bind(now.getTime(), tenantId, JSON.stringify(ids)),
-      ),
-    );
+    return out;
   }
 
-  async redispatchPending(
-    olderThan: number,
-    now: Date,
-    limit = 500,
-  ): Promise<number> {
-    // System maintenance scan across tenants (cron only).
-    const {results} = await this.db
-      .prepare(
-        `SELECT id, tenant_id, type, topic, payload, occurred_at FROM domain_event
-         WHERE dispatched_at IS NULL AND occurred_at < ?
-         ORDER BY occurred_at LIMIT ?`,
-      )
-      .bind(olderThan, limit)
-      .all<{
-        id: string;
-        tenant_id: string;
-        type: string;
-        topic: string;
-        payload: string;
-        occurred_at: number;
-      }>();
-    const events = results
-      .filter(r => r.topic === 'graph-sync' || r.topic === 'situation-events')
-      .map(
-        r =>
-          ({
-            id: r.id,
-            tenantId: r.tenant_id,
-            type: r.type,
-            topic: r.topic,
-            payload: JSON.parse(r.payload),
-            occurredAt: Number(r.occurred_at),
-          }) as OutboxEvent,
-      );
-    await this.dispatch(events, now);
-    return events.length;
+  async delete(tid: string, id: string): Promise<void> {
+    await this.sql(
+      'DELETE FROM domain_event WHERE tenant_id = ?1 AND id = ?2',
+      tid,
+      id,
+    ).run();
   }
 
-  async purgeDispatched(before: number): Promise<number> {
-    const r = await this.db
-      .prepare(
-        'DELETE FROM domain_event WHERE dispatched_at IS NOT NULL AND dispatched_at < ?',
-      )
-      .bind(before)
-      .run();
-    return r.meta.changes ?? 0;
+  isTombstoned(tid: string): Promise<boolean> {
+    return hasTombstone(this.db, tid);
   }
 
-  async publishGraphSync(msgs: readonly GraphSyncMsg[]): Promise<void> {
-    for (const part of chunks(msgs, SEND_BATCH)) {
-      await this.graphSync.sendBatch(part.map(body => ({body})));
-    }
+  sweepTombstones(nowMs: number): Promise<void> {
+    return sweepTombstones(this.db, nowMs);
   }
 }

@@ -1,36 +1,97 @@
+/**
+ * @fileoverview Tests of FilterExpr → og_prop_index SQL translation,
+ * executed against the real migrations to check SQL and semantics agree.
+ */
+
 import {describe, expect, it} from 'vitest';
-import {filterToSql, likeEscape, orderToSql} from './sql_filter';
+import {matchFilter} from '@ontodecide/shared-kernel';
+import type {FilterExpr} from '@ontodecide/shared-kernel';
+import {SqliteD1} from '@ontodecide/testing';
+import {join} from 'node:path';
+import {REPO_ROOT} from '@ontodecide/testing';
+import {SqlArgs, filterToSql, likePattern} from './sql_filter';
 
-describe('sql_filter', () => {
-  it('translates leaves to og_prop_index lookups', () => {
-    const f = filterToSql({
-      op: 'and',
+const ROWS: Record<string, Record<string, string | number>> = {
+  r1: {country: 'CN', score: 0.9, tier: 1, name: 'Acme_Metals'},
+  r2: {country: 'DE', score: 0.1, tier: 2, name: 'Beta'},
+  r3: {score: 0.5, tier: 3, name: '100%Co'},
+};
+
+function db(): SqliteD1 {
+  const d = new SqliteD1().migrate(
+    join(REPO_ROOT, 'migrations', 'object-graph'),
+  );
+  for (const [rid, props] of Object.entries(ROWS)) {
+    for (const [prop, value] of Object.entries(props)) {
+      d.raw
+        .prepare(
+          `INSERT INTO og_prop_index (tenant_id, rid, prop, object_type, value)
+           VALUES ('t', ?, ?, 'S', ?)`,
+        )
+        .run(rid, prop, value);
+    }
+  }
+  return d;
+}
+
+function sqlMatches(d: SqliteD1, f: FilterExpr): string[] {
+  const args = new SqlArgs();
+  const where = filterToSql(f, 'o', args);
+  const rows = d.raw
+    .prepare(
+      `SELECT o.rid FROM (SELECT DISTINCT rid FROM og_prop_index) o
+       WHERE ${where} ORDER BY o.rid`,
+    )
+    .all('t', ...(args.values() as (string | number)[])) as {rid: string}[];
+  return rows.map(r => r.rid);
+}
+
+function memMatches(f: FilterExpr): string[] {
+  return Object.entries(ROWS)
+    .filter(([, p]) => matchFilter(f, p))
+    .map(([rid]) => rid)
+    .sort();
+}
+
+describe('filterToSql', () => {
+  const d = db();
+  const cases: FilterExpr[] = [
+    {op: 'eq', prop: 'country', value: 'CN'},
+    {op: 'neq', prop: 'country', value: 'CN'},
+    {op: 'gt', prop: 'score', value: 0.3},
+    {op: 'lte', prop: 'tier', value: 2},
+    {op: 'in', prop: 'tier', values: [1, 3]},
+    {op: 'contains', prop: 'name', value: 'metal'},
+    {op: 'contains', prop: 'name', value: '%'},
+    {op: 'contains', prop: 'name', value: '_'},
+    {op: 'exists', prop: 'country'},
+    {op: 'not', arg: {op: 'exists', prop: 'country'}},
+    {
+      op: 'or',
       args: [
-        {op: 'gte', prop: 'riskScore', value: 70},
-        {op: 'eq', prop: 'status', value: 'active'},
-        {op: 'eq', prop: 'flag', value: true},
+        {op: 'eq', prop: 'tier', value: 3},
+        {
+          op: 'and',
+          args: [
+            {op: 'gte', prop: 'score', value: 0.9},
+            {op: 'eq', prop: 'country', value: 'CN'},
+          ],
+        },
       ],
+    },
+  ];
+  for (const f of cases) {
+    it(`agrees with matchFilter for ${JSON.stringify(f)}`, () => {
+      expect(sqlMatches(d, f)).toEqual(memMatches(f));
     });
-    expect(f.sql).toContain('i.num_val >= ?');
-    expect(f.sql).toContain('i.str_val = ?');
-    expect(f.params).toEqual(['riskScore', 70, 'status', 'active', 'flag', 1]);
-    const n = filterToSql({
-      op: 'not',
-      arg: {op: 'in', prop: 'c', values: ['a', 1]},
-    });
-    expect(n.sql.startsWith('NOT (')).toBe(true);
-    expect(n.params).toEqual(['c', '[1]', '["a"]']);
-    expect(filterToSql({op: 'or', args: []}).sql).toBe('1 = 0');
-  });
+  }
 
-  it('escapes LIKE wildcards and orders nulls last', () => {
-    expect(likeEscape('50%_a\\')).toBe('50\\%\\_a\\\\');
-    const o = orderToSql([
-      {prop: 'riskScore', dir: 'desc'},
-      {prop: 'updatedAt', dir: 'asc'},
-    ]);
-    expect(o.joins.params).toEqual(['riskScore']);
-    expect(o.orderBy).toContain('s0.num_val DESC');
-    expect(o.orderBy.endsWith('o.rid ASC')).toBe(true);
+  it('numbers placeholders from ?2', () => {
+    const args = new SqlArgs();
+    const sql = filterToSql({op: 'eq', prop: 'a', value: true}, 'o', args);
+    expect(sql).toContain('?2');
+    expect(sql).toContain('?3');
+    expect(args.values()).toEqual(['a', 1]);
+    expect(likePattern('a%b_c\\')).toBe('%a\\%b\\_c\\\\%');
   });
 });

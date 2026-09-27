@@ -1,52 +1,52 @@
 /**
- * @fileoverview Compact preview table of parsed source rows.
+ * @fileoverview Compact table of parsed sample rows (values shown as-is:
+ * business data is never translated).
  */
 
-import {useTranslation} from 'react-i18next';
+import type {SourceRow} from '../../../workers/parse_core';
 import {Table, TBody, Td, Th, THead, Tr} from '../../../shared/ui/table';
 
-function cell(v: unknown): string {
+/** Renders a cell value as text. */
+export function cellText(v: unknown): string {
   if (v === null || v === undefined) return '';
-  return typeof v === 'object' ? JSON.stringify(v) : String(v);
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
 }
 
-/** Shows up to `max` rows of `fields`. */
+/** Sample rows table. */
 export function SampleTable({
   fields,
   rows,
-  max = 8,
   caption,
 }: {
   fields: readonly string[];
-  rows: readonly Record<string, unknown>[];
-  max?: number;
-  caption?: string;
+  rows: readonly SourceRow[];
+  caption: string;
 }) {
-  const {t} = useTranslation('sources');
   return (
     <div className="max-h-80 overflow-auto rounded-lg border border-line">
-      <Table aria-label={caption ?? t('upload.sample')}>
+      <Table aria-label={caption}>
         <THead>
-          <tr>
+          <Tr>
             <Th className="w-10 text-right">#</Th>
             {fields.map(f => (
               <Th key={f} className="font-mono">
                 {f}
               </Th>
             ))}
-          </tr>
+          </Tr>
         </THead>
         <TBody>
-          {rows.slice(0, max).map((r, i) => (
+          {rows.map((r, i) => (
             <Tr key={i}>
               <Td className="num text-right text-xs text-dim">{i + 1}</Td>
               {fields.map(f => (
                 <Td
                   key={f}
-                  className="max-w-56 truncate text-xs whitespace-nowrap"
-                  title={cell(r[f])}
+                  className="max-w-56 truncate text-xs"
+                  title={cellText(r[f])}
                 >
-                  {cell(r[f]) || <span className="text-dim">—</span>}
+                  {cellText(r[f])}
                 </Td>
               ))}
             </Tr>

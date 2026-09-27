@@ -1,9 +1,6 @@
 /**
- * @fileoverview Decision interface layer: RPC object, queue and cron
- * dispatch.
+ * @fileoverview Decision interface layer: DecisionRpc and TenantLifecycle.
  */
 
-export * from './cron';
-export * from './handlers';
-export * from './queue';
+export * from './lifecycle';
 export * from './rpc';

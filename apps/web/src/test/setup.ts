@@ -6,7 +6,9 @@
 import '@testing-library/jest-dom/vitest';
 import {cleanup} from '@testing-library/react';
 import {afterAll, afterEach, beforeAll} from 'vitest';
-import {NAMESPACES, initI18n} from '../shared/lib/i18n';
+import {useSession} from '../entities/session/store';
+import {NAMESPACES, i18n, initI18n} from '../shared/lib/i18n';
+import {releaseAll} from '../shared/ws/stream';
 import {resetDb} from './handlers';
 import {server} from './server';
 
@@ -62,6 +64,17 @@ class InertWebSocket {
 }
 g.WebSocket = InertWebSocket;
 
+// Turnstile: an inert widget that passes at once (no third-party script).
+if (typeof window !== 'undefined') {
+  (window as unknown as {turnstile: unknown}).turnstile = {
+    render(_el: HTMLElement, o: {callback(t: string): void}) {
+      setTimeout(() => o.callback('turnstile-test-token'), 0);
+      return 'widget-1';
+    },
+    remove() {},
+  };
+}
+
 // --- i18n --------------------------------------------------------------------
 const bundles = import.meta.glob<Record<string, unknown>>(
   '../locales/*/*.json',
@@ -77,8 +90,12 @@ await initI18n({lng: 'zh-CN', resources, ns: [...NAMESPACES]});
 
 // --- MSW ---------------------------------------------------------------------
 beforeAll(() => server.listen({onUnhandledRequest: 'warn'}));
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  releaseAll();
+  useSession.getState().signOut();
+  useSession.getState().setClockSkew(0);
+  if (i18n.language !== 'zh-CN') await i18n.changeLanguage('zh-CN');
   server.resetHandlers();
   resetDb();
 });

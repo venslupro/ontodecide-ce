@@ -19,7 +19,7 @@ export function parseOrThrow<S extends z.ZodType>(
     throw new AppError(
       'VALIDATION_FAILED',
       errors[0]?.message ?? 'Invalid input',
-      {errors},
+      {extras: {errors}},
     );
   }
   return result.data;

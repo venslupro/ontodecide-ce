@@ -29,12 +29,12 @@ describe('resolveLanguage', () => {
   });
 
   it('formats ICU plurals and numbers in both languages', async () => {
-    expect(i18n.t('common:topbar.notifications', {count: 3})).toBe(
-      '通知中心，3 条未读',
+    expect(i18n.t('common:errors.CODE_INVALID', {left: 3})).toBe(
+      '验证码不正确，还可尝试 3 次',
     );
     await i18n.changeLanguage('en-US');
-    expect(i18n.t('common:topbar.notifications', {count: 1})).toBe(
-      'Notifications, 1 unread',
+    expect(i18n.t('common:errors.RATE_LIMITED', {seconds: 12})).toBe(
+      'Too many requests, retry in 12 s',
     );
     expect(i18n.t('common:state.total', {count: 12345})).toBe('12,345 total');
     expect(document.documentElement.lang).toBe('en-US');

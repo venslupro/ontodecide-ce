@@ -1,4 +1,21 @@
-productId,name,dailyDemand,inventoryDays,safetyStockDays,revenuePerUnit
-P-900,Edge Gateway X1,320,12,5,1299
-P-901,Handheld Scanner S2,180,6,4,899
-P-902,Smart Sensor Hub,450,9,5,459
+productId,name,category,revenue,dailyDemand,status
+P-001,Edge Gateway X1,IoT,10000,50,active
+P-002,Handheld Scanner S2,Industrial,225000,225,active
+P-003,Smart Sensor Hub,Energy,112500,125,active
+P-004,Industrial Router R5,Retail,240000,300,active
+P-005,Thermal Camera T3,Medical,140000,200,active
+P-006,Asset Tracker A1,IoT,60000,100,active
+P-007,Smart Meter M4,Industrial,137500,275,active
+P-008,Control Panel C7,Energy,70000,175,active
+P-009,Robot Arm Controller,Retail,22500,75,active
+P-010,Vision Module V2,Medical,50000,250,active
+P-011,Charging Station E1,IoT,150000,150,active
+P-012,Portable Power Bank,Industrial,45000,50,active
+P-013,Smart Lock L3,Energy,180000,225,active
+P-014,Air Quality Monitor,Retail,87500,125,active
+P-015,Drone Flight Unit,Medical,180000,300,active
+P-016,POS Terminal P6,IoT,100000,200,active
+P-017,Medical Pump Driver,Industrial,40000,100,active
+P-018,Solar Inverter S9,Energy,82500,275,active
+P-019,Fleet Telematics Box,Retail,35000,175,active
+P-020,Warehouse AGV Kit,Medical,75000,75,active

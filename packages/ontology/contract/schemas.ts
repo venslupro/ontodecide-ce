@@ -33,7 +33,6 @@ export const propertyDefSchema = z.object({
   required: z.boolean().optional(),
   unit: z.string().optional(),
   indexed: z.boolean().optional(),
-  markings: z.array(z.string()).optional(),
   semanticTags: z.array(z.string()).optional(),
   sensitive: z.boolean().optional(),
   enumValues: z.array(z.string()).optional(),
@@ -47,7 +46,6 @@ export const objectTypeDefSchema = z.object({
   primaryKey: z.string(),
   titleProperty: z.string(),
   properties: z.array(propertyDefSchema).min(1),
-  graphProjected: z.boolean().optional(),
   description: i18nText.optional(),
 });
 
@@ -106,61 +104,15 @@ export const actionTypeDefSchema = z.object({
       }),
     ]),
   ),
-  requiresApproval: z.boolean(),
   impact: z
     .array(z.object({property: z.string(), change: z.number().min(-1).max(1)}))
     .optional(),
-  writeback: z
-    .discriminatedUnion('kind', [
-      z.object({kind: z.literal('none')}),
-      z.object({kind: z.literal('webhook'), url: z.string().url()}),
-    ])
-    .optional(),
   description: i18nText.optional(),
 });
 
-export const schemaDefSchema = z.object({
-  apiName,
-  displayName: i18nText,
-  version: z
-    .string()
-    .regex(/^\d+\.\d+\.\d+$/)
-    .optional(),
-  description: i18nText.optional(),
-  objectTypes: z.array(objectTypeDefSchema),
-  linkTypes: z.array(linkTypeDefSchema),
-  actionTypes: z.array(actionTypeDefSchema),
-  functions: z.array(
-    z.object({
-      apiName,
-      displayName: i18nText.optional(),
-      objectType: z.string().optional(),
-      expr: jsonLogic,
-      returns: dataType,
-    }),
-  ),
-  simulationKpis: z
-    .array(
-      z.object({
-        apiName,
-        displayName: i18nText,
-        objectType: z.string(),
-        property: z.string().optional(),
-        agg: z.enum(['sum', 'avg', 'count']),
-        unit: z.string().optional(),
-        higherIsBetter: z.boolean(),
-      }),
-    )
-    .optional(),
-});
-
-export const publishInputSchema = z
-  .object({confirmVersion: z.string().optional()})
-  .default({});
-
-export const importPackInputSchema = z
-  .object({
-    packId: z.string().optional(),
-    pack: z.record(z.string(), z.unknown()).optional(),
-  })
-  .refine(v => v.packId || v.pack, 'packId or pack is required');
+/** Body of PUT/POST /object-types|link-types|action-types. */
+export const defSchemas = {
+  'object-types': objectTypeDefSchema,
+  'link-types': linkTypeDefSchema,
+  'action-types': actionTypeDefSchema,
+} as const;

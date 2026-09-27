@@ -15,21 +15,22 @@
 # so services always deploy after the infrastructure for the same commit is
 # applied. Also runnable manually (deploys only when run on main).
 #
-# `needs:` mirrors the service bindings in apps/*/wrangler.jsonc.tpl: a
-# service starts only after everything it binds to is live, and services
-# without a dependency between them deploy in parallel. If any service fails,
-# no further service starts and the rollout stops.
+# `needs:` mirrors the service bindings in apps/*/wrangler.jsonc.tpl
+# (docs/ARCHITECTURE.md 2.2): a service starts only after everything it
+# binds to is live, and services without a dependency between them deploy
+# in parallel. If any service fails, no further service starts and the
+# rollout stops.
 #
 # Service bindings:
 #   ontology-manager    → (none)
-#   identity-access     → (none)
-#   data-integration    → ontology-manager
-#   object-graph        → ontology-manager, data-integration
-#   situation-awareness → object-graph
-#   decision-engine     → ontology-manager, object-graph, situation-awareness,
-#                         Vectorize index
+#   object-graph        → ontology-manager
+#   situation-awareness → object-graph, ontology-manager
+#   decision-engine     → object-graph, situation-awareness, ontology-manager
+#   data-integration    → ontology-manager, object-graph
+#   identity-access     → TenantLifecycle of the five services above
 #   api-gateway         → all six services above
-#   web (Pages)         → api-gateway (creates the Pages project if missing)
+#   web (Pages)         → api-gateway (creates the Pages project if missing;
+#                         with APP_DOMAIN: pure static + custom domain)
 name: Deploy
 
 on:
@@ -55,13 +56,16 @@ env:
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
   AWS_ACCESS_KEY_ID: ${{ secrets.B2_STATE_KEY_ID || secrets.B2_MASTER_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
-  JWT_SECRET: ${{ secrets.JWT_SECRET }}
-  APPROVAL_SECRET: ${{ secrets.APPROVAL_SECRET }}
-  WRITEBACK_SECRET: ${{ secrets.WRITEBACK_SECRET }}
-  CONNECTOR_ENC_KEY: ${{ secrets.CONNECTOR_ENC_KEY }}
-  BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
-  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-  GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+  # Every render needs the signing key(s): api-gateway's JWT_PUBLIC_KEYS is
+  # derived from them (public parts only).
+  JWT_SIGNING_KEY: ${{ secrets.JWT_SIGNING_KEY }}
+  JWT_SIGNING_KEY_PREV: ${{ secrets.JWT_SIGNING_KEY_PREV }}
+  # identity-access vars (repository variables).
+  APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+  MAIL_FROM: ${{ vars.MAIL_FROM }}
+  EMAIL_MODE: ${{ vars.EMAIL_MODE }}
+  # One-time V1.3 → V2.4 schema reset (scripts/d1_migrate.mjs).
+  D1_RESET_LEGACY: ${{ vars.D1_RESET_LEGACY }}
 
 jobs:
   build:
@@ -110,10 +114,16 @@ jobs:
           terraform -chdir=infra init -input=false > /dev/null
           # shellcheck disable=SC2086  # ALLOW_MISSING is empty or one flag.
           node scripts/gen_wrangler.mjs --env prod ${ALLOW_MISSING}
+          # Public Turnstile site key for the web build (test key until the
+          # widget exists).
+          sitekey="$(terraform -chdir=infra output -json 2>/dev/null \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+                try{process.stdout.write(JSON.parse(s).turnstile?.value?.sitekey??"")}catch{}})')"
+          echo "VITE_TURNSTILE_SITE_KEY=${sitekey:-1x00000000000000000000AA}" >> "$GITHUB_ENV"
       - name: Worker bundles (dry-run)
         run: |
-          for w in ontology-manager identity-access data-integration object-graph \
-                   situation-awareness decision-engine api-gateway; do
+          for w in ontology-manager object-graph situation-awareness decision-engine \
+                   data-integration identity-access api-gateway; do
             npx wrangler deploy --dry-run --outdir "dist/${w}" -c "apps/${w}/wrangler.jsonc"
           done
       - run: pnpm build:web
@@ -133,23 +143,6 @@ jobs:
     steps:
       - run: echo "Deploying ${SHA} to production." >> "$GITHUB_STEP_SUMMARY"
 
-  vectorize:
-    name: Vectorize index
-    needs: approve
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          ref: ${{ env.SHA }}
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22
-          package-manager-cache: false
-      - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
-      - run: pnpm install --frozen-lockfile
-      - run: bash scripts/bootstrap.sh
-
   ontology-manager:
     needs: [approve]
     runs-on: ubuntu-latest
@@ -163,36 +156,8 @@ jobs:
           worker: ontology-manager
           admin-email: ${{ needs.approve.outputs.admin-email }}
 
-  identity-access:
-    needs: [approve]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          ref: ${{ env.SHA }}
-      - uses: ./.github/actions/deploy-worker
-        with:
-          worker: identity-access
-          admin-email: ${{ needs.approve.outputs.admin-email }}
-          secrets: JWT_SECRET BOOTSTRAP_ADMIN_PASSWORD
-
-  data-integration:
-    needs: [approve, ontology-manager]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          ref: ${{ env.SHA }}
-      - uses: ./.github/actions/deploy-worker
-        with:
-          worker: data-integration
-          admin-email: ${{ needs.approve.outputs.admin-email }}
-          secrets: B2_KEY_ID B2_APP_KEY CONNECTOR_ENC_KEY
-
   object-graph:
-    needs: [approve, ontology-manager, data-integration]
+    needs: [approve, ontology-manager]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -203,10 +168,9 @@ jobs:
         with:
           worker: object-graph
           admin-email: ${{ needs.approve.outputs.admin-email }}
-          secrets: APPROVAL_SECRET WRITEBACK_SECRET NEO4J_URL NEO4J_USER NEO4J_PASSWORD
 
   situation-awareness:
-    needs: [approve, object-graph]
+    needs: [approve, ontology-manager, object-graph]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -219,12 +183,7 @@ jobs:
           admin-email: ${{ needs.approve.outputs.admin-email }}
 
   decision-engine:
-    needs:
-      - approve
-      - vectorize
-      - ontology-manager
-      - object-graph
-      - situation-awareness
+    needs: [approve, ontology-manager, object-graph, situation-awareness]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -235,7 +194,51 @@ jobs:
         with:
           worker: decision-engine
           admin-email: ${{ needs.approve.outputs.admin-email }}
-          secrets: APPROVAL_SECRET GEMINI_API_KEY GROQ_API_KEY
+
+  data-integration:
+    needs: [approve, ontology-manager, object-graph]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: ./.github/actions/deploy-worker
+        with:
+          worker: data-integration
+          admin-email: ${{ needs.approve.outputs.admin-email }}
+
+  identity-access:
+    needs:
+      - approve
+      - ontology-manager
+      - data-integration
+      - object-graph
+      - situation-awareness
+      - decision-engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EMAIL_PEPPER: ${{ secrets.EMAIL_PEPPER }}
+      EMAIL_ENC_KEY: ${{ secrets.EMAIL_ENC_KEY }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+      CF_ANALYTICS_TOKEN: ${{ secrets.CF_ANALYTICS_TOKEN }}
+      BOOTSTRAP_ADMIN_SETUP_CODE: ${{ secrets.BOOTSTRAP_ADMIN_SETUP_CODE }}
+      # TURNSTILE_SECRET and B2_* come from Terraform outputs (deploy-worker).
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: ./.github/actions/deploy-worker
+        with:
+          worker: identity-access
+          admin-email: ${{ needs.approve.outputs.admin-email }}
+          secrets: >-
+            JWT_SIGNING_KEY EMAIL_PEPPER EMAIL_ENC_KEY RESEND_API_KEY
+            BREVO_API_KEY TURNSTILE_SECRET B2_WRITE_KEY_ID B2_WRITE_APP_KEY
+            B2_SIGN_KEY_ID B2_SIGN_APP_KEY CF_ANALYTICS_TOKEN
+            BOOTSTRAP_ADMIN_EMAIL BOOTSTRAP_ADMIN_SETUP_CODE
 
   api-gateway:
     needs:
@@ -252,11 +255,11 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ env.SHA }}
+      # JWT_PUBLIC_KEYS is a var rendered from JWT_SIGNING_KEY(_PREV).
       - uses: ./.github/actions/deploy-worker
         with:
           worker: api-gateway
           admin-email: ${{ needs.approve.outputs.admin-email }}
-          secrets: JWT_SECRET
 
   web:
     name: web (Pages)
@@ -271,8 +274,18 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
       - run: corepack enable && corepack prepare pnpm@9.12.0 --activate
       - run: pnpm install --frozen-lockfile
+      - name: Turnstile site key
+        run: |
+          terraform -chdir=infra init -input=false > /dev/null
+          sitekey="$(terraform -chdir=infra output -json turnstile \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).sitekey))')"
+          echo "VITE_TURNSTILE_SITE_KEY=${sitekey}" >> "$GITHUB_ENV"
       - run: pnpm build:web
       # Terraform does not manage the Pages project; the first deploy (or the
       # first one after scripts/reset.sh) creates it.
@@ -286,6 +299,29 @@ jobs:
             200) echo "Pages project ontodecide-ce exists" ;;
             404) npx wrangler pages project create ontodecide-ce --production-branch main ;;
             *) echo "::error::Pages project lookup failed (HTTP ${status})"; exit 1 ;;
+          esac
+      # With a domain, /api/* is served by the api-gateway Workers Route on
+      # the same host: publish the SPA without the Pages Functions proxy and
+      # attach app.${APP_DOMAIN} (its CNAME is managed by Terraform).
+      - name: Custom domain (pure static)
+        if: env.APP_DOMAIN != ''
+        working-directory: apps/web
+        run: |
+          rm -rf functions
+          host="app.${APP_DOMAIN}"
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/ontodecide-ce/domains"
+          status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${api}/${host}")"
+          case "${status}" in
+            200) echo "Pages custom domain ${host} attached" ;;
+            404)
+              curl -sS --fail-with-body -X POST \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H 'Content-Type: application/json' \
+                -d "{\"name\":\"${host}\"}" "${api}" > /dev/null
+              echo "Attached Pages custom domain ${host}"
+              ;;
+            *) echo "::error::Pages domain lookup failed (HTTP ${status})"; exit 1 ;;
           esac
       - name: Deploy Pages
         working-directory: apps/web

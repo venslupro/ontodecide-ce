@@ -1,348 +1,238 @@
 /**
- * @fileoverview Ports of the ObjectGraph application layer. Infrastructure
- * provides the implementations (D1, queues, Neo4j, webhooks).
+ * @fileoverview Ports of the object-graph application layer (详细设计 6.11.3:
+ * ObjectWriter, ObjectReader, GraphTraversal; plus the action log, outbox,
+ * ontology and event publisher). D1 implementations live in
+ * infrastructure/.
  */
 
 import type {
-  IntegrationRpc,
-  WriteResult,
-} from '@ontodecide/integration/contract';
-import type {CompiledModel} from '@ontodecide/ontology/contract';
-import type {
   CallCtx,
   Clock,
+  DomainEventMsg,
   FilterExpr,
   Logger,
-  OrderBy,
   Rid,
 } from '@ontodecide/shared-kernel';
+import type {CompiledSchema} from '@ontodecide/ontology/contract';
+import type {ActionLogDto, ActionResult, GraphStats} from '../contract/types';
 import type {
-  ActionLogDto,
-  GraphSyncMsg,
-  MergeSuggestionDto,
-  ObjectSetDto,
-  ObjectSummary,
-  SituationEventMsg,
-  WritebackStatus,
-} from '../contract';
-import type {
-  AggregateFn,
-  FuzzyCandidate,
+  GraphCaps,
+  GraphCounts,
+  PlannedLink,
+  PlannedObject,
+  PropState,
+  SortPlan,
   StoredLink,
   StoredObject,
+  WalkHit,
 } from '../domain';
 
-/** Supplies the tenant's compiled ontology model. */
-export interface ModelProvider {
-  /**
-   * Returns the active model. A cached model is reused when its version
-   * equals `expectedVersion` (or, without one, while it is fresh).
-   */
-  get(
-    ctx: CallCtx,
-    opts?: {expectedVersion?: string; refresh?: boolean},
-  ): Promise<CompiledModel>;
+/** Compiled ontology of the caller's workspace. */
+export interface SchemaProvider {
+  get(ctx: CallCtx): Promise<CompiledSchema>;
 }
 
-/** Query over one object type; filters/orders use indexed properties only. */
-export interface ObjectQuery {
-  type: string;
-  filter?: FilterExpr;
-  orderBy?: OrderBy[];
-  offset: number;
-  limit: number;
+/** Sends a domain event (split into ≤ 64 KB messages). */
+export interface EventPublisher {
+  publish(msg: DomainEventMsg): Promise<void>;
 }
 
-/** Read access to objects and links. Every method is tenant scoped. */
+/** An outbox row written in the same batch as the business rows. */
+export interface OutboxRow {
+  id: string;
+  msg: DomainEventMsg;
+}
+
+/** Index row of an object. */
+export interface IndexRow {
+  prop: string;
+  value: string | number;
+}
+
+/** A planned object with its hash and index rows. */
+export interface HashedObject extends PlannedObject {
+  hash: string;
+  index: IndexRow[];
+}
+
+/** What a committed upsert actually wrote. */
+export interface UpsertCommit {
+  /** Rids inserted or updated. */
+  objects: Set<string>;
+  /** Link keys inserted or updated (see linkKey). */
+  links: Set<string>;
+}
+
+/** An update of one object guarded by its version. */
+export interface GuardedUpdate {
+  rid: Rid;
+  expectedVersion: number;
+  state: PropState;
+  title: string;
+  hash: string;
+  /** Replacement index rows, or null to keep the current ones. */
+  index: IndexRow[] | null;
+  nowMs: number;
+}
+
+/** An action log row. */
+export interface ActionLogRow {
+  id: string;
+  actionType: string;
+  targetRid: Rid;
+  params: Record<string, unknown>;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  actor: string;
+  actorUserId: string | null;
+  recommendationId: string | null;
+  idempotencyKey: string;
+  result: Omit<ActionResult, 'replayed'>;
+  executedAt: number;
+}
+
+/** Outcome of a guarded commit. */
+export type CommitOutcome = 'ok' | 'stale' | 'duplicate';
+
+/** Object reads (workspace-scoped). */
 export interface ObjectReader {
-  getByRid(tenantId: string, rid: Rid): Promise<StoredObject | null>;
-  getByRids(tenantId: string, rids: readonly Rid[]): Promise<StoredObject[]>;
-  /** Resolves `(type, primaryKey)` pairs with one query. */
-  getByKeys(
-    tenantId: string,
-    keys: readonly {type: string; primaryKey: string}[],
+  /** Object/link totals and whether the workspace is tombstoned. */
+  counts(): Promise<GraphCounts & {tombstoned: boolean}>;
+  /** Objects by (type, primary key), one query. */
+  findByKeys(
+    keys: {type: string; primaryKey: string}[],
   ): Promise<StoredObject[]>;
-  findAliases(
-    tenantId: string,
-    keys: readonly {sourceId: string; externalKey: string}[],
-  ): Promise<{sourceId: string; externalKey: string; rid: Rid}[]>;
-  /** Objects of a type whose title starts with the bucket character (≤ limit). */
-  fuzzyCandidates(
-    tenantId: string,
-    type: string,
-    bucket: string,
-    limit: number,
-  ): Promise<FuzzyCandidate[]>;
-  query(tenantId: string, q: ObjectQuery): Promise<StoredObject[]>;
-  count(tenantId: string, type: string, filter?: FilterExpr): Promise<number>;
-  /** RIDs matching an indexed filter (≤ limit). */
-  queryRids(
-    tenantId: string,
-    type: string,
-    filter: FilterExpr | undefined,
-    limit: number,
-  ): Promise<Rid[]>;
-  /** SQL aggregate over an indexed numeric property. */
-  aggregateIndexed(
-    tenantId: string,
-    type: string,
-    filter: FilterExpr | undefined,
-    prop: string,
-    fn: Exclude<AggregateFn, 'count'>,
-  ): Promise<number>;
-  links(
-    tenantId: string,
-    rids: readonly Rid[],
-    opts: {direction: 'out' | 'in' | 'both'; linkTypes?: readonly string[]},
-  ): Promise<StoredLink[]>;
-  summaries(
-    tenantId: string,
-    rids: readonly Rid[],
-  ): Promise<(ObjectSummary & {primaryKey: string})[]>;
-  search(
-    tenantId: string,
-    q: string,
-    type: string | undefined,
-    limit: number,
-  ): Promise<StoredObject[]>;
-  /** Pages through the objects of the given types ordered by RID. */
-  pageByTypes(
-    tenantId: string,
-    types: readonly string[],
-    afterRid: string,
-    limit: number,
-  ): Promise<StoredObject[]>;
-  /** Pages through links whose type is in `linkTypes`, ordered by key. */
-  pageLinks(
-    tenantId: string,
-    linkTypes: readonly string[],
-    after: {type: string; src: string; dst: string} | null,
-    limit: number,
-  ): Promise<StoredLink[]>;
-}
-
-/** Outbox event (one row in domain_event). */
-export type OutboxEvent =
-  | {
-      id: string;
-      tenantId: string;
-      type: string;
-      topic: 'situation-events';
-      payload: SituationEventMsg;
-      occurredAt: number;
-    }
-  | {
-      id: string;
-      tenantId: string;
-      type: 'GraphSync';
-      topic: 'graph-sync';
-      payload: GraphSyncMsg;
-      occurredAt: number;
-    };
-
-/** Stored action log entry. */
-export interface ActionLogRecord extends ActionLogDto {
-  tenantId: string;
-  writebackAttempts: number;
-}
-
-/** One write of a unit of work (committed atomically). */
-export type WriteOp =
-  | {kind: 'insertObject'; obj: StoredObject}
-  | {kind: 'updateObject'; obj: StoredObject}
-  | {kind: 'deleteObject'; tenantId: string; rid: Rid}
-  /** Aborts the whole commit (VERSION_CONFLICT) unless the version matches. */
-  | {kind: 'guardVersion'; tenantId: string; rid: Rid; version: number}
-  /** Upserts one og_prop_index row; a null value deletes it. */
-  | {
-      kind: 'setIndex';
-      tenantId: string;
-      type: string;
-      rid: Rid;
-      prop: string;
-      value: unknown;
-    }
-  | {kind: 'clearIndex'; tenantId: string; rid: Rid}
-  | {kind: 'clearIndexProp'; tenantId: string; type: string; prop: string}
-  | {kind: 'upsertLink'; tenantId: string; link: StoredLink}
-  | {kind: 'deleteLink'; tenantId: string; link: StoredLink}
-  | {kind: 'moveLinks'; tenantId: string; from: Rid; to: Rid}
-  | {
-      kind: 'alias';
-      tenantId: string;
-      sourceId: string;
-      externalKey: string;
-      rid: Rid;
-      /** Repoint an existing alias (merge accept); otherwise keep it. */
-      replace?: boolean;
-    }
-  | {
-      kind: 'mergeSuggestion';
-      tenantId: string;
-      id: string;
-      ridA: Rid;
-      ridB: Rid;
-      score: number;
-      createdAt: number;
-    }
-  | {
-      kind: 'resolveSuggestion';
-      tenantId: string;
-      id: string;
-      status: 'ACCEPTED' | 'REJECTED';
-    }
-  | {kind: 'actionLog'; entry: ActionLogRecord}
-  | {kind: 'outbox'; event: OutboxEvent}
-  | {
-      kind: 'inbox';
-      tenantId: string;
-      key: string;
-      result: WriteResult;
-      at: number;
-    }
-  | {kind: 'meta'; tenantId: string; key: string; value: string};
-
-/** Commits a unit of work in one atomic batch. */
-export interface ObjectWriter {
+  get(rid: Rid): Promise<StoredObject | null>;
+  getMany(rids: Rid[]): Promise<StoredObject[]>;
   /**
-   * Commits all ops atomically. Throws VERSION_CONFLICT when a guard fails
-   * and CONFLICT (`extras.duplicate = 'inbox'`) for a duplicate inbox key.
+   * Objects of an optional type matching free text and an indexed filter,
+   * ordered by `sort`; `limit` null returns every match.
    */
-  commit(ops: readonly WriteOp[]): Promise<void>;
+  query(spec: {
+    type?: string;
+    q?: string;
+    pushdown?: FilterExpr;
+    sort: SortPlan;
+    offset: number;
+    limit: number | null;
+  }): Promise<StoredObject[]>;
+  stats(): Promise<GraphStats>;
 }
 
-/** Outbox dispatch (queue delivery of committed events). */
-export interface Outbox {
-  /** Sends events to their queues and marks them dispatched. */
-  dispatch(events: readonly OutboxEvent[], now: Date): Promise<void>;
-  /** Re-sends events still undispatched and older than `olderThan` (ms). */
-  redispatchPending(
-    olderThan: number,
-    now: Date,
-    limit?: number,
-  ): Promise<number>;
-  /** Deletes dispatched events older than `before` (ms). */
-  purgeDispatched(before: number): Promise<number>;
-  /** Sends graph-sync messages directly (projection rebuild). */
-  publishGraphSync(msgs: readonly GraphSyncMsg[]): Promise<void>;
+/** Object writes (workspace-scoped); each call is one D1 batch. */
+export interface ObjectWriter {
+  commitUpsert(input: {
+    objects: HashedObject[];
+    links: PlannedLink[];
+    caps: GraphCaps;
+    outbox: OutboxRow | null;
+    nowMs: number;
+  }): Promise<UpsertCommit>;
+  commitPatch(update: GuardedUpdate, outbox: OutboxRow): Promise<CommitOutcome>;
+  commitAction(input: {
+    update: GuardedUpdate;
+    removeLinks: StoredLink[];
+    addLinks: StoredLink[];
+    log: ActionLogRow;
+    outbox: OutboxRow;
+  }): Promise<CommitOutcome>;
 }
 
-/** Traversal result (nodes with hop distance, edges between them). */
-export interface TraversalResult {
-  nodes: {rid: Rid; hop: number}[];
-  edges: StoredLink[];
-}
-
-/** Graph traversal (D1 or Neo4j). */
+/** Link traversal (workspace-scoped). */
 export interface GraphTraversal {
-  /** Outgoing traversal from the roots. */
-  impact(
-    tenantId: string,
-    q: {
-      rids: readonly Rid[];
-      linkTypes?: readonly string[];
-      maxHops: number;
-      limit: number;
-    },
-  ): Promise<TraversalResult>;
-  /** Paths between two objects, edges walkable in both directions. */
-  paths(
-    tenantId: string,
-    from: Rid,
-    to: Rid,
-    maxHops: number,
-  ): Promise<Rid[][]>;
+  /** Links from the given sources. */
+  linksFrom(rids: Rid[]): Promise<StoredLink[]>;
+  /** Links of one object in both directions, restricted to link types. */
+  linksOf(rid: Rid, types: string[]): Promise<StoredLink[]>;
+  /** Recursive walk around one object; returns ≤ `limit` hits by hop. */
+  walk(q: {
+    rid: Rid;
+    depth: 1 | 2;
+    direction: 'out' | 'in' | 'both';
+    types?: string[];
+    limit: number;
+  }): Promise<WalkHit[]>;
+  /** Outgoing impact walk (6.3.2); returns ≤ `limit` hits by hop. */
+  impactWalk(q: {
+    rids: Rid[];
+    types: string[];
+    depth: 1 | 2;
+    limit: number;
+  }): Promise<WalkHit[]>;
+  /** Links whose two ends are both in `rids`. */
+  edgesAmong(rids: string[], types?: string[]): Promise<StoredLink[]>;
 }
 
-/** Writes the Neo4j projection. */
-export interface GraphProjection {
-  readonly enabled: boolean;
-  sync(msg: GraphSyncMsg): Promise<void>;
-  heartbeat(at: Date): Promise<void>;
-}
-
-/** Delivers executed actions to external systems. */
-export interface WritebackPort {
-  /** Throws when delivery fails. */
-  send(req: {
-    url: string;
-    body: unknown;
-    idempotencyKey: string;
-  }): Promise<void>;
-}
-
-/** Action log storage (reads and writeback status updates). */
-export interface ActionLogRepository {
-  findByRecommendation(
-    tenantId: string,
-    recommendationId: string,
-    actionType: string,
-    target: Rid,
-  ): Promise<ActionLogRecord | null>;
-  list(
-    tenantId: string,
-    filter: {rid?: Rid; limit: number},
-  ): Promise<ActionLogRecord[]>;
-  setWriteback(
-    tenantId: string,
-    id: string,
-    status: WritebackStatus,
-    attempts: number,
-  ): Promise<void>;
-  /** System scan (all tenants): pending writebacks below the attempt cap. */
-  pendingWritebacks(
-    maxAttempts: number,
+/** Action log reads (workspace-scoped). */
+export interface ActionLogReader {
+  findByKey(key: string): Promise<{
+    actionType: string;
+    targetRid: string;
+    result: Omit<ActionResult, 'replayed'>;
+  } | null>;
+  listForTarget(
+    rid: Rid,
+    after: {at: number; id: string} | null,
     limit: number,
-  ): Promise<ActionLogRecord[]>;
+  ): Promise<ActionLogDto[]>;
 }
 
-/** Merge suggestion storage. */
-export interface MergeSuggestionRepository {
-  list(tenantId: string, limit: number): Promise<MergeSuggestionDto[]>;
-  get(tenantId: string, id: string): Promise<MergeSuggestionDto | null>;
+/** Outbox cleanup after delivery (workspace-scoped). */
+export interface OutboxStore {
+  delete(id: string): Promise<void>;
 }
 
-/** Saved object set storage. */
-export interface ObjectSetRepository {
-  list(tenantId: string): Promise<ObjectSetDto[]>;
-  get(tenantId: string, id: string): Promise<ObjectSetDto | null>;
-  save(tenantId: string, dto: ObjectSetDto): Promise<void>;
-}
-
-/** Stored idempotency record of an object-writes message. */
-export interface InboxRecord {
-  tenantId: string;
-  result: WriteResult;
-  reportedAt: number | null;
-}
-
-/** Per-tenant metadata and the message inbox. */
-export interface MetaRepository {
-  get(tenantId: string, key: string): Promise<string | null>;
-  set(tenantId: string, key: string, value: string): Promise<void>;
-  getInbox(tenantId: string, key: string): Promise<InboxRecord | null>;
-  markReported(tenantId: string, key: string, at: number): Promise<void>;
-  /** System maintenance: deletes inbox rows older than `before` (ms). */
-  purgeInbox(before: number): Promise<number>;
-}
-
-/** Everything the use cases need. */
-export interface AppDeps {
+/** Repositories of one workspace. */
+export interface TenantRepos {
   reader: ObjectReader;
   writer: ObjectWriter;
-  outbox: Outbox;
-  d1Traversal: GraphTraversal;
-  /** Present when the Neo4j projection is enabled. */
-  neo4jTraversal?: GraphTraversal;
-  projection: GraphProjection;
-  writeback: WritebackPort;
-  models: ModelProvider;
-  integration: Pick<IntegrationRpc, 'reportWriteResult'>;
-  actionLogs: ActionLogRepository;
-  suggestions: MergeSuggestionRepository;
-  objectSets: ObjectSetRepository;
-  meta: MetaRepository;
+  traversal: GraphTraversal;
+  actions: ActionLogReader;
+  outbox: OutboxStore;
+}
+
+/** An undelivered outbox row (any workspace). */
+export interface PendingEvent {
+  tid: string;
+  id: string;
+  msg: DomainEventMsg;
+}
+
+/** Cross-workspace outbox maintenance (cron only; SystemRepository). */
+export interface OutboxRelayStore {
+  oldest(olderThanMs: number, limit: number): Promise<PendingEvent[]>;
+  delete(tid: string, id: string): Promise<void>;
+  isTombstoned(tid: string): Promise<boolean>;
+  sweepTombstones(nowMs: number): Promise<void>;
+}
+
+/** A JSON Lines file exported by object-graph. */
+export type GraphExportFile = 'objects.jsonl' | 'links.jsonl' | 'audit.jsonl';
+
+/** Tenant lifecycle storage (lifecycle entry point only; SystemRepository). */
+export interface LifecycleStore {
+  /** Rows of a file after `after` (keyset), in key order, as JSON records. */
+  exportRows(
+    tid: string,
+    file: GraphExportFile,
+    after: string[] | null,
+    limit: number,
+  ): Promise<{key: string[]; record: unknown}[]>;
+  /** Deletes ≤ maxRows rows in purge order; `remaining` false when empty. */
+  purgeStep(
+    tid: string,
+    maxRows: number,
+  ): Promise<{deleted: number; remaining: boolean}>;
+  count(tid: string): Promise<number>;
+  writeTombstone(tid: string, nowMs: number): Promise<void>;
+}
+
+/** Dependencies shared by the use cases. */
+export interface GraphDeps {
+  repos(tid: string): TenantRepos;
+  schema: SchemaProvider;
+  publisher: EventPublisher;
   clock: Clock;
   logger: Logger;
-  approvalSecret: string;
+  caps: GraphCaps;
 }

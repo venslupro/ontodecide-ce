@@ -1,0 +1,121 @@
+{
+  "title": "自动化规则",
+  "description": "条件满足时产生告警。阈值型在对象变化时评估；定时型按间隔巡检（每工作区最多 3 条，最小间隔 1 小时）。",
+  "scheduledCount": "定时规则 {used}/{max}",
+  "actions": {
+    "create": "新建规则",
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除"
+  },
+  "empty": {
+    "title": "还没有自动化规则",
+    "hint": "新建一条规则，在条件满足时自动产生告警。"
+  },
+  "col": {
+    "name": "名称",
+    "trigger": "触发方式",
+    "objectType": "对象类型",
+    "condition": "条件",
+    "severity": "严重度",
+    "cooldown": "冷却",
+    "lastFired": "上次触发",
+    "nextRun": "下次运行",
+    "enabled": "启用",
+    "actions": "操作"
+  },
+  "never": "从未",
+  "pending": "待调度",
+  "onChange": "对象变化时",
+  "toggleLabel": "启用「{name}」",
+  "editLabel": "编辑「{name}」",
+  "deleteLabel": "删除「{name}」",
+  "toast": {
+    "enabled": "规则已启用",
+    "disabled": "规则已停用",
+    "toggleFailed": "切换失败",
+    "deleted": "已删除「{name}」",
+    "created": "规则已创建",
+    "updated": "规则已保存"
+  },
+  "delete": {
+    "title": "删除规则？",
+    "confirm": "确定删除「{name}」吗？已产生的告警会保留。"
+  },
+  "dialog": {
+    "createTitle": "新建自动化规则",
+    "editTitle": "编辑自动化规则",
+    "description": "选择对象类型并设置条件，满足时产生告警。"
+  },
+  "block": {
+    "scheduleLimit": "每个工作区最多 {max} 条定时规则，无法再新建定时规则",
+    "minInterval": "定时间隔最少 {min} 小时",
+    "maxInterval": "定时间隔最多 {maxHours} 小时",
+    "intervalInteger": "定时间隔须为整数小时"
+  },
+  "form": {
+    "nameZh": "名称（中文）",
+    "nameEn": "名称（英文）",
+    "nameEnHint": "未填时显示中文名称",
+    "trigger": "触发方式",
+    "everyHours": "间隔（小时）",
+    "everyHoursHint": "定时规则 {used}/{max}",
+    "objectType": "对象类型",
+    "chooseType": "选择对象类型",
+    "condition": "条件",
+    "chooseTypeFirst": "先选择对象类型",
+    "severity": "严重度",
+    "cooldown": "冷却（秒）",
+    "cooldownHint": "同一对象两次告警的最短间隔，0 到 {max}",
+    "enabled": "启用",
+    "effect": "效果",
+    "error": {
+      "nameRequired": "请填写中文名称",
+      "typeRequired": "请选择对象类型",
+      "conditionRequired": "至少需要一个完整的条件",
+      "cooldownRange": "请输入 0 到 {max} 之间的整数",
+      "server": "服务器校验未通过：{detail}"
+    }
+  },
+  "trigger": {
+    "threshold": "阈值（对象变化时）",
+    "schedule": "定时巡检"
+  },
+  "severity": {
+    "LOW": "低",
+    "MEDIUM": "中",
+    "HIGH": "高",
+    "CRITICAL": "严重"
+  },
+  "effect": {
+    "alert": "产生告警",
+    "note": "建议不会自动生成：可在告警详情或情景推演页手动生成。"
+  },
+  "summary": {
+    "noCondition": "无条件",
+    "and": "且",
+    "or": "或",
+    "not": "非",
+    "every": "每 {count} 小时",
+    "threshold": "阈值",
+    "cooldownNone": "无",
+    "cooldownHours": "{count} 小时",
+    "cooldownMinutes": "{count} 分钟",
+    "cooldownSeconds": "{count} 秒"
+  },
+  "ops": {
+    "eq": "等于",
+    "neq": "不等于",
+    "gt": "大于",
+    "gte": "大于等于",
+    "lt": "小于",
+    "lte": "小于等于",
+    "in": "属于",
+    "contains": "包含",
+    "exists": "有值"
+  },
+  "bool": {
+    "true": "是",
+    "false": "否"
+  }
+}

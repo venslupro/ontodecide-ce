@@ -1,1117 +1,1258 @@
 /**
- * @fileoverview The declarative public route table (ARCHITECTURE.md §4).
- * One entry per endpoint; new endpoints are new entries only.
+ * @fileoverview The declarative public route table (ARCHITECTURE.md 5,
+ * 修订说明书 10.2). One entry per operation; `op` is the operationId in
+ * `openapi.yaml`. Handlers only map HTTP ↔ RPC: no business rules live in
+ * the gateway.
  */
 
-import type {
-  AutomationDef,
-  CockpitLayout,
-  KpiDef,
-} from '@ontodecide/situation/contract';
+import type {RecStatus} from '@ontodecide/decision/contract';
 import {
-  automationDefSchema,
-  cockpitLayoutSchema,
-  kpiDefSchema,
-  replayDlqInputSchema,
-  updateAlertInputSchema,
-} from '@ontodecide/situation/contract';
-import type {
-  Perturbation,
-  RecStatus,
-  ScenarioInput,
-} from '@ontodecide/decision/contract';
-import {
-  candidateActionsInputSchema,
-  feedbackInputSchema,
-  generateRecommendationInputSchema,
-  rejectInputSchema,
-  runScenarioInputSchema,
+  decisionInputSchema,
+  generateInputSchema,
   scenarioInputSchema,
-  suggestMappingInputSchema,
 } from '@ontodecide/decision/contract';
 import {
-  changePasswordInputSchema,
-  createUserInputSchema,
-  grantMarkingInputSchema,
-  loginInputSchema,
-  updateMeInputSchema,
-  updateUserInputSchema,
+  addPasskeySchema,
+  adminDeleteUserSchema,
+  adminSettingsPatchSchema,
+  adminUserPatchSchema,
+  blockedDomainsSchema,
+  createSessionSchema,
+  meCodeSchema,
+  passkeyAssertionSchema,
+  passkeyOptionsSchema,
+  passkeySetupOptionsSchema,
+  passkeySetupSchema,
+  patchMeSchema,
+  recoverySchema,
+  sendCodeSchema,
+  terminationSchema,
 } from '@ontodecide/identity/contract';
-import type {SourceDef} from '@ontodecide/integration/contract';
 import {
-  batchInputSchema,
-  presignInputSchema,
-  replayInputSchema,
-  sourceDefSchema,
+  batchSchema,
+  createImportSchema,
+  mappingDraftSchema,
+  putMappingSchema,
 } from '@ontodecide/integration/contract';
-import type {ApplyActionCmd} from '@ontodecide/object-graph/contract';
 import {
-  applyActionInputSchema,
-  filterExprSchema,
-  objectSetDefSchema,
-  pageInputSchema,
-  resolveMergeInputSchema,
-  saveObjectSetInputSchema,
+  executeActionSchema,
+  linksQuerySchema,
+  mergePatchSchema,
+  ridSchema,
 } from '@ontodecide/object-graph/contract';
-import type {SchemaDef} from '@ontodecide/ontology/contract';
+import {defSchemas, type DefKind} from '@ontodecide/ontology/contract';
 import {
-  importPackInputSchema,
-  publishInputSchema,
-  schemaDefSchema,
-} from '@ontodecide/ontology/contract';
+  alertQuerySchema,
+  automationDefSchema,
+} from '@ontodecide/situation/contract';
 import {
   AppError,
-  type FilterExpr,
-  type ObjectSetDef,
+  filterExprSchema,
+  toEtag,
+  type PageRequest,
   type Rid,
 } from '@ontodecide/shared-kernel';
 import {z} from 'zod';
-import {login, logout, refresh} from './auth_handlers';
-import {importPackBff, overviewBff, publishBff, suggestMappingBff} from './bff';
 import {
-  forwardStream,
-  getConfig,
-  health,
-  telemetry,
-  webhook,
-} from './gateway_handlers';
-import {buildOpenApi} from './openapi';
-import {route, type AnyRoute} from './route_types';
+  assertionResponse,
+  logoutHandler,
+  refreshHandler,
+  sessionResponse,
+  sessionResultResponse,
+  setupResponse,
+} from './auth_handlers';
+import {exportBff, getMeBff, overviewBff} from './bff';
+import {empty, json, jsonWithEtag} from './http';
+import {OPENAPI_YAML} from './openapi_spec';
+import {route, type AnyRoute, type RouteHandler} from './route_types';
+import {streamHandler} from './stream';
 
-// ---------------------------------------------------------------------------
-// Query parameter schemas (string inputs, coerced).
+// —— Shared parameter and query schemas ——
 
-const limitQ = z.coerce.number().int().min(1).max(200).optional();
-const ridQ = z.string().startsWith('ri.');
-const csv = (item: z.ZodString, max: number) =>
-  z
-    .string()
-    .transform(s =>
-      s
-        .split(',')
-        .map(p => p.trim())
-        .filter(Boolean),
-    )
-    .pipe(z.array(item).min(1).max(max));
+/** Tenant / user id (26 upper-case alphanumerics, ULID-shaped). */
+const ulidParam = z.string().regex(/^[0-9A-Z]{26}$/);
+const idParam = z.string().min(1).max(128);
+const apiNameParam = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/);
+const tokenParam = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/);
 
-const jsonParam = z.string().transform((s, c) => {
-  try {
-    return JSON.parse(s) as unknown;
-  } catch {
-    c.addIssue({code: 'custom', message: 'Must be valid JSON'});
-    return z.NEVER;
-  }
-});
-
-const orderByParam = z
-  .string()
-  .regex(
-    /^[A-Za-z_]\w*(:(asc|desc))?(,[A-Za-z_]\w*(:(asc|desc))?)*$/,
-    'Expected prop:asc|desc[,…]',
-  )
-  .transform(s =>
-    s.split(',').map(part => {
-      const [prop, dir] = part.split(':');
-      return {prop, dir: (dir ?? 'asc') as 'asc' | 'desc'};
-    }),
-  );
-
-const versionQuery = z.object({version: z.string().max(32).optional()});
-const jobsQuery = z.object({sourceId: z.string().optional(), limit: limitQ});
-const listObjectsQuery = z.object({
-  filter: jsonParam.pipe(filterExprSchema).optional(),
-  orderBy: orderByParam.optional(),
+/** `?cursor=&limit=` (limit ≤ 100). */
+export const pageQuerySchema = z.object({
   cursor: z.string().max(1024).optional(),
-  limit: limitQ,
+  limit: z.coerce.number().int().min(1).max(100).optional(),
 });
-const getObjectQuery = z.object({
-  expand: z.enum(['links']).optional(),
-  depth: z.coerce.number().int().min(1).max(2).optional(),
+
+function pageOf(q: {cursor?: string; limit?: number}): PageRequest {
+  return {
+    ...(q.cursor ? {cursor: q.cursor} : {}),
+    ...(q.limit ? {limit: q.limit} : {}),
+  };
+}
+
+const jsonParam = z
+  .string()
+  .max(8192)
+  .transform((v, c) => {
+    try {
+      return JSON.parse(v) as unknown;
+    } catch {
+      c.addIssue({code: 'custom', message: 'Invalid JSON'});
+      return z.NEVER;
+    }
+  });
+
+/** GET /objects query. */
+export const objectsQuerySchema = pageQuerySchema.extend({
+  type: apiNameParam.optional(),
+  q: z.string().max(200).optional(),
+  filter: jsonParam.pipe(filterExprSchema).optional(),
+  orderBy: z
+    .string()
+    .regex(/^[A-Za-z][A-Za-z0-9_]*:(asc|desc)$/)
+    .transform(v => {
+      const [prop, dir] = v.split(':');
+      return {prop, dir: dir as 'asc' | 'desc'};
+    })
+    .optional(),
 });
-const limitQuery = z.object({limit: limitQ});
-const searchQuery = z.object({
-  q: z.string().min(1).max(200),
-  type: z.string().optional(),
-  limit: limitQ,
-});
-const impactQuery = z.object({
-  rid: csv(ridQ, 50),
-  maxHops: z.coerce.number().int().min(1).max(3).default(2),
-  limit: z.coerce.number().int().min(1).max(500).default(200),
-  linkTypes: csv(z.string(), 50).optional(),
-});
-const pathsQuery = z.object({
-  from: ridQ,
-  to: ridQ,
-  maxHops: z.coerce.number().int().min(1).max(6).optional(),
-});
-const trendQuery = z.object({range: z.enum(['24h', '7d']).default('24h')});
-const alertsQuery = z.object({
-  status: z.enum(['OPEN', 'ACKED', 'CLOSED']).optional(),
-  severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
-  rid: ridQ.optional(),
-  limit: limitQ,
-});
-const dlqQuery = z.object({queue: z.string().max(64).optional()});
+
 const REC_STATUSES = [
-  'Draft',
   'Proposed',
-  'Approved',
+  'Confirmed',
   'Rejected',
   'Expired',
   'Executed',
   'ExecFailed',
-  'Evaluated',
-  'Failed',
 ] as const satisfies readonly RecStatus[];
-const recommendationsQuery = z.object({
+
+const recsQuerySchema = pageQuerySchema.extend({
   status: z.enum(REC_STATUSES).optional(),
-  focus: ridQ.optional(),
-  limit: limitQ,
-});
-const streamQuery = z.object({
-  access_token: z.string().optional(),
-  lastSeq: z.coerce.number().int().min(0).optional(),
 });
 
-// ---------------------------------------------------------------------------
-// Body schemas composed at the edge.
-
-const pageFields = {
-  cursor: z.string().max(1024).optional(),
-  limit: z.number().int().min(1).max(200).optional(),
-};
-const evaluateObjectSetBody = z.union([
-  z.object({definition: objectSetDefSchema, ...pageFields}),
-  objectSetDefSchema.extend(pageFields),
-]);
-const saveObjectSetBody = saveObjectSetInputSchema.extend({
-  id: z.string().optional(),
+const adminUsersQuerySchema = pageQuerySchema.extend({
+  status: z.enum(['ACTIVE', 'EXPIRED', 'ARCHIVING', 'ARCHIVE_ONLY']).optional(),
 });
-const updateSourceBody = sourceDefSchema.partial();
-const telemetryBody = z.union([
-  z.record(z.string(), z.unknown()),
-  z.array(z.record(z.string(), z.unknown())).min(1).max(100),
-]);
 
-/** Parses an `If-Match` header (`3`, `"3"` or `W/"3"`). */
-export function parseIfMatch(value: string | null): number | undefined {
-  if (value === null || value.trim() === '') return undefined;
-  const m = /^(?:W\/)?"?(\d+)"?$/.exec(value.trim());
-  if (!m) {
-    throw new AppError('VALIDATION_FAILED', 'If-Match must be a version', {
-      errors: [{path: 'If-Match', message: 'Expected an integer version'}],
-    });
-  }
-  return Number(m[1]);
+const overviewQuerySchema = z.object({
+  range: z.enum(['24h', '7d']).default('24h'),
+});
+
+const deleteUserQuerySchema = z.object({
+  archive: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform(v => v === 'true'),
+});
+
+// —— Helpers ——
+
+const accepted = (): Response => empty(202);
+
+/** Passkey endpoints: `step_up` needs an admin token, `login` a preAuth. */
+function passkeyScope(body: unknown): 'public' | 'admin' {
+  return (body as {purpose?: unknown} | undefined)?.purpose === 'step_up'
+    ? 'admin'
+    : 'public';
 }
 
-// ---------------------------------------------------------------------------
-// The table.
+function passkeyAuth(
+  purpose: 'login' | 'step_up',
+  preAuth: string | undefined,
+  ctx: Parameters<RouteHandler>[1]['ctx'],
+): {preAuth: string} | {ctx: NonNullable<typeof ctx>} {
+  if (purpose === 'step_up') return {ctx: ctx!};
+  if (!preAuth) {
+    throw new AppError('VALIDATION_FAILED', 'preAuth is required', {
+      extras: {errors: [{path: 'preAuth', message: 'Required'}]},
+    });
+  }
+  return {preAuth};
+}
 
-let openApiCache: {version: string; doc: unknown} | undefined;
+// —— Ontology definitions (object-types, link-types, action-types) ——
 
-/** Every public endpoint, in ARCHITECTURE.md §4 order. */
+const DEF_OPS: Record<DefKind, string> = {
+  'object-types': 'ObjectType',
+  'link-types': 'LinkType',
+  'action-types': 'ActionType',
+};
+
+function definitionRoutes(kind: DefKind): AnyRoute[] {
+  const name = DEF_OPS[kind];
+  const base = `/${kind}`;
+  const item = `${base}/{id}`;
+  const schema = defSchemas[kind] as z.ZodType<{apiName: string}>;
+  return [
+    route({
+      op: `list${name}s`,
+      method: 'GET',
+      path: base,
+      service: 'ONTOLOGY',
+      scope: 'workspace',
+      rate: ['read'],
+      handler: async (env, i) => {
+        const r = await env.ONTOLOGY.listDefinitions(i.ctx!, kind);
+        return jsonWithEtag(r, r.etag);
+      },
+    }),
+    route({
+      op: `create${name}`,
+      method: 'POST',
+      path: base,
+      service: 'ONTOLOGY',
+      scope: 'workspace',
+      rate: ['write'],
+      require: ['If-Match'],
+      body: schema,
+      handler: async (env, i) => {
+        const def = i.body as never;
+        const r = await env.ONTOLOGY.putDefinition(
+          i.ctx!,
+          kind,
+          i.body.apiName,
+          def,
+          i.ifMatch!,
+        );
+        return jsonWithEtag({item: i.body, etag: r.etag}, r.etag, 201);
+      },
+    }),
+    route({
+      op: `get${name}`,
+      method: 'GET',
+      path: item,
+      service: 'ONTOLOGY',
+      scope: 'workspace',
+      rate: ['read'],
+      params: {id: apiNameParam},
+      handler: async (env, i) => {
+        const r = await env.ONTOLOGY.getDefinition(i.ctx!, kind, i.params.id);
+        return jsonWithEtag(r, r.etag);
+      },
+    }),
+    route({
+      op: `put${name}`,
+      method: 'PUT',
+      path: item,
+      service: 'ONTOLOGY',
+      scope: 'workspace',
+      rate: ['write'],
+      require: ['If-Match'],
+      params: {id: apiNameParam},
+      body: schema,
+      handler: async (env, i) => {
+        if (i.body.apiName !== i.params.id) {
+          throw new AppError('VALIDATION_FAILED', 'apiName must match {id}', {
+            extras: {errors: [{path: 'apiName', message: 'Must match {id}'}]},
+          });
+        }
+        const r = await env.ONTOLOGY.putDefinition(
+          i.ctx!,
+          kind,
+          i.params.id,
+          i.body as never,
+          i.ifMatch!,
+        );
+        return jsonWithEtag({item: i.body, etag: r.etag}, r.etag);
+      },
+    }),
+    route({
+      op: `delete${name}`,
+      method: 'DELETE',
+      path: item,
+      service: 'ONTOLOGY',
+      scope: 'workspace',
+      rate: ['write'],
+      require: ['If-Match'],
+      params: {id: apiNameParam},
+      handler: async (env, i) => {
+        const r = await env.ONTOLOGY.deleteDefinition(
+          i.ctx!,
+          kind,
+          i.params.id,
+          i.ifMatch!,
+        );
+        return empty(204, {etag: toEtag(r.etag)});
+      },
+    }),
+  ];
+}
+
+// —— The table ——
+
+/** Every public route below `/api/v1`. */
 export const ROUTES: AnyRoute[] = [
-  // -- Identity -------------------------------------------------------------
+  // —— auth ——
   route({
+    op: 'sendCode',
     method: 'POST',
-    path: '/auth/login',
+    path: '/auth/codes',
     service: 'IDENTITY',
-    minRole: 'public',
-    body: loginInputSchema,
-    rateGroup: 'auth',
-    critical: true,
-    summary: 'Password login; sets the refresh cookie',
-    handler: login,
-  }),
-  route({
-    method: 'POST',
-    path: '/auth/refresh',
-    service: 'IDENTITY',
-    minRole: 'cookie',
-    rateGroup: 'auth',
-    critical: true,
-    summary: 'Rotates the refresh cookie and issues an access token',
-    handler: refresh,
-  }),
-  route({
-    method: 'POST',
-    path: '/auth/logout',
-    service: 'IDENTITY',
-    minRole: 'cookie',
-    rateGroup: 'auth',
-    critical: true,
-    status: 204,
-    summary: 'Revokes the refresh token and clears the cookie',
-    handler: logout,
-  }),
-  route({
-    method: 'GET',
-    path: '/me',
-    service: 'IDENTITY',
-    minRole: 'Viewer',
-    summary: 'Current user',
-    handler: (env, {ctx}) => env.IDENTITY.me(ctx),
-  }),
-  route({
-    method: 'PATCH',
-    path: '/me',
-    service: 'IDENTITY',
-    minRole: 'Viewer',
-    body: updateMeInputSchema,
-    critical: true,
-    summary: 'Updates the current user profile',
-    handler: (env, {ctx, body}) => env.IDENTITY.updateMe(ctx, body),
-  }),
-  route({
-    method: 'POST',
-    path: '/me/password',
-    service: 'IDENTITY',
-    minRole: 'Viewer',
-    body: changePasswordInputSchema,
-    rateGroup: 'auth',
-    critical: true,
-    summary: 'Changes the current user password',
-    handler: (env, {ctx, body}) => env.IDENTITY.changePassword(ctx, body),
-  }),
-  route({
-    method: 'GET',
-    path: '/users',
-    service: 'IDENTITY',
-    minRole: 'Admin',
-    summary: 'Lists users',
-    handler: (env, {ctx}) => env.IDENTITY.listUsers(ctx),
-  }),
-  route({
-    method: 'POST',
-    path: '/users',
-    service: 'IDENTITY',
-    minRole: 'Admin',
-    body: createUserInputSchema,
-    idempotent: true,
-    summary: 'Creates a user',
-    handler: (env, {ctx, body}) => env.IDENTITY.createUser(ctx, body),
-  }),
-  route({
-    method: 'PATCH',
-    path: '/users/:id',
-    service: 'IDENTITY',
-    minRole: 'Admin',
-    body: updateUserInputSchema,
-    summary: 'Updates a user',
-    handler: (env, {ctx, params, body}) =>
-      env.IDENTITY.updateUser(ctx, params.id, body),
-  }),
-  route({
-    method: 'DELETE',
-    path: '/users/:id',
-    service: 'IDENTITY',
-    minRole: 'Admin',
-    summary: 'Deletes a user',
-    handler: (env, {ctx, params}) => env.IDENTITY.deleteUser(ctx, params.id),
-  }),
-  route({
-    method: 'POST',
-    path: '/users/:id/markings',
-    service: 'IDENTITY',
-    minRole: 'Admin',
-    body: grantMarkingInputSchema,
-    summary: 'Sets the markings of a user',
-    handler: (env, {ctx, params, body}) =>
-      env.IDENTITY.grantMarking(ctx, params.id, body.markings),
-  }),
-  route({
-    method: 'POST',
-    path: '/users/:id/password:reset',
-    service: 'IDENTITY',
-    minRole: 'Admin',
-    summary: 'Resets a user password; returns a temporary password',
-    handler: (env, {ctx, params}) => env.IDENTITY.resetPassword(ctx, params.id),
-  }),
-
-  // -- Ontology -------------------------------------------------------------
-  route({
-    method: 'GET',
-    path: '/ontology/schemas',
-    service: 'ONTOLOGY',
-    minRole: 'Viewer',
-    summary: 'Lists schemas',
-    handler: (env, {ctx}) => env.ONTOLOGY.listSchemas(ctx),
-  }),
-  route({
-    method: 'GET',
-    path: '/ontology/schemas/:api',
-    service: 'ONTOLOGY',
-    minRole: 'Viewer',
-    query: versionQuery,
-    summary: 'Gets a schema version (semver, current or draft)',
-    handler: (env, {ctx, params, query}) =>
-      env.ONTOLOGY.getSchema(ctx, params.api, query.version),
-  }),
-  route({
-    method: 'GET',
-    path: '/ontology/model',
-    service: 'ONTOLOGY',
-    minRole: 'Viewer',
-    summary: 'Active compiled model of the tenant',
-    handler: (env, {ctx}) => env.ONTOLOGY.getActiveModel(ctx),
-  }),
-  route({
-    method: 'PUT',
-    path: '/ontology/schemas/:api/draft',
-    service: 'ONTOLOGY',
-    minRole: 'Modeler',
-    body: schemaDefSchema,
-    summary: 'Saves the draft of a schema',
-    handler: (env, {ctx, params, body}) =>
-      env.ONTOLOGY.saveDraft(ctx, params.api, body as SchemaDef),
-  }),
-  route({
-    method: 'POST',
-    path: '/ontology/schemas/:api/diff',
-    service: 'ONTOLOGY',
-    minRole: 'Modeler',
-    rateGroup: 'read',
-    summary: 'Diffs the draft against the current version',
-    handler: (env, {ctx, params}) => env.ONTOLOGY.diff(ctx, params.api),
-  }),
-  route({
-    method: 'POST',
-    path: '/ontology/schemas/:api/publish',
-    service: 'ONTOLOGY',
-    minRole: 'Modeler',
-    body: publishInputSchema,
-    idempotent: true,
-    summary:
-      'BFF: publishes the draft, reindexes objects and pauses affected sources on breaking changes',
-    handler: (env, {ctx, params, body}) =>
-      publishBff(env, ctx, params.api, body),
-  }),
-  route({
-    method: 'GET',
-    path: '/ontology/schemas/:api/export',
-    service: 'ONTOLOGY',
-    minRole: 'Modeler',
-    summary: 'Exports a schema as a pack',
-    handler: (env, {ctx, params}) => env.ONTOLOGY.exportPack(ctx, params.api),
-  }),
-  route({
-    method: 'GET',
-    path: '/ontology/packs',
-    service: 'ONTOLOGY',
-    minRole: 'Viewer',
-    summary: 'Lists scenario packs',
-    handler: (env, {ctx}) => env.ONTOLOGY.listPacks(ctx),
-  }),
-  route({
-    method: 'POST',
-    path: '/ontology/packs:import',
-    service: 'ONTOLOGY',
-    minRole: 'Modeler',
-    body: importPackInputSchema,
-    idempotent: true,
-    summary: 'BFF: imports a pack and installs its automations and KPIs',
-    handler: (env, {ctx, body}) => importPackBff(env, ctx, body),
-  }),
-
-  // -- Integration ----------------------------------------------------------
-  route({
-    method: 'GET',
-    path: '/sources',
-    service: 'INTEGRATION',
-    minRole: 'Viewer',
-    summary: 'Lists data sources',
-    handler: (env, {ctx}) => env.INTEGRATION.listSources(ctx),
-  }),
-  route({
-    method: 'GET',
-    path: '/sources/:id',
-    service: 'INTEGRATION',
-    minRole: 'Viewer',
-    summary: 'Gets a data source',
-    handler: (env, {ctx, params}) => env.INTEGRATION.getSource(ctx, params.id),
-  }),
-  route({
-    method: 'POST',
-    path: '/sources',
-    service: 'INTEGRATION',
-    minRole: 'Modeler',
-    body: sourceDefSchema,
-    idempotent: true,
-    summary: 'Creates a data source',
-    handler: (env, {ctx, body}) =>
-      env.INTEGRATION.createSource(ctx, body as SourceDef),
-  }),
-  route({
-    method: 'PATCH',
-    path: '/sources/:id',
-    service: 'INTEGRATION',
-    minRole: 'Modeler',
-    body: updateSourceBody,
-    summary: 'Updates a data source',
-    handler: (env, {ctx, params, body}) =>
-      env.INTEGRATION.updateSource(ctx, params.id, body as Partial<SourceDef>),
-  }),
-  route({
-    method: 'DELETE',
-    path: '/sources/:id',
-    service: 'INTEGRATION',
-    minRole: 'Modeler',
-    summary: 'Deletes a data source',
-    handler: (env, {ctx, params}) =>
-      env.INTEGRATION.deleteSource(ctx, params.id),
-  }),
-  route({
-    method: 'POST',
-    path: '/sources/:id/uploads:presign',
-    service: 'INTEGRATION',
-    minRole: 'Operator',
-    body: presignInputSchema,
-    summary: 'Presigned B2 PUT for archiving the raw file',
-    handler: (env, {ctx, params, body}) =>
-      env.INTEGRATION.presignUpload(ctx, params.id, body.fileName, body.bytes),
-  }),
-  route({
-    method: 'POST',
-    path: '/sources/:id/batches',
-    service: 'INTEGRATION',
-    minRole: 'Operator',
-    body: batchInputSchema,
-    idempotent: true,
-    rateGroup: 'ingest',
-    status: 202,
-    maxBytes: 4 * 1024 * 1024,
-    summary: 'Submits a batch of ≤ 500 records',
-    handler: (env, {ctx, params, body}) =>
-      env.INTEGRATION.submitBatch(ctx, params.id, body),
-  }),
-  route({
-    method: 'POST',
-    path: '/sources/:id/mapping:suggest',
-    service: 'INTEGRATION',
-    minRole: 'Modeler',
-    body: suggestMappingInputSchema,
-    rateGroup: 'ai',
-    summary: 'BFF: AI mapping draft for the target type of the active model',
-    handler: (env, {ctx, body}) => suggestMappingBff(env, ctx, body),
-  }),
-  route({
-    method: 'GET',
-    path: '/jobs',
-    service: 'INTEGRATION',
-    minRole: 'Viewer',
-    query: jobsQuery,
-    summary: 'Lists ingestion jobs',
-    handler: (env, {ctx, query}) => env.INTEGRATION.listJobs(ctx, query),
-  }),
-  route({
-    method: 'GET',
-    path: '/jobs/:id',
-    service: 'INTEGRATION',
-    minRole: 'Viewer',
-    summary: 'Gets an ingestion job',
-    handler: (env, {ctx, params}) => env.INTEGRATION.getJob(ctx, params.id),
-  }),
-  route({
-    method: 'GET',
-    path: '/jobs/:id/rejected',
-    service: 'INTEGRATION',
-    minRole: 'Operator',
-    summary: 'Lists rejected records of a job',
-    handler: (env, {ctx, params}) =>
-      env.INTEGRATION.listRejected(ctx, params.id),
-  }),
-  route({
-    method: 'POST',
-    path: '/jobs/:id/replay',
-    service: 'INTEGRATION',
-    minRole: 'Operator',
-    body: replayInputSchema,
-    idempotent: true,
-    summary: 'Re-enqueues rejected records, optionally corrected',
-    handler: (env, {ctx, params, body}) =>
-      env.INTEGRATION.replayRejected(ctx, params.id, body.fixes),
-  }),
-  route({
-    method: 'GET',
-    path: '/data-health',
-    service: 'INTEGRATION',
-    minRole: 'Viewer',
-    summary: 'Per-source freshness and quality',
-    handler: (env, {ctx}) => env.INTEGRATION.dataHealth(ctx),
-  }),
-  route({
-    method: 'POST',
-    path: '/ingest/webhook/:sourceId',
-    service: 'INTEGRATION',
-    minRole: 'hmac',
-    rateGroup: 'webhook',
-    status: 202,
-    maxBytes: 1024 * 1024,
-    summary:
-      'External webhook; X-OD-Signature = hex(HMAC-SHA256(secret, `${X-OD-Timestamp}.${body}`))',
-    handler: webhook,
-  }),
-
-  // -- Object graph ---------------------------------------------------------
-  route({
-    method: 'GET',
-    path: '/objects/:type',
-    service: 'OBJECTS',
-    minRole: 'Viewer',
-    query: listObjectsQuery,
-    summary: 'Lists objects of a type (filter is a JSON FilterExpr)',
-    handler: (env, {ctx, params, query}) =>
-      env.OBJECTS.listObjects(ctx, params.type, {
-        filter: query.filter as FilterExpr | undefined,
-        orderBy: query.orderBy,
-        cursor: query.cursor,
-        limit: query.limit,
-      }),
-  }),
-  route({
-    method: 'GET',
-    path: '/objects/rid/:rid',
-    service: 'OBJECTS',
-    minRole: 'Viewer',
-    query: getObjectQuery,
-    summary: 'Gets an object, optionally with links',
-    handler: async (env, {ctx, params, query}) => {
-      const obj = await env.OBJECTS.getObject(ctx, params.rid as Rid, {
-        expand: query.expand,
-        depth: query.depth as 1 | 2 | undefined,
-      });
-      if (!obj) throw new AppError('OBJECT_NOT_FOUND');
-      return obj;
+    scope: 'public',
+    rate: ['email', 'ip'],
+    body: sendCodeSchema,
+    handler: async (env, i) => {
+      await env.IDENTITY.sendCode(i.body, i.meta);
+      return accepted();
     },
   }),
   route({
-    method: 'GET',
-    path: '/objects/rid/:rid/lineage',
-    service: 'OBJECTS',
-    minRole: 'Viewer',
-    summary: 'Lineage of an object',
-    handler: (env, {ctx, params}) =>
-      env.OBJECTS.lineage(ctx, params.rid as Rid),
-  }),
-  route({
-    method: 'GET',
-    path: '/objects/rid/:rid/actions',
-    service: 'OBJECTS',
-    minRole: 'Viewer',
-    query: limitQuery,
-    summary: 'Action log of an object',
-    handler: (env, {ctx, params, query}) =>
-      env.OBJECTS.listActionLog(ctx, {
-        rid: params.rid as Rid,
-        limit: query.limit,
-      }),
-  }),
-  route({
-    method: 'GET',
-    path: '/object-sets',
-    service: 'OBJECTS',
-    minRole: 'Viewer',
-    summary: 'Lists saved object sets',
-    handler: (env, {ctx}) => env.OBJECTS.listObjectSets(ctx),
-  }),
-  route({
+    op: 'createSession',
     method: 'POST',
-    path: '/object-sets',
-    service: 'OBJECTS',
-    minRole: 'Operator',
-    body: saveObjectSetBody,
-    idempotent: true,
-    summary: 'Saves an object set',
-    handler: (env, {ctx, body}) =>
-      env.OBJECTS.saveObjectSet(ctx, {
-        id: body.id,
-        name: body.name,
-        definition: body.definition as ObjectSetDef,
-      }),
-  }),
-  route({
-    method: 'POST',
-    path: '/object-sets/:id/evaluate',
-    service: 'OBJECTS',
-    minRole: 'Viewer',
-    body: pageInputSchema,
-    rateGroup: 'read',
-    summary: 'Evaluates a saved object set',
-    handler: (env, {ctx, params, body}) =>
-      env.OBJECTS.evaluateSavedObjectSet(ctx, params.id, body),
-  }),
-  route({
-    method: 'POST',
-    path: '/object-sets:evaluate',
-    service: 'OBJECTS',
-    minRole: 'Viewer',
-    body: evaluateObjectSetBody,
-    rateGroup: 'read',
-    summary:
-      'Evaluates an ad-hoc object set (`{definition, cursor?, limit?}` or the definition itself)',
-    handler: (env, {ctx, body}) => {
-      const {cursor, limit, ...rest} = body;
-      const def = 'definition' in rest ? rest.definition : rest;
-      return env.OBJECTS.evaluateObjectSet(ctx, def as ObjectSetDef, {
-        cursor,
-        limit,
-      });
-    },
-  }),
-  route({
-    method: 'GET',
-    path: '/search',
-    service: 'OBJECTS',
-    minRole: 'Viewer',
-    query: searchQuery,
-    summary: 'Full-text object search',
-    handler: (env, {ctx, query}) =>
-      env.OBJECTS.search(ctx, query.q, {type: query.type, limit: query.limit}),
-  }),
-  route({
-    method: 'GET',
-    path: '/graph/impact',
-    service: 'OBJECTS',
-    minRole: 'Viewer',
-    query: impactQuery,
-    summary: 'Impact subgraph around one or more rids (comma separated)',
-    handler: (env, {ctx, query}) =>
-      env.OBJECTS.impactSubgraph(ctx, {
-        rids: query.rid as Rid[],
-        maxHops: query.maxHops as 1 | 2 | 3,
-        limit: query.limit,
-        linkTypes: query.linkTypes,
-      }),
-  }),
-  route({
-    method: 'GET',
-    path: '/graph/paths',
-    service: 'OBJECTS',
-    minRole: 'Viewer',
-    query: pathsQuery,
-    summary: 'Paths between two objects',
-    handler: (env, {ctx, query}) =>
-      env.OBJECTS.paths(ctx, {
-        from: query.from as Rid,
-        to: query.to as Rid,
-        maxHops: query.maxHops,
-      }),
-  }),
-  route({
-    method: 'GET',
-    path: '/merge-suggestions',
-    service: 'OBJECTS',
-    minRole: 'Modeler',
-    summary: 'Entity-resolution merge suggestions',
-    handler: (env, {ctx}) => env.OBJECTS.listMergeSuggestions(ctx),
-  }),
-  route({
-    method: 'POST',
-    path: '/merge-suggestions/:id/resolve',
-    service: 'OBJECTS',
-    minRole: 'Modeler',
-    body: resolveMergeInputSchema,
-    summary: 'Accepts or rejects a merge suggestion',
-    handler: (env, {ctx, params, body}) =>
-      env.OBJECTS.resolveMergeSuggestion(ctx, params.id, body.accept),
-  }),
-  route({
-    method: 'POST',
-    path: '/actions/:actionType/apply',
-    service: 'OBJECTS',
-    minRole: 'Operator',
-    body: applyActionInputSchema,
-    idempotent: true,
-    summary: 'Applies an action (If-Match: expected object version)',
-    handler: (env, {ctx, params, body, headers}) => {
-      const cmd: ApplyActionCmd = {
-        actionType: params.actionType,
-        target: body.target as Rid,
-        params: body.params,
-        recommendationId: body.recommendationId,
-        ifMatch: parseIfMatch(headers.get('if-match')),
-      };
-      return env.OBJECTS.applyAction(ctx, cmd);
-    },
-  }),
-
-  // -- Situation ------------------------------------------------------------
-  route({
-    method: 'GET',
-    path: '/situation/overview',
-    service: 'SITUATION',
-    minRole: 'Viewer',
-    summary: 'BFF: situation overview merged with data health',
-    handler: (env, {ctx}) => overviewBff(env, ctx),
-  }),
-  route({
-    method: 'GET',
-    path: '/situation/stream',
-    service: 'SITUATION',
-    minRole: 'Viewer',
-    query: streamQuery,
-    websocket: true,
-    summary: 'WebSocket stream (?access_token=&lastSeq=)',
-    handler: forwardStream,
-  }),
-  route({
-    method: 'GET',
-    path: '/kpis',
-    service: 'SITUATION',
-    minRole: 'Viewer',
-    summary: 'Lists KPIs with current values',
-    handler: (env, {ctx}) => env.SITUATION.listKpis(ctx),
-  }),
-  route({
-    method: 'POST',
-    path: '/kpis',
-    service: 'SITUATION',
-    minRole: 'Modeler',
-    body: kpiDefSchema,
-    idempotent: true,
-    summary: 'Creates or updates a KPI',
-    handler: (env, {ctx, body}) => env.SITUATION.saveKpi(ctx, body as KpiDef),
-  }),
-  route({
-    method: 'DELETE',
-    path: '/kpis/:id',
-    service: 'SITUATION',
-    minRole: 'Modeler',
-    summary: 'Deletes a KPI',
-    handler: (env, {ctx, params}) => env.SITUATION.deleteKpi(ctx, params.id),
-  }),
-  route({
-    method: 'GET',
-    path: '/kpis/:id/trend',
-    service: 'SITUATION',
-    minRole: 'Viewer',
-    query: trendQuery,
-    summary: 'KPI trend (24h or 7d)',
-    handler: (env, {ctx, params, query}) =>
-      env.SITUATION.kpiTrend(ctx, params.id, query.range),
-  }),
-  route({
-    method: 'GET',
-    path: '/automations',
-    service: 'SITUATION',
-    minRole: 'Viewer',
-    summary: 'Lists automations',
-    handler: (env, {ctx}) => env.SITUATION.listAutomations(ctx),
-  }),
-  route({
-    method: 'POST',
-    path: '/automations',
-    service: 'SITUATION',
-    minRole: 'Operator',
-    body: automationDefSchema,
-    idempotent: true,
-    summary: 'Creates an automation',
-    handler: (env, {ctx, body}) =>
-      env.SITUATION.saveAutomation(ctx, body as AutomationDef),
-  }),
-  route({
-    method: 'PUT',
-    path: '/automations/:id',
-    service: 'SITUATION',
-    minRole: 'Operator',
-    body: automationDefSchema,
-    summary: 'Replaces an automation',
-    handler: (env, {ctx, params, body}) =>
-      env.SITUATION.saveAutomation(ctx, {
-        ...(body as AutomationDef),
-        id: params.id,
-      }),
-  }),
-  route({
-    method: 'DELETE',
-    path: '/automations/:id',
-    service: 'SITUATION',
-    minRole: 'Operator',
-    summary: 'Deletes an automation',
-    handler: (env, {ctx, params}) =>
-      env.SITUATION.deleteAutomation(ctx, params.id),
-  }),
-  route({
-    method: 'POST',
-    path: '/automations:dry-run',
-    service: 'SITUATION',
-    minRole: 'Operator',
-    body: automationDefSchema,
-    rateGroup: 'read',
-    summary: 'Evaluates a draft automation without persisting',
-    handler: (env, {ctx, body}) =>
-      env.SITUATION.dryRunAutomation(ctx, body as AutomationDef),
-  }),
-  route({
-    method: 'GET',
-    path: '/alerts',
-    service: 'SITUATION',
-    minRole: 'Viewer',
-    query: alertsQuery,
-    summary: 'Lists alerts',
-    handler: (env, {ctx, query}) =>
-      env.SITUATION.listAlerts(ctx, {...query, rid: query.rid as Rid}),
-  }),
-  route({
-    method: 'PATCH',
-    path: '/alerts/:id',
-    service: 'SITUATION',
-    minRole: 'Operator',
-    body: updateAlertInputSchema,
-    critical: true,
-    summary: 'Acknowledges or closes an alert',
-    handler: (env, {ctx, params, body}) =>
-      env.SITUATION.updateAlert(ctx, params.id, body),
-  }),
-  route({
-    method: 'GET',
-    path: '/cockpit/layout',
-    service: 'SITUATION',
-    minRole: 'Viewer',
-    summary: 'Cockpit layout',
-    handler: (env, {ctx}) => env.SITUATION.getLayout(ctx),
-  }),
-  route({
-    method: 'PUT',
-    path: '/cockpit/layout',
-    service: 'SITUATION',
-    minRole: 'Modeler',
-    body: cockpitLayoutSchema,
-    summary: 'Saves the cockpit layout',
-    handler: (env, {ctx, body}) =>
-      env.SITUATION.saveLayout(ctx, body as CockpitLayout),
-  }),
-  route({
-    method: 'GET',
-    path: '/usage',
-    service: 'SITUATION',
-    minRole: 'Viewer',
-    summary: 'Free-tier usage status (quota bar)',
-    handler: (env, {ctx}) => env.SITUATION.getUsage(ctx),
-  }),
-  route({
-    method: 'GET',
-    path: '/admin/usage',
-    service: 'SITUATION',
-    minRole: 'Admin',
-    summary: 'UsageGuard status',
-    handler: (env, {ctx}) => env.SITUATION.getUsage(ctx),
-  }),
-  route({
-    method: 'GET',
-    path: '/admin/dlq',
-    service: 'SITUATION',
-    minRole: 'Admin',
-    query: dlqQuery,
-    summary: 'Lists dead letters',
-    handler: (env, {ctx, query}) =>
-      env.SITUATION.listDeadLetters(ctx, query.queue),
-  }),
-  route({
-    method: 'POST',
-    path: '/admin/dlq/:queue/replay',
-    service: 'SITUATION',
-    minRole: 'Admin',
-    body: replayDlqInputSchema,
-    critical: true,
-    summary: 'Replays dead letters of a queue',
-    handler: (env, {ctx, params, body}) =>
-      env.SITUATION.replayDeadLetters(ctx, params.queue, body.ids),
-  }),
-  route({
-    method: 'POST',
-    path: '/admin/graph:rebuild',
-    service: 'OBJECTS',
-    minRole: 'Admin',
-    summary: 'Rebuilds the Neo4j projection from D1',
-    handler: (env, {ctx}) => env.OBJECTS.rebuildProjection(ctx),
-  }),
-
-  // -- Decision -------------------------------------------------------------
-  route({
-    method: 'GET',
-    path: '/scenarios',
-    service: 'DECISION',
-    minRole: 'Operator',
-    summary: 'Lists scenarios',
-    handler: (env, {ctx}) => env.DECISION.listScenarios(ctx),
-  }),
-  route({
-    method: 'POST',
-    path: '/scenarios',
-    service: 'DECISION',
-    minRole: 'Operator',
-    body: scenarioInputSchema,
-    idempotent: true,
-    summary: 'Creates a scenario',
-    handler: (env, {ctx, body}) =>
-      env.DECISION.createScenario(ctx, body as ScenarioInput),
-  }),
-  route({
-    method: 'GET',
-    path: '/scenarios/:id',
-    service: 'DECISION',
-    minRole: 'Operator',
-    summary: 'Gets a scenario',
-    handler: (env, {ctx, params}) => env.DECISION.getScenario(ctx, params.id),
-  }),
-  route({
-    method: 'POST',
-    path: '/scenarios/:id/run',
-    service: 'DECISION',
-    minRole: 'Operator',
-    body: runScenarioInputSchema,
-    summary: 'Runs a saved scenario (optionally overriding its inputs)',
-    handler: (env, {ctx, params, body}) =>
-      env.DECISION.runScenario(ctx, {
-        ...(body as ScenarioInput),
-        scenarioId: params.id,
-      }),
-  }),
-  route({
-    method: 'POST',
-    path: '/scenarios:run',
-    service: 'DECISION',
-    minRole: 'Operator',
-    body: scenarioInputSchema,
-    summary: 'Runs an ad-hoc scenario',
-    handler: (env, {ctx, body}) =>
-      env.DECISION.runScenario(ctx, body as ScenarioInput),
-  }),
-  route({
-    method: 'POST',
-    path: '/scenarios:candidates',
-    service: 'DECISION',
-    minRole: 'Operator',
-    body: candidateActionsInputSchema,
-    rateGroup: 'read',
-    summary: 'Candidate actions for perturbed objects',
-    handler: (env, {ctx, body}) =>
-      env.DECISION.listCandidateActions(
-        ctx,
-        body.perturbations as Perturbation[],
+    path: '/auth/sessions',
+    service: 'IDENTITY',
+    scope: 'public',
+    rate: ['ip'],
+    body: createSessionSchema,
+    handler: async (env, i) =>
+      sessionResultResponse(
+        await env.IDENTITY.createSession(i.body, i.meta),
+        i.clock,
       ),
   }),
   route({
+    op: 'refreshSession',
     method: 'POST',
-    path: '/recommendations:generate',
-    service: 'DECISION',
-    minRole: 'Operator',
-    body: generateRecommendationInputSchema,
-    rateGroup: 'ai',
-    status: 202,
-    summary: 'Queues recommendation generation; returns {jobId}',
-    handler: (env, {ctx, body}) =>
-      env.DECISION.generateRecommendation(ctx, {
-        ...body,
-        focus: body.focus as Rid,
-        locale: body.locale ?? ctx.locale,
-      }),
+    path: '/auth/sessions/refresh',
+    service: 'IDENTITY',
+    scope: 'refresh',
+    rate: ['ip'],
+    clearCookieOnError: true,
+    handler: refreshHandler,
   }),
   route({
-    method: 'GET',
-    path: '/recommendations',
-    service: 'DECISION',
-    minRole: 'Viewer',
-    query: recommendationsQuery,
-    summary: 'Lists recommendations',
-    handler: (env, {ctx, query}) =>
-      env.DECISION.listRecommendations(ctx, {
-        ...query,
-        focus: query.focus as Rid | undefined,
-      }),
+    op: 'logout',
+    method: 'DELETE',
+    path: '/auth/sessions/current',
+    service: 'IDENTITY',
+    scope: 'workspace',
+    rate: ['write'],
+    allowExpired: true,
+    ownAccount: true,
+    clearCookieOnError: true,
+    handler: logoutHandler,
   }),
   route({
-    method: 'GET',
-    path: '/recommendations/:id',
-    service: 'DECISION',
-    minRole: 'Viewer',
-    summary: 'Gets a recommendation',
-    handler: (env, {ctx, params}) =>
-      env.DECISION.getRecommendation(ctx, params.id),
-  }),
-  route({
+    op: 'passkeyOptions',
     method: 'POST',
-    path: '/recommendations/:id/approve',
-    service: 'DECISION',
-    minRole: 'Operator',
-    idempotent: true,
-    critical: true,
-    summary: 'Approves and executes a recommendation',
-    handler: (env, {ctx, params}) => env.DECISION.approve(ctx, params.id),
+    path: '/auth/passkeys/options',
+    service: 'IDENTITY',
+    scope: passkeyScope,
+    rate: ['ip'],
+    body: passkeyOptionsSchema,
+    handler: async (env, i) =>
+      json(
+        await env.IDENTITY.passkeyOptions(
+          passkeyAuth(i.body.purpose, i.body.preAuth, i.ctx),
+          i.body.purpose,
+        ),
+      ),
   }),
   route({
+    op: 'passkeyAssertion',
     method: 'POST',
-    path: '/recommendations/:id/reject',
-    service: 'DECISION',
-    minRole: 'Operator',
-    body: rejectInputSchema,
-    critical: true,
-    summary: 'Rejects a recommendation',
-    handler: (env, {ctx, params, body}) =>
-      env.DECISION.reject(ctx, params.id, body.reason),
+    path: '/auth/passkeys/assertion',
+    service: 'IDENTITY',
+    scope: passkeyScope,
+    rate: ['ip'],
+    body: passkeyAssertionSchema,
+    handler: async (env, i) =>
+      assertionResponse(
+        await env.IDENTITY.passkeyAssertion(
+          passkeyAuth(i.body.purpose, i.body.preAuth, i.ctx),
+          i.body.purpose,
+          i.body.credential,
+          i.meta,
+        ),
+        i.clock,
+      ),
   }),
   route({
+    op: 'passkeySetupOptions',
     method: 'POST',
-    path: '/recommendations/:id/feedback',
-    service: 'DECISION',
-    minRole: 'Operator',
-    body: feedbackInputSchema,
-    summary: 'Rates an executed recommendation',
-    handler: (env, {ctx, params, body}) =>
-      env.DECISION.feedback(ctx, params.id, body),
+    path: '/auth/passkeys/setup-options',
+    service: 'IDENTITY',
+    scope: 'public',
+    rate: ['ip'],
+    body: passkeySetupOptionsSchema,
+    handler: async (env, i) =>
+      json(
+        await env.IDENTITY.passkeySetupOptions(
+          i.body.preAuth,
+          i.body.setupCode,
+        ),
+      ),
   }),
   route({
-    method: 'GET',
-    path: '/llm/quota',
-    service: 'DECISION',
-    minRole: 'Viewer',
-    summary: 'Remaining LLM calls today',
-    handler: (env, {ctx}) => env.DECISION.llmQuota(ctx),
+    op: 'passkeySetup',
+    method: 'POST',
+    path: '/auth/passkeys/setup',
+    service: 'IDENTITY',
+    scope: 'public',
+    rate: ['ip'],
+    body: passkeySetupSchema,
+    handler: async (env, i) =>
+      setupResponse(
+        await env.IDENTITY.passkeySetup(
+          i.body.preAuth,
+          i.body.setupCode,
+          i.body.credential,
+          i.meta,
+        ),
+        i.clock,
+      ),
+  }),
+  route({
+    op: 'recoveryLogin',
+    method: 'POST',
+    path: '/auth/recovery',
+    service: 'IDENTITY',
+    scope: 'public',
+    rate: ['ip'],
+    body: recoverySchema,
+    handler: async (env, i) =>
+      sessionResponse(
+        await env.IDENTITY.recoveryLogin(
+          i.body.preAuth,
+          i.body.recoveryCode,
+          i.meta,
+        ),
+        i.clock,
+      ),
   }),
 
-  // -- Gateway --------------------------------------------------------------
+  // —— me / workspace ——
   route({
+    op: 'getMe',
     method: 'GET',
-    path: '/config',
-    service: 'GATEWAY',
-    minRole: 'public',
-    summary: 'Runtime feature flags and version',
-    handler: env => getConfig(env),
+    path: '/me',
+    service: 'IDENTITY',
+    scope: 'workspace',
+    rate: ['read'],
+    handler: (env, i) => getMeBff(env, i.ctx!, i.clock, i.logger),
   }),
   route({
+    op: 'patchMe',
+    method: 'PATCH',
+    path: '/me',
+    service: 'IDENTITY',
+    scope: 'workspace',
+    rate: ['write'],
+    ownAccount: true,
+    body: patchMeSchema,
+    handler: async (env, i) => json(await env.IDENTITY.patchMe(i.ctx!, i.body)),
+  }),
+  route({
+    op: 'sendMeCode',
     method: 'POST',
-    path: '/telemetry',
-    service: 'GATEWAY',
-    minRole: 'public',
-    body: telemetryBody,
-    status: 204,
-    maxBytes: 16 * 1024,
-    summary: 'Frontend errors and web-vitals (≤ 16 KB)',
-    handler: telemetry,
-  }),
-  route({
-    method: 'GET',
-    path: '/openapi.json',
-    service: 'GATEWAY',
-    minRole: 'public',
-    summary: 'OpenAPI 3.1 document generated from the route table',
-    handler: async env => {
-      const version = env.APP_VERSION ?? 'dev';
-      if (openApiCache?.version !== version) {
-        openApiCache = {version, doc: buildOpenApi(ROUTES, version)};
-      }
-      return openApiCache.doc;
+    path: '/me/codes',
+    service: 'IDENTITY',
+    scope: 'workspace',
+    rate: ['write'],
+    ownAccount: true,
+    body: meCodeSchema,
+    handler: async (env, i) => {
+      await env.IDENTITY.sendMeCode(i.ctx!, i.body.purpose);
+      return accepted();
     },
   }),
   route({
+    op: 'terminateTrial',
+    method: 'POST',
+    path: '/me/trial/termination',
+    service: 'IDENTITY',
+    scope: 'workspace',
+    rate: ['write'],
+    ownAccount: true,
+    body: terminationSchema,
+    handler: async (env, i) => {
+      await env.IDENTITY.terminateTrial(i.ctx!, i.body.code);
+      return accepted();
+    },
+  }),
+  route({
+    op: 'exportWorkspace',
+    method: 'GET',
+    path: '/me/export',
+    service: 'IDENTITY',
+    scope: 'workspace',
+    rate: ['read'],
+    handler: (env, i) => exportBff(env, i.ctx!, i.clock),
+  }),
+  route({
+    op: 'loadSampleData',
+    method: 'POST',
+    path: '/workspace/sample-data',
+    service: 'INTEGRATION',
+    scope: 'workspace',
+    rate: ['write'],
+    handler: async (env, i) =>
+      json(await env.INTEGRATION.loadSample(i.ctx!), 202),
+  }),
+
+  // —— archive deletion links (public, by IP) ——
+  route({
+    op: 'getArchiveDeletion',
+    method: 'GET',
+    path: '/archive-deletions/{token}',
+    service: 'IDENTITY',
+    scope: 'public',
+    rate: ['ip'],
+    params: {token: tokenParam},
+    handler: async (env, i) =>
+      json(await env.IDENTITY.getArchiveDeletion(i.params.token)),
+  }),
+  route({
+    op: 'confirmArchiveDeletion',
+    method: 'POST',
+    path: '/archive-deletions/{token}',
+    service: 'IDENTITY',
+    scope: 'public',
+    rate: ['ip'],
+    params: {token: tokenParam},
+    handler: async (env, i) => {
+      await env.IDENTITY.deleteArchiveByToken(i.params.token);
+      return empty();
+    },
+  }),
+
+  // —— ontology ——
+  route({
+    op: 'getOntology',
+    method: 'GET',
+    path: '/ontology',
+    service: 'ONTOLOGY',
+    scope: 'workspace',
+    rate: ['read'],
+    handler: async (env, i) => {
+      const o = await env.ONTOLOGY.getOntology(i.ctx!);
+      return jsonWithEtag(o, o.etag);
+    },
+  }),
+  ...definitionRoutes('object-types'),
+  ...definitionRoutes('link-types'),
+  ...definitionRoutes('action-types'),
+
+  // —— imports ——
+  route({
+    op: 'listImports',
+    method: 'GET',
+    path: '/imports',
+    service: 'INTEGRATION',
+    scope: 'workspace',
+    rate: ['read'],
+    query: pageQuerySchema,
+    handler: async (env, i) =>
+      json(await env.INTEGRATION.listImports(i.ctx!, pageOf(i.query))),
+  }),
+  route({
+    op: 'createImport',
+    method: 'POST',
+    path: '/imports',
+    service: 'INTEGRATION',
+    scope: 'workspace',
+    rate: ['write'],
+    body: createImportSchema,
+    handler: async (env, i) =>
+      json(await env.INTEGRATION.createImport(i.ctx!, i.body), 201),
+  }),
+  route({
+    op: 'getImport',
+    method: 'GET',
+    path: '/imports/{id}',
+    service: 'INTEGRATION',
+    scope: 'workspace',
+    rate: ['read'],
+    params: {id: idParam},
+    handler: async (env, i) =>
+      json(await env.INTEGRATION.getImport(i.ctx!, i.params.id)),
+  }),
+  route({
+    op: 'putImportMapping',
+    method: 'PUT',
+    path: '/imports/{id}/mapping',
+    service: 'INTEGRATION',
+    scope: 'workspace',
+    rate: ['write'],
+    params: {id: idParam},
+    body: putMappingSchema,
+    handler: async (env, i) =>
+      json(
+        await env.INTEGRATION.putMapping(i.ctx!, i.params.id, i.body.mapping),
+      ),
+  }),
+  route({
+    op: 'submitImportBatch',
+    method: 'POST',
+    path: '/imports/{id}/batches',
+    service: 'INTEGRATION',
+    scope: 'workspace',
+    rate: ['write'],
+    params: {id: idParam},
+    body: batchSchema,
+    handler: async (env, i) =>
+      json(await env.INTEGRATION.submitBatch(i.ctx!, i.params.id, i.body)),
+  }),
+  route({
+    op: 'draftImportMapping',
+    method: 'POST',
+    path: '/imports/{id}/mapping-draft',
+    service: 'INTEGRATION',
+    scope: 'workspace',
+    rate: ['write'],
+    params: {id: idParam},
+    body: mappingDraftSchema,
+    handler: async (env, i) =>
+      json(await env.INTEGRATION.mappingDraft(i.ctx!, i.params.id, i.body)),
+  }),
+
+  // —— objects ——
+  route({
+    op: 'listObjects',
+    method: 'GET',
+    path: '/objects',
+    service: 'OBJECTS',
+    scope: 'workspace',
+    rate: ['read'],
+    query: objectsQuerySchema,
+    handler: async (env, i) => {
+      const {type, q, filter, orderBy} = i.query;
+      const query = {
+        ...(type ? {type} : {}),
+        ...(q ? {q} : {}),
+        ...(filter ? {filter} : {}),
+        ...(orderBy ? {orderBy} : {}),
+      };
+      return json(
+        await env.OBJECTS.listObjects(i.ctx!, query, pageOf(i.query)),
+      );
+    },
+  }),
+  route({
+    op: 'getObjectStats',
+    method: 'GET',
+    path: '/objects/stats',
+    service: 'OBJECTS',
+    scope: 'workspace',
+    rate: ['read'],
+    handler: async (env, i) => json(await env.OBJECTS.stats(i.ctx!)),
+  }),
+  route({
+    op: 'getObject',
+    method: 'GET',
+    path: '/objects/{rid}',
+    service: 'OBJECTS',
+    scope: 'workspace',
+    rate: ['read'],
+    params: {rid: ridSchema},
+    handler: async (env, i) => {
+      const o = await env.OBJECTS.getObject(i.ctx!, i.params.rid as Rid);
+      if (!o) throw new AppError('NOT_FOUND');
+      return jsonWithEtag(o, o.version);
+    },
+  }),
+  route({
+    op: 'patchObject',
+    method: 'PATCH',
+    path: '/objects/{rid}',
+    service: 'OBJECTS',
+    scope: 'workspace',
+    rate: ['write'],
+    require: ['If-Match'],
+    params: {rid: ridSchema},
+    body: mergePatchSchema,
+    handler: async (env, i) => {
+      const o = await env.OBJECTS.patchObject(
+        i.ctx!,
+        i.params.rid as Rid,
+        i.body,
+        i.ifMatch!,
+      );
+      return jsonWithEtag(o, o.version);
+    },
+  }),
+  route({
+    op: 'getObjectLinks',
+    method: 'GET',
+    path: '/objects/{rid}/links',
+    service: 'OBJECTS',
+    scope: 'workspace',
+    rate: ['read'],
+    params: {rid: ridSchema},
+    query: linksQuerySchema,
+    handler: async (env, i) => {
+      const {depth, linkTypes, direction, limit} = i.query;
+      return json(
+        await env.OBJECTS.getLinks(i.ctx!, i.params.rid as Rid, {
+          depth: depth as 1 | 2,
+          direction,
+          limit,
+          ...(linkTypes ? {linkTypes} : {}),
+        }),
+      );
+    },
+  }),
+  route({
+    op: 'listObjectActions',
+    method: 'GET',
+    path: '/objects/{rid}/actions',
+    service: 'OBJECTS',
+    scope: 'workspace',
+    rate: ['read'],
+    params: {rid: ridSchema},
+    query: pageQuerySchema,
+    handler: async (env, i) =>
+      json(
+        await env.OBJECTS.listActionLog(
+          i.ctx!,
+          i.params.rid as Rid,
+          pageOf(i.query),
+        ),
+      ),
+  }),
+  route({
+    op: 'executeAction',
+    method: 'POST',
+    path: '/action-types/{id}/executions',
+    service: 'OBJECTS',
+    scope: 'workspace',
+    rate: ['write'],
+    require: ['Idempotency-Key', 'If-Match'],
+    params: {id: apiNameParam},
+    body: executeActionSchema,
+    handler: async (env, i) => {
+      const r = await env.OBJECTS.applyAction(i.ctx!, {
+        actionType: i.params.id,
+        target: i.body.target as Rid,
+        params: i.body.params,
+        ifMatch: i.ifMatch,
+        idempotencyKey: i.idempotencyKey!,
+        ...(i.body.recommendationId
+          ? {recommendationId: i.body.recommendationId}
+          : {}),
+      });
+      return jsonWithEtag(r, r.version);
+    },
+  }),
+
+  // —— situation ——
+  route({
+    op: 'getSituationOverview',
+    method: 'GET',
+    path: '/situation/overview',
+    service: 'SITUATION',
+    scope: 'workspace',
+    rate: ['read'],
+    query: overviewQuerySchema,
+    handler: (env, i) =>
+      overviewBff(env, i.ctx!, i.query.range, i.clock, i.logger),
+  }),
+  route({
+    op: 'listAlerts',
+    method: 'GET',
+    path: '/alerts',
+    service: 'SITUATION',
+    scope: 'workspace',
+    rate: ['read'],
+    query: alertQuerySchema,
+    handler: async (env, i) => {
+      const {status, severity, rid} = i.query;
+      const filter = {
+        ...(status ? {status} : {}),
+        ...(severity ? {severity} : {}),
+        ...(rid ? {rid: rid as Rid} : {}),
+      };
+      return json(
+        await env.SITUATION.listAlerts(i.ctx!, filter, pageOf(i.query)),
+      );
+    },
+  }),
+  route({
+    op: 'acknowledgeAlert',
+    method: 'POST',
+    path: '/alerts/{id}/acknowledgement',
+    service: 'SITUATION',
+    scope: 'workspace',
+    rate: ['write'],
+    params: {id: idParam},
+    handler: async (env, i) =>
+      json(await env.SITUATION.acknowledgeAlert(i.ctx!, i.params.id)),
+  }),
+  route({
+    op: 'listAutomations',
+    method: 'GET',
+    path: '/automations',
+    service: 'SITUATION',
+    scope: 'workspace',
+    rate: ['read'],
+    handler: async (env, i) =>
+      json(await env.SITUATION.listAutomations(i.ctx!)),
+  }),
+  route({
+    op: 'createAutomation',
+    method: 'POST',
+    path: '/automations',
+    service: 'SITUATION',
+    scope: 'workspace',
+    rate: ['write'],
+    body: automationDefSchema,
+    handler: async (env, i) => {
+      const a = await env.SITUATION.createAutomation(i.ctx!, i.body);
+      return jsonWithEtag(a, a.version, 201);
+    },
+  }),
+  route({
+    op: 'getAutomation',
+    method: 'GET',
+    path: '/automations/{id}',
+    service: 'SITUATION',
+    scope: 'workspace',
+    rate: ['read'],
+    params: {id: idParam},
+    handler: async (env, i) => {
+      const a = await env.SITUATION.getAutomation(i.ctx!, i.params.id);
+      return jsonWithEtag(a, a.version);
+    },
+  }),
+  route({
+    op: 'putAutomation',
+    method: 'PUT',
+    path: '/automations/{id}',
+    service: 'SITUATION',
+    scope: 'workspace',
+    rate: ['write'],
+    require: ['If-Match'],
+    params: {id: idParam},
+    body: automationDefSchema,
+    handler: async (env, i) => {
+      const a = await env.SITUATION.putAutomation(
+        i.ctx!,
+        i.params.id,
+        i.body,
+        i.ifMatch!,
+      );
+      return jsonWithEtag(a, a.version);
+    },
+  }),
+  route({
+    op: 'deleteAutomation',
+    method: 'DELETE',
+    path: '/automations/{id}',
+    service: 'SITUATION',
+    scope: 'workspace',
+    rate: ['write'],
+    require: ['If-Match'],
+    params: {id: idParam},
+    handler: async (env, i) => {
+      await env.SITUATION.deleteAutomation(i.ctx!, i.params.id, i.ifMatch!);
+      return empty();
+    },
+  }),
+  route({
+    op: 'issueStreamTicket',
+    method: 'POST',
+    path: '/situation/stream-tickets',
+    service: 'SITUATION',
+    scope: 'workspace',
+    rate: ['write'],
+    handler: async (env, i) =>
+      json(await env.SITUATION.issueStreamTicket(i.ctx!), 201),
+  }),
+  route({
+    op: 'openSituationStream',
+    method: 'GET',
+    path: '/situation/stream',
+    service: 'SITUATION',
+    scope: 'stream',
+    rate: [],
+    handler: streamHandler,
+  }),
+
+  // —— decision ——
+  route({
+    op: 'runScenario',
+    method: 'POST',
+    path: '/scenarios',
+    service: 'DECISION',
+    scope: 'workspace',
+    rate: ['write'],
+    body: scenarioInputSchema,
+    handler: async (env, i) =>
+      json(await env.DECISION.runScenario(i.ctx!, i.body as never), 201),
+  }),
+  route({
+    op: 'getScenario',
+    method: 'GET',
+    path: '/scenarios/{id}',
+    service: 'DECISION',
+    scope: 'workspace',
+    rate: ['read'],
+    params: {id: idParam},
+    handler: async (env, i) =>
+      json(await env.DECISION.getScenario(i.ctx!, i.params.id)),
+  }),
+  route({
+    op: 'listRecommendations',
+    method: 'GET',
+    path: '/recommendations',
+    service: 'DECISION',
+    scope: 'workspace',
+    rate: ['read'],
+    query: recsQuerySchema,
+    handler: async (env, i) =>
+      json(
+        await env.DECISION.listRecommendations(
+          i.ctx!,
+          i.query.status ? {status: i.query.status} : {},
+          pageOf(i.query),
+        ),
+      ),
+  }),
+  route({
+    op: 'getRecommendation',
+    method: 'GET',
+    path: '/recommendations/{id}',
+    service: 'DECISION',
+    scope: 'workspace',
+    rate: ['read'],
+    params: {id: idParam},
+    handler: async (env, i) =>
+      json(await env.DECISION.getRecommendation(i.ctx!, i.params.id)),
+  }),
+  route({
+    op: 'generateRecommendation',
+    method: 'POST',
+    path: '/recommendations',
+    service: 'DECISION',
+    scope: 'workspace',
+    rate: ['write'],
+    body: generateInputSchema,
+    handler: async (env, i) =>
+      json(
+        await env.DECISION.generateRecommendation(i.ctx!, i.body as never),
+        201,
+      ),
+  }),
+  route({
+    op: 'decideRecommendation',
+    method: 'POST',
+    path: '/recommendations/{id}/decision',
+    service: 'DECISION',
+    scope: 'workspace',
+    rate: ['write'],
+    require: ['Idempotency-Key'],
+    params: {id: idParam},
+    body: decisionInputSchema,
+    handler: async (env, i) =>
+      json(
+        await env.DECISION.decide(
+          i.ctx!,
+          i.params.id,
+          i.body,
+          i.idempotencyKey!,
+        ),
+      ),
+  }),
+
+  // —— admin ——
+  route({
+    op: 'adminOverview',
+    method: 'GET',
+    path: '/admin/overview',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['read'],
+    handler: async (env, i) => json(await env.IDENTITY.adminOverview(i.ctx!)),
+  }),
+  route({
+    op: 'adminListUsers',
+    method: 'GET',
+    path: '/admin/users',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['read'],
+    query: adminUsersQuerySchema,
+    handler: async (env, i) =>
+      json(
+        await env.IDENTITY.adminListUsers(
+          i.ctx!,
+          i.query.status ? {status: i.query.status} : {},
+          pageOf(i.query),
+        ),
+      ),
+  }),
+  route({
+    op: 'adminGetUser',
+    method: 'GET',
+    path: '/admin/users/{uid}',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['read'],
+    params: {uid: ulidParam},
+    handler: async (env, i) =>
+      json(await env.IDENTITY.adminGetUser(i.ctx!, i.params.uid)),
+  }),
+  route({
+    op: 'adminPatchUser',
+    method: 'PATCH',
+    path: '/admin/users/{uid}',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['write'],
+    require: ['Idempotency-Key', 'X-Step-Up'],
+    params: {uid: ulidParam},
+    body: adminUserPatchSchema,
+    handler: async (env, i) =>
+      json(
+        await env.IDENTITY.adminPatchUser(
+          i.ctx!,
+          i.params.uid,
+          i.body,
+          i.stepUp!,
+          i.idempotencyKey!,
+        ),
+      ),
+  }),
+  route({
+    op: 'adminRevokeSessions',
+    method: 'DELETE',
+    path: '/admin/users/{uid}/sessions',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['write'],
+    require: ['Idempotency-Key'],
+    params: {uid: ulidParam},
+    handler: async (env, i) =>
+      json(
+        await env.IDENTITY.adminRevokeSessions(
+          i.ctx!,
+          i.params.uid,
+          i.idempotencyKey!,
+        ),
+      ),
+  }),
+  route({
+    op: 'adminDeleteUser',
+    method: 'DELETE',
+    path: '/admin/users/{uid}',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['write'],
+    require: ['Idempotency-Key', 'X-Step-Up'],
+    params: {uid: ulidParam},
+    query: deleteUserQuerySchema,
+    body: adminDeleteUserSchema,
+    handler: async (env, i) => {
+      await env.IDENTITY.adminDeleteUser(
+        i.ctx!,
+        i.params.uid,
+        {archive: i.query.archive, reason: i.body.reason},
+        i.stepUp!,
+        i.idempotencyKey!,
+      );
+      return accepted();
+    },
+  }),
+  route({
+    op: 'adminListArchives',
+    method: 'GET',
+    path: '/admin/archives',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['read'],
+    query: pageQuerySchema,
+    handler: async (env, i) =>
+      json(await env.IDENTITY.adminListArchives(i.ctx!, pageOf(i.query))),
+  }),
+  route({
+    op: 'adminArchiveLink',
+    method: 'POST',
+    path: '/admin/archives/{tid}/download-link',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['write'],
+    require: ['Idempotency-Key'],
+    params: {tid: ulidParam},
+    handler: async (env, i) =>
+      json(
+        await env.IDENTITY.adminArchiveLink(
+          i.ctx!,
+          i.params.tid,
+          i.idempotencyKey!,
+        ),
+      ),
+  }),
+  route({
+    op: 'adminDeleteArchive',
+    method: 'DELETE',
+    path: '/admin/archives/{tid}',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['write'],
+    require: ['Idempotency-Key', 'X-Step-Up'],
+    params: {tid: ulidParam},
+    handler: async (env, i) => {
+      await env.IDENTITY.adminDeleteArchive(
+        i.ctx!,
+        i.params.tid,
+        i.stepUp!,
+        i.idempotencyKey!,
+      );
+      return empty();
+    },
+  }),
+  route({
+    op: 'adminGetSettings',
+    method: 'GET',
+    path: '/admin/settings',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['read'],
+    handler: async (env, i) => {
+      const s = await env.IDENTITY.adminGetSettings(i.ctx!);
+      return jsonWithEtag(s, s.version);
+    },
+  }),
+  route({
+    op: 'adminPatchSettings',
+    method: 'PATCH',
+    path: '/admin/settings',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['write'],
+    require: ['If-Match', 'Idempotency-Key', 'X-Step-Up'],
+    body: adminSettingsPatchSchema,
+    handler: async (env, i) => {
+      const s = await env.IDENTITY.adminPatchSettings(
+        i.ctx!,
+        i.body,
+        i.ifMatch!,
+        i.stepUp!,
+        i.idempotencyKey!,
+      );
+      return jsonWithEtag(s, s.version);
+    },
+  }),
+  route({
+    op: 'adminGetBlockedDomains',
+    method: 'GET',
+    path: '/admin/blocked-domains',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['read'],
+    handler: async (env, i) =>
+      json({domains: await env.IDENTITY.adminGetBlockedDomains(i.ctx!)}),
+  }),
+  route({
+    op: 'adminPutBlockedDomains',
+    method: 'PUT',
+    path: '/admin/blocked-domains',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['write'],
+    require: ['Idempotency-Key'],
+    body: blockedDomainsSchema,
+    handler: async (env, i) =>
+      json({
+        domains: await env.IDENTITY.adminPutBlockedDomains(
+          i.ctx!,
+          i.body.domains,
+          i.idempotencyKey!,
+        ),
+      }),
+  }),
+  route({
+    op: 'adminAuditLog',
+    method: 'GET',
+    path: '/admin/audit-log',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['read'],
+    query: pageQuerySchema,
+    handler: async (env, i) =>
+      json(await env.IDENTITY.adminAuditLog(i.ctx!, pageOf(i.query))),
+  }),
+  route({
+    op: 'adminListPasskeys',
+    method: 'GET',
+    path: '/admin/passkeys',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['read'],
+    recoveryOk: true,
+    handler: async (env, i) =>
+      json(await env.IDENTITY.adminListPasskeys(i.ctx!)),
+  }),
+  route({
+    op: 'adminPasskeyOptions',
+    method: 'POST',
+    path: '/admin/passkeys/options',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['write'],
+    recoveryOk: true,
+    handler: async (env, i) =>
+      json(await env.IDENTITY.adminPasskeyOptions(i.ctx!)),
+  }),
+  route({
+    op: 'adminAddPasskey',
+    method: 'POST',
+    path: '/admin/passkeys',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['write'],
+    require: ['X-Step-Up'],
+    recoveryOk: true,
+    body: addPasskeySchema,
+    handler: async (env, i) =>
+      json(
+        await env.IDENTITY.adminAddPasskey(
+          i.ctx!,
+          i.body.credential,
+          i.body.label,
+          i.stepUp ?? '',
+        ),
+        201,
+      ),
+  }),
+  route({
+    op: 'adminDeletePasskey',
+    method: 'DELETE',
+    path: '/admin/passkeys/{id}',
+    service: 'IDENTITY',
+    scope: 'admin',
+    rate: ['write'],
+    require: ['X-Step-Up'],
+    params: {id: idParam},
+    handler: async (env, i) => {
+      await env.IDENTITY.adminDeletePasskey(i.ctx!, i.params.id, i.stepUp!);
+      return empty();
+    },
+  }),
+
+  // —— ops ——
+  route({
+    op: 'getHealth',
     method: 'GET',
     path: '/health',
     service: 'GATEWAY',
-    minRole: 'public',
-    summary: 'Liveness',
-    handler: env => health(env),
+    scope: 'public',
+    rate: [],
+    handler: async env =>
+      json({
+        status: 'ok',
+        version: env.APP_VERSION ?? 'dev',
+        environment: env.ENVIRONMENT ?? 'local',
+      }),
+  }),
+  route({
+    op: 'getOpenApi',
+    method: 'GET',
+    path: '/openapi.yaml',
+    service: 'GATEWAY',
+    scope: 'public',
+    rate: [],
+    handler: async () =>
+      new Response(OPENAPI_YAML, {
+        headers: {'content-type': 'application/yaml; charset=utf-8'},
+      }),
   }),
 ];

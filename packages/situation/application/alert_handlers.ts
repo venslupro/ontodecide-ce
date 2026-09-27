@@ -1,61 +1,66 @@
 /**
- * @fileoverview Alert use cases: list and acknowledge / close.
+ * @fileoverview Alert list (filter + keyset paging) and acknowledgement.
  */
 
-import {AppError, type CallCtx, clampLimit} from '@ontodecide/shared-kernel';
-import type {AlertDto, AlertFilter} from '../contract';
-import {canTransition} from '../domain';
-import type {SituationDeps} from './deps';
-import {publish, requireRole} from './support';
+import {
+  AppError,
+  type CallCtx,
+  type PageRequest,
+  type PageResult,
+  clampLimit,
+  decodeCursor,
+  encodeCursor,
+  notFound,
+} from '@ontodecide/shared-kernel';
+import type {AlertDto, AlertFilter} from '../contract/types';
+import {ensureInitialized} from './install_pack_content';
+import type {AlertCursor, AlertRecord} from './ports';
+import {type RoomRuntime, toAlertDto} from './support';
 
-/** Lists alerts (Viewer). */
-export class ListAlerts {
-  constructor(private readonly deps: SituationDeps) {}
-
-  async execute(ctx: CallCtx, filter: AlertFilter = {}): Promise<AlertDto[]> {
-    requireRole(ctx, 'Viewer');
-    return this.deps.repos.alerts.list(ctx.tenantId, {
-      ...filter,
-      limit: clampLimit(filter.limit),
-    });
+/** Lists alerts, newest first. */
+export async function listAlerts(
+  rt: RoomRuntime,
+  ctx: CallCtx,
+  filter: AlertFilter,
+  page: PageRequest,
+): Promise<PageResult<AlertDto>> {
+  rt.touch(ctx);
+  await ensureInitialized(rt);
+  const limit = clampLimit(page.limit);
+  const cursor = decodeCursor<AlertCursor>(page.cursor);
+  if (page.cursor && (!cursor || typeof cursor.t !== 'number')) {
+    throw new AppError('VALIDATION_FAILED', 'Invalid cursor');
   }
+  const rows = rt.deps.store.listAlerts(filter ?? {}, cursor, limit + 1);
+  const items = rows.slice(0, limit);
+  const last = items[items.length - 1];
+  return {
+    items: items.map(toAlertDto),
+    nextCursor:
+      rows.length > limit && last
+        ? encodeCursor({t: last.raisedAt, i: last.id})
+        : null,
+  };
 }
 
-/** Acknowledges or closes an alert (Operator). */
-export class UpdateAlert {
-  constructor(private readonly deps: SituationDeps) {}
-
-  async execute(
-    ctx: CallCtx,
-    id: string,
-    patch: {status: 'ACKED' | 'CLOSED'},
-  ): Promise<AlertDto> {
-    requireRole(ctx, 'Operator');
-    const status = patch?.status;
-    if (status !== 'ACKED' && status !== 'CLOSED') {
-      throw new AppError('VALIDATION_FAILED', 'status must be ACKED or CLOSED');
-    }
-    const {alerts} = this.deps.repos;
-    const current = await alerts.get(ctx.tenantId, id);
-    if (!current) throw new AppError('NOT_FOUND', 'Alert not found');
-    if (!canTransition(current.status, status)) {
-      throw new AppError(
-        'INVALID_TRANSITION',
-        `${current.status} → ${status} is not allowed`,
-      );
-    }
-    if (current.status !== status) {
-      await alerts.setStatus(
-        ctx.tenantId,
-        id,
-        status,
-        status === 'ACKED'
-          ? {ackedBy: ctx.userId}
-          : {closedAt: this.deps.clock.now().getTime()},
-      );
-    }
-    const dto = (await alerts.get(ctx.tenantId, id))!;
-    await publish(this.deps, ctx.tenantId, 'alert', dto);
-    return dto;
+/**
+ * Acknowledges an OPEN alert (idempotent for ACKED; CONFLICT when CLOSED).
+ */
+export async function acknowledgeAlert(
+  rt: RoomRuntime,
+  ctx: CallCtx,
+  id: string,
+): Promise<AlertDto> {
+  rt.touch(ctx);
+  const store = rt.deps.store;
+  const a = store.getAlert(id);
+  if (!a) notFound('Alert not found');
+  if (a.status === 'ACKED') return toAlertDto(a);
+  if (a.status === 'CLOSED') {
+    throw new AppError('CONFLICT', 'Alert is already closed');
   }
+  const acked: AlertRecord = {...a, status: 'ACKED', ackedAt: rt.now()};
+  store.updateAlert(acked);
+  rt.pushAlerts([acked]);
+  return toAlertDto(acked);
 }

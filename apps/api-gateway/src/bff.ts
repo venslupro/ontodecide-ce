@@ -1,141 +1,161 @@
 /**
- * @fileoverview Backend-for-frontend orchestrations: calls that combine
- * several services. No business rules beyond sequencing.
+ * @fileoverview Backend-for-frontend aggregations (详细设计 6.11.7):
+ * `GET /me` and `GET /situation/overview` merge the personal quotas that
+ * each service counts locally (修订说明书 12.7: no callback into
+ * identity-access); `GET /me/export` streams JSON Lines chunk by chunk.
  */
 
-import type {TargetProp} from '@ontodecide/decision/contract';
-import type {OntologyPack, PublishReport} from '@ontodecide/ontology/contract';
-import {AppError, resolveText, type CallCtx} from '@ontodecide/shared-kernel';
+import {
+  CE_LIMITS,
+  mergeQuotas,
+  type CallCtx,
+  type Clock,
+  type Logger,
+  type QuotaItem,
+  type Quotas,
+} from '@ontodecide/shared-kernel';
 import type {Env} from './env';
+import {json} from './http';
 
-/** GET /situation/overview: SITUATION.overview + INTEGRATION.dataHealth. */
-export async function overviewBff(env: Env, ctx: CallCtx) {
-  const [overview, health] = await Promise.all([
-    env.SITUATION.overview(ctx),
-    env.INTEGRATION.dataHealth(ctx).then(
-      d => ({ok: true as const, d}),
-      (err: unknown) => ({ok: false as const, code: AppError.from(err).code}),
-    ),
-  ]);
-  return health.ok
-    ? {...overview, dataHealth: health.d}
-    : {...overview, dataHealth: [], degraded: true};
-}
-
-/** Object types touched by breaking changes (`objectTypes.<name>...`). */
-export function breakingObjectTypes(report: PublishReport): string[] {
-  const types = new Set<string>();
-  for (const c of report.diff.changes) {
-    if (!c.breaking) continue;
-    const [head, name] = c.path.split('.');
-    if (head === 'objectTypes' && name) types.add(name);
-  }
-  return [...types];
-}
-
-/**
- * POST /ontology/schemas/:api/publish: publish, then reindex in object-graph
- * and (breaking changes only) pause the affected data sources. Follow-up
- * failures do not undo the publish; they are reported in `warnings`.
- */
-export async function publishBff(
-  env: Env,
-  ctx: CallCtx,
-  api: string,
-  opts: {confirmVersion?: string},
-) {
-  const report = await env.ONTOLOGY.publish(ctx, api, opts);
-  const breaking = report.diff.breaking;
-  const warnings: string[] = [];
-  let reindexed = 0;
-  let pausedSources = 0;
+async function settle<T>(
+  p: Promise<T>,
+  fallback: T,
+  logger: Logger,
+  what: string,
+): Promise<T> {
   try {
-    ({reindexed} = await env.OBJECTS.onOntologyPublished(ctx, {
-      api: report.apiName,
-      version: report.version,
-      breaking,
-    }));
+    return await p;
   } catch (err) {
-    warnings.push(`reindex:${AppError.from(err).code}`);
-  }
-  if (breaking) {
-    const types = breakingObjectTypes(report);
-    if (types.length > 0) {
-      try {
-        ({paused: pausedSources} = await env.INTEGRATION.pauseSourcesForTypes(
-          ctx,
-          types,
-        ));
-      } catch (err) {
-        warnings.push(`pauseSources:${AppError.from(err).code}`);
-      }
-    }
-  }
-  return {
-    ...report,
-    reindexed,
-    pausedSources,
-    ...(warnings.length ? {warnings} : {}),
-  };
-}
-
-/**
- * POST /ontology/packs:import: import (publishes the schema), reindex,
- * then install the pack's automations and KPIs in situation-awareness.
- */
-export async function importPackBff(
-  env: Env,
-  ctx: CallCtx,
-  input: {packId?: string; pack?: Record<string, unknown>},
-) {
-  const {report, pack} = await env.ONTOLOGY.importPack(ctx, {
-    packId: input.packId,
-    pack: input.pack as OntologyPack | undefined,
-  });
-  const warnings: string[] = [];
-  try {
-    await env.OBJECTS.onOntologyPublished(ctx, {
-      api: report.apiName,
-      version: report.version,
-      breaking: report.diff.breaking,
+    logger.warn('bff part failed', {
+      what,
+      error: err instanceof Error ? err.message.slice(0, 200) : 'unknown',
     });
-  } catch (err) {
-    warnings.push(`reindex:${AppError.from(err).code}`);
+    return fallback;
   }
-  const installed = await env.SITUATION.installPackContent(ctx, {
-    automations: pack.automations ?? [],
-    kpis: pack.kpis ?? [],
-  });
-  return {
-    report,
-    pack: {id: pack.id, name: pack.name, version: pack.version},
-    installed,
-    ...(warnings.length ? {warnings} : {}),
-  };
 }
 
 /**
- * POST /sources/:id/mapping:suggest: resolves the target type's properties
- * from the active model and asks decision-engine for a mapping draft.
+ * Collects quota items from identity (sessions), integration (import
+ * rows, mapping drafts), decision (AI recommendations) and object-graph
+ * stats (objects / links against 300 / 900). A failing source reads 0/0.
  */
-export async function suggestMappingBff(
+export async function collectQuotas(
   env: Env,
   ctx: CallCtx,
-  sample: {fields: string[]; rows: unknown[][]; targetType: string},
-) {
-  const model = await env.ONTOLOGY.getActiveModel(ctx);
-  const type = model.objectTypes[sample.targetType];
-  if (!type) {
-    throw new AppError(
-      'VALIDATION_FAILED',
-      `Unknown target type: ${sample.targetType}`,
-      {errors: [{path: 'targetType', message: 'Unknown object type'}]},
-    );
-  }
-  const targetProps: TargetProp[] = type.properties.map(p => ({
-    apiName: p.apiName,
-    dataType: p.dataType,
-    displayName: resolveText(p.displayName, ctx.locale ?? 'zh-CN', p.apiName),
-  }));
-  return env.DECISION.suggestMapping(ctx, {...sample, targetProps});
+  clock: Clock,
+  logger: Logger,
+): Promise<Quotas> {
+  const none: QuotaItem[] = [];
+  const [identity, integration, decision, stats] = await Promise.all([
+    settle(env.IDENTITY.usage(ctx), none, logger, 'identity.usage'),
+    settle(env.INTEGRATION.usage(ctx), none, logger, 'integration.usage'),
+    settle(env.DECISION.usage(ctx), none, logger, 'decision.usage'),
+    settle(env.OBJECTS.stats(ctx), null, logger, 'objects.stats'),
+  ]);
+  const graph: QuotaItem[] = stats
+    ? [
+        {key: 'objects', used: stats.objects, limit: CE_LIMITS.objects},
+        {key: 'links', used: stats.links, limit: CE_LIMITS.links},
+      ]
+    : [];
+  return mergeQuotas(
+    [...identity, ...integration, ...decision, ...graph],
+    clock.now(),
+  );
+}
+
+/** GET /me: `MeDto & {quotas}`. */
+export async function getMeBff(
+  env: Env,
+  ctx: CallCtx,
+  clock: Clock,
+  logger: Logger,
+): Promise<Response> {
+  const [me, quotas] = await Promise.all([
+    env.IDENTITY.getMe(ctx),
+    collectQuotas(env, ctx, clock, logger),
+  ]);
+  return json({...me, quotas});
+}
+
+/** Number of pending recommendations shown on the cockpit. */
+export const PENDING_RECS = 5;
+
+/** GET /situation/overview: overview + pending recommendations + quotas. */
+export async function overviewBff(
+  env: Env,
+  ctx: CallCtx,
+  range: '24h' | '7d',
+  clock: Clock,
+  logger: Logger,
+): Promise<Response> {
+  const [overview, recs, quotas] = await Promise.all([
+    env.SITUATION.overview(ctx, {range}),
+    settle(
+      env.DECISION.listRecommendations(
+        ctx,
+        {status: 'Proposed'},
+        {limit: PENDING_RECS},
+      ),
+      {items: [], nextCursor: null},
+      logger,
+      'decision.listRecommendations',
+    ),
+    collectQuotas(env, ctx, clock, logger),
+  ]);
+  return json({...overview, pendingRecommendations: recs.items, quotas});
+}
+
+/** Media type of the export stream. */
+export const JSONL_MEDIA_TYPE = 'application/jsonl';
+
+/**
+ * GET /me/export: loops IDENTITY.exportChunk into a ReadableStream. The
+ * first chunk is fetched before responding so an early error is still a
+ * Problem Details response; later failures abort the stream.
+ */
+export async function exportBff(
+  env: Env,
+  ctx: CallCtx,
+  clock: Clock,
+): Promise<Response> {
+  const encoder = new TextEncoder();
+  const line = (text: string): Uint8Array =>
+    encoder.encode(text && !text.endsWith('\n') ? `${text}\n` : text);
+  const first = await env.IDENTITY.exportChunk(ctx, null);
+  let cursor = first.nextCursor;
+  let pending: Uint8Array | null = line(first.text);
+  const body = new ReadableStream<Uint8Array>({
+    // Each pull enqueues at least one non-empty chunk or closes the stream
+    // (a pull that does neither would stall it).
+    async pull(controller) {
+      for (;;) {
+        let bytes: Uint8Array;
+        if (pending) {
+          bytes = pending;
+          pending = null;
+        } else if (cursor) {
+          const next = await env.IDENTITY.exportChunk(ctx, cursor);
+          cursor = next.nextCursor;
+          bytes = line(next.text);
+        } else {
+          controller.close();
+          return;
+        }
+        if (bytes.byteLength) {
+          controller.enqueue(bytes);
+          if (!cursor) controller.close();
+          return;
+        }
+      }
+    },
+  });
+  const day = clock.now().toISOString().slice(0, 10);
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'content-type': `${JSONL_MEDIA_TYPE}; charset=utf-8`,
+      'content-disposition': `attachment; filename="ontodecide-export-${day}.jsonl"`,
+    },
+  });
 }

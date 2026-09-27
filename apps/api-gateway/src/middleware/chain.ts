@@ -1,21 +1,21 @@
 /**
  * @fileoverview Per-request state, shared dependencies and the middleware
- * composition used by the gateway pipeline.
+ * composition of the gateway pipeline.
  */
 
-import type {JwtClaims} from '@ontodecide/identity/contract';
+import type {RequestMeta} from '@ontodecide/identity/contract';
 import type {
+  AccessClaims,
   CallCtx,
-  JwtKey,
+  Clock,
+  Ed25519Jwk,
+  Locale,
   Logger,
-  UsageMeter,
-  UsageStatus,
 } from '@ontodecide/shared-kernel';
-import type {EdgeGuardRpc} from '../edge_guard_core';
+import type {ActAsCache} from './act_as_cache';
 import type {Env} from '../env';
-import type {MemoryRateLimiter} from '../rate_limiter';
 import type {Router} from '../router';
-import type {AnyRoute} from '../route_types';
+import type {AnyRoute, Scope} from '../route_types';
 
 /** Mutable state of one request as it moves through the chain. */
 export interface GatewayState {
@@ -25,31 +25,35 @@ export interface GatewayState {
   /** Path below `/api/v1`. */
   path: string;
   requestId: string;
-  correlationId: string;
   startedAt: number;
   ip: string;
-  waitUntil(p: Promise<unknown>): void;
-  route?: AnyRoute;
-  params: Record<string, string>;
-  claims?: JwtClaims;
-  ctx?: CallCtx;
+  meta: RequestMeta;
+  locale: Locale;
+  /** Raw request body (empty for GET). */
   rawBody: string;
+  route?: AnyRoute;
+  scope?: Scope;
+  params: Record<string, string>;
+  claims?: AccessClaims;
+  ctx?: CallCtx;
+  /** Act-as target tenant when an admin sent X-Act-As-Tenant. */
+  actAs?: string;
   body: unknown;
   query: unknown;
+  ifMatch?: number;
+  idempotencyKey?: string;
+  stepUp?: string;
 }
 
-/** Long-lived dependencies of the pipeline (one set per isolate/env). */
+/** Long-lived dependencies of the pipeline (one set per isolate / env). */
 export interface GatewayDeps {
   env: Env;
-  now(): number;
+  clock: Clock;
   logger: Logger;
-  limiter: MemoryRateLimiter;
-  /** Cached UsageGuard status (undefined = unknown, fail open). */
-  usage: {get(ctx: CallCtx): Promise<UsageStatus | undefined>};
-  meter: UsageMeter;
   router: Router<AnyRoute>;
-  jwtKeys(): JwtKey[];
-  edgeGuard(tenantId: string): EdgeGuardRpc;
+  publicKeys(): Ed25519Jwk[];
+  maxBodyBytes: number;
+  actAs: ActAsCache;
 }
 
 /** A middleware step. */

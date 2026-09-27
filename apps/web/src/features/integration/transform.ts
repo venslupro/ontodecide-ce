@@ -4,9 +4,11 @@
  * with ≤ 5 steps. Used to validate chains in the mapping editor and to
  * preview transformed rows before import. Semantics must stay identical to
  * the server; only the error types differ (no server kernel dependency).
+ * `lookup` accepts `a=x;b=y` (and the legacy `a:x` form).
  */
 
-import {INGEST_LIMITS} from '@ontodecide/integration/contract';
+/** Maximum steps of a transform chain (same as the server). */
+export const TRANSFORM_CHAIN_MAX = 5;
 
 /** A value could not be transformed (the record would be rejected). */
 export class TransformError extends Error {
@@ -46,7 +48,7 @@ export const TRANSFORMS: readonly {name: string; args?: string}[] = [
   {name: 'clamp', args: '0,100'},
   {name: 'round', args: '2'},
   {name: 'default', args: "''"},
-  {name: 'lookup', args: 'a:x;b:y'},
+  {name: 'lookup', args: 'a=x;b=y'},
   {name: 'iso3166'},
   {name: 'split', args: "';'"},
 ];
@@ -347,12 +349,13 @@ const REGISTRY: Record<string, TransformFactory> = {
     const table = new Map<string, unknown>();
     for (const pair of (args ?? '').split(';')) {
       if (pair.trim() === '') continue;
-      const idx = pair.indexOf(':');
+      const eq = pair.indexOf('=');
+      const idx = eq > 0 ? eq : pair.indexOf(':');
       if (idx <= 0)
         throw new ChainSyntaxError(
           'BAD_ARGS',
           s,
-          'lookup(a:x;b:y) expects key:value pairs',
+          'lookup(a=x;b=y) expects key=value pairs',
         );
       table.set(pair.slice(0, idx).trim(), parseLiteral(pair.slice(idx + 1)));
     }
@@ -360,7 +363,7 @@ const REGISTRY: Record<string, TransformFactory> = {
       throw new ChainSyntaxError(
         'BAD_ARGS',
         s,
-        'lookup(a:x;b:y) expects key:value pairs',
+        'lookup(a=x;b=y) expects key=value pairs',
       );
     return v => {
       if (isEmpty(v)) return v;
@@ -447,11 +450,11 @@ export function compileChain(expr: string | undefined): TransformChain {
   const cached = CACHE.get(expr);
   if (cached) return cached;
   const raw = chainSteps(expr);
-  if (raw.length > INGEST_LIMITS.transformChainMax) {
+  if (raw.length > TRANSFORM_CHAIN_MAX) {
     throw new ChainSyntaxError(
       'TOO_MANY_STEPS',
       expr,
-      `Transform chain exceeds ${INGEST_LIMITS.transformChainMax} steps`,
+      `Transform chain exceeds ${TRANSFORM_CHAIN_MAX} steps`,
     );
   }
   const fns: TransformFn[] = [];

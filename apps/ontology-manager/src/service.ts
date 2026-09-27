@@ -10,10 +10,13 @@ import type {Env} from './env';
 
 export type {Overrides} from './container';
 
-/** Creates the ontology-manager service (RPC only; no queues or crons). */
+/** Creates the ontology-manager service (RPC + TenantLifecycle; no queues or crons). */
 export function createService(
   env: Env,
   overrides: Overrides = {},
-): ServiceModule<OntologyRpc> {
-  return {rpc: createContainer(env, overrides).rpc};
+): ServiceModule<OntologyRpc> & {
+  lifecycle: NonNullable<ServiceModule<OntologyRpc>['lifecycle']>;
+} {
+  const c = createContainer(env, overrides);
+  return {rpc: c.rpc, lifecycle: c.lifecycle};
 }

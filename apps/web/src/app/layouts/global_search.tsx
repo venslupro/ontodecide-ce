@@ -1,40 +1,67 @@
 /**
- * @fileoverview Global object search (name or RID, 300 ms debounce). A
- * pasted RID navigates straight to its Object View.
+ * @fileoverview Global search (object name or RID; GET /objects?q=, 300 ms
+ * debounce, ⌘K / Ctrl+K). A pasted RID opens its Object View directly.
  */
 
+import type {ObjectSummary} from '@ontodecide/object-graph/contract';
 import {isRid} from '@ontodecide/shared-kernel';
+import {useQuery} from '@tanstack/react-query';
 import {useNavigate} from '@tanstack/react-router';
 import {Search} from 'lucide-react';
-import {useId, useRef, useState} from 'react';
+import {useEffect, useId, useRef, useState} from 'react';
 import {useTranslation} from 'react-i18next';
-import {useUiModel} from '../../entities/schema/api';
-import {useSearch} from '../../features/object-graph/api';
+import {api, asList} from '../../shared/api/client';
+import {qk} from '../../shared/api/query_keys';
 import {cn} from '../../shared/lib/cn';
 import {useDebouncedValue} from '../../shared/lib/hooks';
+
+/** Search results (≤ 8). */
+export function useObjectSearch(q: string) {
+  return useQuery({
+    queryKey: qk.search(q),
+    queryFn: async () =>
+      asList(
+        await api.get<ObjectSummary[] | {items: ObjectSummary[]}>('/objects', {
+          query: {q, limit: 8},
+        }),
+      ),
+    enabled: q.length > 0,
+    staleTime: 30_000,
+  });
+}
 
 /** Global search combobox. */
 export function GlobalSearch() {
   const {t} = useTranslation('common');
   const navigate = useNavigate();
-  const {model} = useUiModel();
   const [text, setText] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const q = useDebouncedValue(text.trim(), 300);
-  const {data, isFetching} = useSearch(isRid(q) ? '' : q, undefined, 8);
+  const {data, isFetching} = useObjectSearch(isRid(q) ? '' : q);
   const results = data ?? [];
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const go = (rid: string) => {
     setOpen(false);
     setText('');
-    void navigate({to: '/objects/rid/$rid', params: {rid}});
+    void navigate({to: '/objects/$rid', params: {rid}});
   };
 
   return (
-    <div className="relative w-full max-w-md">
+    <div className="relative w-full max-w-[500px]">
       <Search
         className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-dim"
         aria-hidden
@@ -45,12 +72,13 @@ export function GlobalSearch() {
         role="combobox"
         aria-expanded={open && q.length > 0}
         aria-controls={listId}
+        aria-autocomplete="list"
         aria-activedescendant={
           open && results[active] ? `${listId}-${active}` : undefined
         }
         aria-label={t('search.label')}
         placeholder={t('search.placeholder')}
-        className="h-9 w-full rounded-[10px] border border-line-2 bg-panel-2 pr-3 pl-9 text-sm text-text outline-none placeholder:text-dim focus-visible:border-cyan"
+        className="h-10 w-full rounded-[10px] border border-line-2 bg-panel-2 pr-12 pl-9 text-sm text-text outline-none placeholder:text-dim focus-visible:border-cyan"
         value={text}
         onChange={e => {
           setText(e.target.value);
@@ -75,6 +103,9 @@ export function GlobalSearch() {
           }
         }}
       />
+      <kbd className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 rounded border border-line-2 px-1.5 text-[10px] text-dim">
+        ⌘K
+      </kbd>
       {open && q.length > 0 && (
         <ul
           id={listId}
@@ -112,8 +143,8 @@ export function GlobalSearch() {
                 )}
               >
                 <span className="truncate">{o.title}</span>
-                <span className="shrink-0 text-xs text-dim">
-                  {model.byName[o.type]?.displayName ?? o.type}
+                <span className="shrink-0 font-mono text-xs text-dim">
+                  {o.type}
                 </span>
               </li>
             ))

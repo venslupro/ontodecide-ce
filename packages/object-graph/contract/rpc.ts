@@ -1,91 +1,69 @@
 /**
- * @fileoverview RPC contract exposed by object-graph (ObjectGraphRpc).
+ * @fileoverview RPC contract of object-graph (ObjectGraphRpc entry point).
+ * Depends on ontology-manager only.
  */
 
-import type {
-  CallCtx,
-  ObjectSetDef,
-  PageRequest,
-  Rid,
-} from '@ontodecide/shared-kernel';
+import type {CallCtx, PageRequest, Rid} from '@ontodecide/shared-kernel';
 import type {
   ActionLogDto,
   ActionResult,
-  AggregateQuery,
   ApplyActionCmd,
   GraphSlice,
+  GraphStats,
   ImpactQuery,
-  LineageDto,
-  ListObjectsQuery,
-  MergeSuggestionDto,
+  LinksQuery,
+  MergePatch,
   ObjectDto,
   ObjectPage,
-  ObjectSetDto,
+  ObjectQuery,
+  UpsertCmd,
+  WriteResult,
 } from './types';
 
-/** Object graph RPC surface. */
+/** object-graph RPC surface. */
 export interface ObjectGraphRpc {
-  getObject(
-    ctx: CallCtx,
-    rid: Rid,
-    opts?: {expand?: 'links'; depth?: 1 | 2},
-  ): Promise<ObjectDto | null>;
+  /** null when missing or in another workspace. */
+  getObject(ctx: CallCtx, rid: Rid): Promise<ObjectDto | null>;
+  /** Batch read by rid (situation consumer); missing rids are omitted. */
   getObjects(ctx: CallCtx, rids: Rid[]): Promise<ObjectDto[]>;
   listObjects(
     ctx: CallCtx,
-    type: string,
-    q?: ListObjectsQuery,
+    q: ObjectQuery,
+    page: PageRequest,
   ): Promise<ObjectPage>;
-  evaluateObjectSet(
+  /**
+   * Merge-patches properties when `ifMatch` equals the version; otherwise
+   * PRECONDITION_FAILED. Writes one ObjectPatched outbox row.
+   */
+  patchObject(
     ctx: CallCtx,
-    def: ObjectSetDef,
-    page?: PageRequest,
-  ): Promise<ObjectPage>;
-  aggregate(ctx: CallCtx, q: AggregateQuery): Promise<number>;
-  listObjectSets(ctx: CallCtx): Promise<ObjectSetDto[]>;
-  saveObjectSet(
+    rid: Rid,
+    patch: MergePatch,
+    ifMatch: number,
+  ): Promise<ObjectDto>;
+  /** Links around an object (D1 recursive CTE, depth ≤ 2). */
+  getLinks(ctx: CallCtx, rid: Rid, q: LinksQuery): Promise<GraphSlice>;
+  /** Outgoing impact subgraph for the simulator. */
+  impactSubgraph(ctx: CallCtx, q: ImpactQuery): Promise<GraphSlice>;
+  stats(ctx: CallCtx): Promise<GraphStats>;
+  /**
+   * Writes ≤ 100 mapped rows in one statement per table plus one outbox
+   * row. Re-enforces the object (300) and link (900) limits.
+   */
+  upsertBatch(
     ctx: CallCtx,
-    input: {id?: string; name: string; definition: ObjectSetDef},
-  ): Promise<ObjectSetDto>;
-  evaluateSavedObjectSet(
-    ctx: CallCtx,
-    id: string,
-    page?: PageRequest,
-  ): Promise<ObjectPage>;
-  search(
-    ctx: CallCtx,
-    q: string,
-    opts?: {type?: string; limit?: number},
-  ): Promise<ObjectDto[]>;
-  lineage(ctx: CallCtx, rid: Rid): Promise<LineageDto>;
-  /** ≤ 2 hops from D1; 3 hops from Neo4j with D1 fallback (degraded). */
-  impactSubgraph(
-    ctx: CallCtx,
-    q: ImpactQuery,
-  ): Promise<GraphSlice & {degraded: boolean}>;
-  paths(
-    ctx: CallCtx,
-    q: {from: Rid; to: Rid; maxHops?: number},
-  ): Promise<{paths: Rid[][]; degraded: boolean}>;
+    cmd: {jobId: string; seq: number; cmds: UpsertCmd[]},
+  ): Promise<WriteResult>;
+  /**
+   * Executes an action. A replayed idempotency key returns the first
+   * result; a version mismatch is PRECONDITION_FAILED; unmet preconditions
+   * are VALIDATION_FAILED (422).
+   */
   applyAction(ctx: CallCtx, cmd: ApplyActionCmd): Promise<ActionResult>;
+  /** Action audit of one object (newest first). */
   listActionLog(
     ctx: CallCtx,
-    filter?: {rid?: Rid; limit?: number},
-  ): Promise<ActionLogDto[]>;
-  listMergeSuggestions(ctx: CallCtx): Promise<MergeSuggestionDto[]>;
-  resolveMergeSuggestion(
-    ctx: CallCtx,
-    id: string,
-    accept: boolean,
-  ): Promise<MergeSuggestionDto>;
-  /**
-   * Reacts to OntologyPublished (orchestrated by api-gateway): rebuilds
-   * og_prop_index for changed index plan entries.
-   */
-  onOntologyPublished(
-    ctx: CallCtx,
-    evt: {api: string; version: string; breaking: boolean},
-  ): Promise<{reindexed: number}>;
-  /** Rebuilds the Neo4j projection from D1 (admin). */
-  rebuildProjection(ctx: CallCtx): Promise<{queued: number}>;
+    rid: Rid,
+    page: PageRequest,
+  ): Promise<{items: ActionLogDto[]; nextCursor: string | null}>;
 }

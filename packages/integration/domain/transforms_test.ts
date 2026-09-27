@@ -68,6 +68,8 @@ describe('transforms', () => {
     expect(run('lookup(A:active)', 'Z')).toBe('Z');
     expect(run('lookup(A:active;*:watch)', 'Z')).toBe('watch');
     expect(run('lookup(1:10)', '1')).toBe(10);
+    expect(run('lookup(A=active;S=suspended)', 'A')).toBe('active');
+    expect(run('lookup(甲=high;*=low)', '乙')).toBe('low');
     expect(() => compileChain('lookup(bad)')).toThrow(AppError);
   });
 

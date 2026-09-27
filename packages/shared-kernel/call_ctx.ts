@@ -1,73 +1,86 @@
 /**
- * @fileoverview Call context propagated with every RPC call and queue
- * message. Built by api-gateway after the JWT has been verified.
+ * @fileoverview Call context carried by every service-binding RPC call.
+ *
+ * api-gateway builds it after verifying the access token (修订说明书 5.1).
+ * Downstream services take the workspace only from `ctx.tid`; request bodies
+ * never carry a tenant id.
  */
 
-/** Platform roles, from least to most privileged. */
-export const ROLES = ['Viewer', 'Operator', 'Modeler', 'Admin'] as const;
+import type {Locale} from './i18n';
 
-/** A platform role. */
-export type Role = (typeof ROLES)[number];
+/**
+ * Human roles (修订说明书 6): `owner` owns exactly one trial workspace;
+ * `admin` is the single bootstrap administrator with the highest privilege.
+ */
+export const USER_ROLES = ['owner', 'admin'] as const;
 
-/** Call context carried by every RPC call and queue message. */
+/** A human role. */
+export type UserRole = (typeof USER_ROLES)[number];
+
+/** Who performs a call: a human role or an internal service principal. */
+export type ActorRole = UserRole | 'service';
+
+/** The actor behind a call. */
+export interface Actor {
+  role: ActorRole;
+  /** User id (ULID) of a human actor. */
+  userId?: string;
+  /** True when an admin works inside another workspace (Act-as-Tenant). */
+  actingAs: boolean;
+}
+
+/** Call context (详细设计 6.4.1). */
 export interface CallCtx {
-  tenantId: string;
-  userId: string;
-  roles: Role[];
-  markings: string[];
+  /** Workspace id (ULID); the target workspace under Act-as. */
+  tid: string;
+  /** User id, or `svc:<worker>` for service principals. */
+  sub: string;
+  actor: Actor;
   requestId: string;
-  correlationId: string;
-  locale?: string;
+  locale: Locale;
 }
 
-/** Returns the rank of a role; higher means more privileged. */
-export function roleRank(role: Role): number {
-  return ROLES.indexOf(role);
-}
-
-/** Whether any of the given roles satisfies the minimum role. */
-export function hasRole(roles: readonly Role[], minRole: Role): boolean {
-  const min = roleRank(minRole);
-  return roles.some(r => roleRank(r) >= min);
-}
-
-/** Whether the value is a known role. */
-export function isRole(value: unknown): value is Role {
+/** Whether the value is a human role. */
+export function isUserRole(value: unknown): value is UserRole {
   return (
-    typeof value === 'string' && (ROLES as readonly string[]).includes(value)
+    typeof value === 'string' &&
+    (USER_ROLES as readonly string[]).includes(value)
   );
 }
 
 /**
- * Builds a context for system-initiated work (cron, queue consumers). The
- * system user holds the Admin role and every marking is bypassed by callers
- * that check {@link isSystemCtx}.
+ * Context for work a service does on its own behalf (cron, queue consumers,
+ * decision-engine executing a confirmed recommendation).
  */
-export function systemCtx(tenantId: string, correlationId = 'system'): CallCtx {
+export function serviceCtx(
+  tid: string,
+  worker: string,
+  requestId = `svc-${worker}`,
+  locale: Locale = 'zh-CN',
+): CallCtx {
   return {
-    tenantId,
-    userId: SYSTEM_USER_ID,
-    roles: ['Admin'],
-    markings: ['*'],
-    requestId: correlationId,
-    correlationId,
+    tid,
+    sub: `svc:${worker}`,
+    actor: {role: 'service', actingAs: false},
+    requestId,
+    locale,
   };
 }
 
-/** User id used for system-initiated calls. */
-export const SYSTEM_USER_ID = 'system';
-
-/** Whether the context was built by {@link systemCtx}. */
-export function isSystemCtx(ctx: CallCtx): boolean {
-  return ctx.userId === SYSTEM_USER_ID;
+/** Whether the call comes from a service principal. */
+export function isServiceCtx(ctx: CallCtx): boolean {
+  return ctx.actor.role === 'service';
 }
 
-/** Whether the caller holds the given marking. */
-export function hasMarking(ctx: CallCtx, marking: string): boolean {
-  return ctx.markings.includes('*') || ctx.markings.includes(marking);
+/**
+ * Audit actor label for business audit rows: `owner`, `admin` (Act-as) or
+ * `svc:<worker>`.
+ */
+export function actorLabel(ctx: CallCtx): string {
+  return ctx.actor.role === 'service' ? ctx.sub : ctx.actor.role;
 }
 
-/** Header used to forward a serialized CallCtx over service-binding fetch. */
+/** Header carrying a serialized CallCtx on forwarded fetches (WebSocket). */
 export const CTX_HEADER = 'x-od-ctx';
 
 /** Serializes a context for {@link CTX_HEADER}. */

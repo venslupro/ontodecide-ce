@@ -1,16 +1,15 @@
 /**
- * @fileoverview Schema metadata queries: the active compiled model mapped to
- * UI types for the current language and markings.
+ * @fileoverview Ontology metadata query: `GET /ontology` (the single
+ * workspace version, template until the first change) mapped to UI types
+ * for the current language. Cached by ETag; the ontology workbench
+ * invalidates {@link ontologyKey} after each save.
  */
 
-import type {CompiledModel, SchemaDto} from '@ontodecide/ontology/contract';
+import type {OntologyDto} from '@ontodecide/ontology/contract';
 import {useQuery} from '@tanstack/react-query';
 import {useMemo} from 'react';
 import {useTranslation} from 'react-i18next';
-import {api} from '../../shared/api/client';
-import {isApiError} from '../../shared/api/errors';
-import {qk, STALE} from '../../shared/api/query_keys';
-import {useSession} from '../session/store';
+import {apiRequest} from '../../shared/api/client';
 import {
   EMPTY_UI_MODEL,
   toUiModel,
@@ -18,22 +17,21 @@ import {
   type UiObjectType,
 } from './model';
 
-/** Fetches the active compiled model (404 → empty model). */
-export async function fetchModel(): Promise<CompiledModel | null> {
-  try {
-    return await api.get<CompiledModel>('/ontology/model');
-  } catch (e) {
-    if (isApiError(e, 'NOT_FOUND', 'ONTOLOGY_INVALID')) return null;
-    throw e;
-  }
+/** Query key of the workspace ontology (prefix `ontology`). */
+export const ontologyKey = () => ['ontology', 'schema'] as const;
+
+/** Fetches the ontology; the ETag version wins over the body's `etag`. */
+export async function fetchOntology(): Promise<OntologyDto> {
+  const res = await apiRequest<OntologyDto>('/ontology');
+  return {...res.data, etag: res.version ?? res.data.etag};
 }
 
-/** Raw compiled model query. */
-export function useCompiledModel() {
+/** Raw ontology query. */
+export function useOntology() {
   return useQuery({
-    queryKey: qk.model(),
-    queryFn: fetchModel,
-    staleTime: STALE.model,
+    queryKey: ontologyKey(),
+    queryFn: fetchOntology,
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -43,38 +41,25 @@ export function useUiModel(): {
   isLoading: boolean;
   error: unknown;
 } {
-  const q = useCompiledModel();
+  const q = useOntology();
   const {i18n} = useTranslation();
-  const markings = useSession(s => s.user?.markings);
   const model = useMemo(
-    () =>
-      q.data
-        ? toUiModel(q.data, i18n.language, markings ?? [])
-        : EMPTY_UI_MODEL,
-    [q.data, i18n.language, markings],
+    () => (q.data ? toUiModel(q.data, i18n.language) : EMPTY_UI_MODEL),
+    [q.data, i18n.language],
   );
   return {model, isLoading: q.isLoading, error: q.error};
 }
 
 /** One UI object type (undefined while loading or unknown). */
-export function useObjectType(api: string | undefined): {
+export function useObjectType(apiName: string | undefined): {
   type?: UiObjectType;
   isLoading: boolean;
   error: unknown;
 } {
   const {model, isLoading, error} = useUiModel();
-  return {type: api ? model.byName[api] : undefined, isLoading, error};
-}
-
-/** A specific schema version; versioned schemas never go stale. */
-export function useSchema(apiName: string | undefined, version = 'current') {
-  return useQuery({
-    queryKey: qk.schema(apiName ?? '', version),
-    queryFn: () =>
-      api.get<SchemaDto>(`/ontology/schemas/${encodeURIComponent(apiName!)}`, {
-        query: {version},
-      }),
-    enabled: !!apiName,
-    staleTime: /^\d+\.\d+\.\d+$/.test(version) ? STALE.schemaVersioned : 30_000,
-  });
+  return {
+    type: apiName ? model.byName[apiName] : undefined,
+    isLoading,
+    error,
+  };
 }

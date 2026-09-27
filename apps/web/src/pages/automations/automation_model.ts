@@ -1,316 +1,198 @@
 /**
- * @fileoverview Automation form model: form values ↔ AutomationDef, the
- * form schema (reusing the contract `automationDefSchema`) and
- * human-readable summaries of triggers, conditions and cooldowns.
+ * @fileoverview Automation form model (V2.4, alert-only): form values ↔
+ * AutomationDef, validation against the contract `automationDefSchema`,
+ * the scheduled-rule limits (≤ CE_LIMITS.maxScheduledAutomations per
+ * workspace, interval ≥ CE_LIMITS.minScheduleHours and ≤ 24 h) that
+ * disable the save button, and human-readable summaries.
  */
 
 import {
   type AutomationDef,
   type AutomationDto,
-  type AutomationTrigger,
   automationDefSchema,
   type Severity,
 } from '@ontodecide/situation/contract';
-import type {
-  FilterExpr,
-  FilterValue,
-  I18nText,
+import {
+  CE_LIMITS,
+  type FilterExpr,
+  type FilterValue,
+  type I18nText,
 } from '@ontodecide/shared-kernel';
 import type {TFunction} from 'i18next';
-import {z} from 'zod';
 import {
   type FilterGroup,
   fromFilterExpr,
   newGroup,
   toFilterExpr,
-} from '../../entities/object_set/filter_model';
+} from '../../entities/schema/filter_model';
 import type {RenderProp} from '../../entities/renderers/registry';
-import type {
-  UiModel,
-  UiObjectType,
-  UiProperty,
-} from '../../entities/schema/model';
+import type {UiObjectType} from '../../entities/schema/model';
 
-/** Default cooldown (seconds). */
-export const DEFAULT_COOLDOWN = 3600;
-
-/** Maximum cooldown (seconds). */
-export const MAX_COOLDOWN = 86_400;
+/** Default cooldown, seconds. */
+export const DEFAULT_COOLDOWN = CE_LIMITS.cooldownDefaultSec;
+/** Maximum cooldown, seconds. */
+export const MAX_COOLDOWN = CE_LIMITS.cooldownMaxSec;
+/** Maximum schedule interval, hours (contract bound). */
+export const MAX_SCHEDULE_HOURS = 24;
 
 /** Severities in ascending order. */
 export const SEVERITIES: Severity[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 
-/** Trigger kinds editable in the form (`keep` preserves an unsupported trigger). */
-export type FormTriggerKind = 'threshold' | 'schedule' | 'keep';
-
-/** Editable form values. */
-export interface AutomationFormValues {
+/** Editable form values (numbers kept as raw input). */
+export interface AutomationForm {
   nameZh: string;
   nameEn: string;
-  triggerKind: FormTriggerKind;
+  trigger: 'threshold' | 'schedule';
+  everyHours: string;
   objectType: string;
   condition: FilterGroup;
-  alert: boolean;
-  recommend: boolean;
-  perturb: boolean;
-  perturbProperty: string;
-  /** −100..100 (percent). */
-  perturbChange: number;
-  action: boolean;
-  actionType: string;
   severity: Severity;
-  cooldownSec: number;
+  cooldownSec: string;
   enabled: boolean;
 }
 
-/** Numeric data types usable for perturbations. */
-const NUMERIC = new Set<string>(['integer', 'double']);
+/** Field errors (translated as `automations:form.error.<code>`). */
+export type FormErrors = Partial<
+  Record<'nameZh' | 'objectType' | 'condition' | 'cooldownSec' | 'root', string>
+>;
 
-/** Visible properties of a type usable in conditions. */
-export function conditionProperties(
-  type: UiObjectType | undefined,
-): UiProperty[] {
-  return (type?.properties ?? []).filter(p => p.visible);
-}
-
-/** Visible numeric properties (perturbation targets). */
-export function numericProperties(
-  type: UiObjectType | undefined,
-): UiProperty[] {
-  return conditionProperties(type).filter(p => NUMERIC.has(p.dataType));
-}
-
-/** Property map for FilterExpr conversion. */
-export function propMap(
-  type: UiObjectType | undefined,
-): Record<string, RenderProp> {
-  return Object.fromEntries(conditionProperties(type).map(p => [p.apiName, p]));
-}
-
-/** Object type targeted by a trigger. */
-export function triggerObjectType(tr: AutomationTrigger): string {
-  return tr.kind === 'threshold' ? tr.objectType : tr.objectSet.objectType;
-}
+/** Why saving is disabled (translated as `automations:block.<reason>`). */
+export type SaveBlockReason =
+  'scheduleLimit' | 'minInterval' | 'maxInterval' | 'intervalInteger';
 
 /** Empty form. */
-export function emptyForm(): AutomationFormValues {
+export function emptyForm(objectType = ''): AutomationForm {
   return {
     nameZh: '',
     nameEn: '',
-    triggerKind: 'threshold',
-    objectType: '',
+    trigger: 'threshold',
+    everyHours: '1',
+    objectType,
     condition: newGroup('and'),
-    alert: true,
-    recommend: false,
-    perturb: false,
-    perturbProperty: '',
-    perturbChange: -50,
-    action: false,
-    actionType: '',
     severity: 'MEDIUM',
-    cooldownSec: DEFAULT_COOLDOWN,
+    cooldownSec: String(DEFAULT_COOLDOWN),
     enabled: true,
   };
 }
 
-/** Form values for an existing automation. */
-export function formFromDto(a: AutomationDto): AutomationFormValues {
+/** Form values of a stored automation. */
+export function formFromDto(a: AutomationDto | AutomationDef): AutomationForm {
   const name = a.name;
-  const nameZh =
-    typeof name === 'string' ? name : (name['zh-CN'] ?? name['en-US'] ?? '');
-  const nameEn = typeof name === 'string' ? '' : (name['en-US'] ?? '');
-  const rec = a.effects.find(e => e.kind === 'recommend');
-  const act = a.effects.find(e => e.kind === 'action');
   return {
-    nameZh,
-    nameEn,
-    triggerKind: a.trigger.kind === 'objectSetCount' ? 'keep' : a.trigger.kind,
-    objectType: triggerObjectType(a.trigger),
-    condition: fromFilterExpr(a.condition as FilterExpr | undefined),
-    alert: a.effects.some(e => e.kind === 'alert'),
-    recommend: !!rec,
-    perturb: !!(rec && rec.kind === 'recommend' && rec.perturbation),
-    perturbProperty:
-      rec && rec.kind === 'recommend' ? (rec.perturbation?.property ?? '') : '',
-    perturbChange:
-      rec && rec.kind === 'recommend' && rec.perturbation
-        ? Math.round(rec.perturbation.change * 100)
-        : -50,
-    action: !!act,
-    actionType: act && act.kind === 'action' ? act.actionType : '',
+    nameZh:
+      typeof name === 'string' ? name : (name['zh-CN'] ?? name['en-US'] ?? ''),
+    nameEn: typeof name === 'string' ? '' : (name['en-US'] ?? ''),
+    trigger: a.trigger,
+    everyHours: String(a.everyHours ?? 1),
+    objectType: a.objectType,
+    condition: fromFilterExpr(a.condition),
     severity: a.severity,
-    cooldownSec: a.cooldownSec ?? DEFAULT_COOLDOWN,
+    cooldownSec: String(a.cooldownSec ?? DEFAULT_COOLDOWN),
     enabled: a.enabled ?? true,
   };
 }
 
-/** Builds the AutomationDef sent to the API. */
+/** Property map (api name → renderer metadata) of an object type. */
+export function propMap(
+  type: UiObjectType | undefined,
+): Record<string, RenderProp> {
+  return Object.fromEntries((type?.properties ?? []).map(p => [p.apiName, p]));
+}
+
+/** Builds the AutomationDef; `condition` is undefined while incomplete. */
 export function toDef(
-  v: AutomationFormValues,
-  opts: {
-    id?: string;
-    keptTrigger?: AutomationTrigger;
-    props: Record<string, RenderProp>;
-    keptParams?: Record<string, unknown>;
-  },
-): AutomationDef {
-  const name: I18nText = v.nameEn.trim()
-    ? {'zh-CN': v.nameZh.trim(), 'en-US': v.nameEn.trim()}
-    : {'zh-CN': v.nameZh.trim()};
-  let trigger: AutomationTrigger;
-  if (v.triggerKind === 'keep' && opts.keptTrigger) trigger = opts.keptTrigger;
-  else if (v.triggerKind === 'schedule')
-    trigger = {kind: 'schedule', objectSet: {objectType: v.objectType}};
-  else trigger = {kind: 'threshold', objectType: v.objectType};
-  const effects: AutomationDef['effects'] = [];
-  if (v.alert) effects.push({kind: 'alert'});
-  if (v.recommend) {
-    effects.push(
-      v.perturb && v.perturbProperty
-        ? {
-            kind: 'recommend',
-            perturbation: {
-              property: v.perturbProperty,
-              change: v.perturbChange / 100,
-            },
-          }
-        : {kind: 'recommend'},
-    );
-  }
-  if (v.action && v.actionType) {
-    effects.push(
-      opts.keptParams
-        ? {kind: 'action', actionType: v.actionType, params: opts.keptParams}
-        : {kind: 'action', actionType: v.actionType},
-    );
-  }
-  const condition = toFilterExpr(v.condition, opts.props);
-  const def: AutomationDef = {
+  f: AutomationForm,
+  props: Record<string, RenderProp>,
+): Omit<AutomationDef, 'condition'> & {condition?: FilterExpr} {
+  const zh = f.nameZh.trim();
+  const en = f.nameEn.trim();
+  const name: I18nText = en ? {'zh-CN': zh, 'en-US': en} : {'zh-CN': zh};
+  const def: Omit<AutomationDef, 'condition'> & {condition?: FilterExpr} = {
     name,
-    trigger,
-    effects,
-    severity: v.severity,
-    cooldownSec: v.cooldownSec,
-    enabled: v.enabled,
+    trigger: f.trigger,
+    objectType: f.objectType,
+    condition: toFilterExpr(f.condition, props),
+    severity: f.severity,
+    cooldownSec: Number(f.cooldownSec),
+    enabled: f.enabled,
   };
-  if (opts.id) def.id = opts.id;
-  if (condition) def.condition = condition;
+  if (f.trigger === 'schedule') def.everyHours = Number(f.everyHours);
   return def;
 }
 
-/** The def fields of a stored automation (drops server-owned fields). */
-export function defOf(a: AutomationDto): AutomationDef {
-  const def: AutomationDef = {
-    id: a.id,
-    name: a.name,
-    trigger: a.trigger,
-    effects: a.effects,
-    severity: a.severity,
-    cooldownSec: a.cooldownSec,
-    enabled: a.enabled,
-  };
-  if (a.condition) def.condition = a.condition;
-  return def;
+/** Scheduled rules in the workspace, excluding `exceptId`. */
+export function scheduledCount(
+  list: readonly AutomationDto[],
+  exceptId?: string,
+): number {
+  return list.filter(a => a.trigger === 'schedule' && a.id !== exceptId).length;
 }
 
 /**
- * Form schema: field rules plus a final check of the built definition
- * against the contract's `automationDefSchema`.
+ * Reason the save button is disabled, or null. A 4th scheduled rule or an
+ * interval outside 1..24 whole hours cannot be saved.
  */
-export function makeFormSchema(
-  t: TFunction,
-  opts: {props: Record<string, RenderProp>; keptTrigger?: AutomationTrigger},
-) {
-  return z
-    .object({
-      nameZh: z.string().trim().min(1, t('automations.form.nameRequired')),
-      nameEn: z.string(),
-      triggerKind: z.enum(['threshold', 'schedule', 'keep']),
-      objectType: z.string(),
-      condition: z.custom<FilterGroup>(v => !!v && typeof v === 'object'),
-      alert: z.boolean(),
-      recommend: z.boolean(),
-      perturb: z.boolean(),
-      perturbProperty: z.string(),
-      perturbChange: z.number().min(-100).max(100),
-      action: z.boolean(),
-      actionType: z.string(),
-      severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
-      cooldownSec: z
-        .number({error: t('automations.form.cooldownRange')})
-        .int(t('automations.form.cooldownRange'))
-        .min(0, t('automations.form.cooldownRange'))
-        .max(MAX_COOLDOWN, t('automations.form.cooldownRange')),
-      enabled: z.boolean(),
-    })
-    .superRefine((v, ctx) => {
-      let ok = true;
-      if (v.triggerKind !== 'keep' && !v.objectType) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['objectType'],
-          message: t('automations.form.typeRequired'),
-        });
-        ok = false;
-      }
-      if (!v.alert && !v.recommend && !v.action) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['alert'],
-          message: t('automations.form.effectsRequired'),
-        });
-        ok = false;
-      }
-      if (v.recommend && v.perturb && !v.perturbProperty) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['perturbProperty'],
-          message: t('automations.form.perturbRequired'),
-        });
-        ok = false;
-      }
-      if (v.action && !v.actionType) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['actionType'],
-          message: t('automations.form.actionRequired'),
-        });
-        ok = false;
-      }
-      if (!ok) return;
-      const r = automationDefSchema.safeParse(
-        toDef(v as AutomationFormValues, opts),
-      );
-      if (!r.success) {
-        const detail = r.error.issues
-          .map(i => `${i.path.join('.')}: ${i.message}`)
-          .join('; ');
-        ctx.addIssue({
-          code: 'custom',
-          path: ['root'],
-          message: t('automations.form.invalid', {detail}),
-        });
-      }
-    });
+export function saveBlockReason(
+  f: AutomationForm,
+  list: readonly AutomationDto[],
+  editingId?: string,
+): SaveBlockReason | null {
+  if (f.trigger !== 'schedule') return null;
+  if (scheduledCount(list, editingId) >= CE_LIMITS.maxScheduledAutomations)
+    return 'scheduleLimit';
+  const raw = f.everyHours.trim();
+  const h = raw === '' ? NaN : Number(raw);
+  if (!Number.isFinite(h) || h < CE_LIMITS.minScheduleHours)
+    return 'minInterval';
+  if (!Number.isInteger(h)) return 'intervalInteger';
+  if (h > MAX_SCHEDULE_HOURS) return 'maxInterval';
+  return null;
 }
 
-// ----------------------------------------------------------------------------
-// Summaries
-// ----------------------------------------------------------------------------
+/**
+ * Validates the form; returns the definition when valid. Errors hold
+ * message codes; `root` carries the contract schema message.
+ */
+export function validateForm(
+  f: AutomationForm,
+  props: Record<string, RenderProp>,
+): {def?: AutomationDef; errors: FormErrors} {
+  const errors: FormErrors = {};
+  if (!f.nameZh.trim()) errors.nameZh = 'nameRequired';
+  if (!f.objectType) errors.objectType = 'typeRequired';
+  const cd = f.cooldownSec.trim() === '' ? NaN : Number(f.cooldownSec);
+  if (!Number.isInteger(cd) || cd < 0 || cd > MAX_COOLDOWN)
+    errors.cooldownSec = 'cooldownRange';
+  const def = toDef(f, props);
+  if (!def.condition) errors.condition = 'conditionRequired';
+  if (Object.keys(errors).length) return {errors};
+  const parsed = automationDefSchema.safeParse(def);
+  if (!parsed.success) {
+    return {
+      errors: {
+        root: parsed.error.issues
+          .map(i => `${i.path.join('.')}: ${i.message}`)
+          .join('; '),
+      },
+    };
+  }
+  return {def: def as AutomationDef, errors};
+}
+
+// --- Summaries ---------------------------------------------------------------
 
 function valueText(v: FilterValue, t: TFunction): string {
-  if (typeof v === 'boolean')
-    return t(v ? 'common:bool.true' : 'common:bool.false');
+  if (typeof v === 'boolean') return t(v ? 'bool.true' : 'bool.false');
   return String(v);
 }
 
-/** Human-readable condition, e.g. "风险分 大于等于 70 且 状态 等于 watch". */
+/** Human-readable condition, e.g. "周产能 小于 5000 且 状态 等于 watch". */
 export function conditionSummary(
-  expr: FilterExpr | Record<string, unknown> | undefined,
+  expr: FilterExpr | undefined,
   type: UiObjectType | undefined,
   t: TFunction,
 ): string {
-  if (!expr || !('op' in expr)) return t('automations.noCondition');
+  if (!expr) return t('summary.noCondition');
   const propName = (p: string) =>
     type?.properties.find(x => x.apiName === p)?.displayName ?? p;
   const walk = (e: FilterExpr, depth: number): string => {
@@ -319,46 +201,38 @@ export function conditionSummary(
       case 'or': {
         const s = e.args
           .map(a => walk(a, depth + 1))
-          .join(` ${t(`automations.${e.op}`)} `);
+          .join(` ${t(`summary.${e.op}`)} `);
         return depth > 0 && e.args.length > 1 ? `(${s})` : s;
       }
       case 'not':
-        return `${t('automations.not')} (${walk(e.arg, depth + 1)})`;
+        return `${t('summary.not')} (${walk(e.arg, depth + 1)})`;
       case 'exists':
-        return t('automations.exists', {prop: propName(e.prop)});
+        return `${propName(e.prop)} ${t('ops.exists')}`;
       case 'in':
-        return `${propName(e.prop)} ${t('common:filter.ops.in')} ${e.values.map(v => valueText(v, t)).join(', ')}`;
+        return `${propName(e.prop)} ${t('ops.in')} ${e.values.map(v => valueText(v, t)).join(', ')}`;
       case 'contains':
-        return `${propName(e.prop)} ${t('common:filter.ops.contains')} ${e.value}`;
+        return `${propName(e.prop)} ${t('ops.contains')} ${e.value}`;
       default:
-        return `${propName(e.prop)} ${t(`common:filter.ops.${e.op}`)} ${valueText(e.value, t)}`;
+        return `${propName(e.prop)} ${t(`ops.${e.op}`)} ${valueText(e.value, t)}`;
     }
   };
-  return walk(expr as FilterExpr, 0);
+  return walk(expr, 0);
 }
 
-/** Human-readable trigger, e.g. "对象变更时 · 供应商". */
+/** Human-readable trigger: threshold, or "every n h". */
 export function triggerSummary(
-  tr: AutomationTrigger,
-  model: UiModel,
+  a: Pick<AutomationDef, 'trigger' | 'everyHours'>,
   t: TFunction,
 ): string {
-  const type =
-    model.byName[triggerObjectType(tr)]?.displayName ?? triggerObjectType(tr);
-  const kind =
-    tr.kind === 'objectSetCount'
-      ? t('automations.trigger.objectSetCount', {
-          op: t(`common:filter.ops.${tr.op}`),
-          value: tr.value,
-        })
-      : t(`automations.trigger.${tr.kind}`);
-  return `${kind} · ${type}`;
+  return a.trigger === 'schedule'
+    ? t('summary.every', {count: a.everyHours ?? 1})
+    : t('summary.threshold');
 }
 
 /** Human-readable cooldown. */
 export function cooldownText(sec: number, t: TFunction): string {
-  if (!sec) return t('automations.cooldown.none');
-  if (sec % 3600 === 0) return t('automations.cooldown.hours', {n: sec / 3600});
-  if (sec % 60 === 0) return t('automations.cooldown.minutes', {n: sec / 60});
-  return t('automations.cooldown.seconds', {n: sec});
+  if (!sec) return t('summary.cooldownNone');
+  if (sec % 3600 === 0) return t('summary.cooldownHours', {count: sec / 3600});
+  if (sec % 60 === 0) return t('summary.cooldownMinutes', {count: sec / 60});
+  return t('summary.cooldownSeconds', {count: sec});
 }

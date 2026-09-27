@@ -1,111 +1,124 @@
 /**
- * @fileoverview situation-events consumer use case: usage recording,
- * automation evaluation, alert raising and KPI refresh.
+ * @fileoverview domain-events handling inside a room (详细设计 6.11.4 事件处理):
+ * tombstone → drop; dedupe by eventId; read current values by rid; update
+ * the object cache and KPIs; evaluate the threshold rules whose properties
+ * changed; push realtime messages.
  */
 
-import type {SituationEventMsg} from '@ontodecide/object-graph/contract';
-import {systemCtx} from '@ontodecide/shared-kernel';
-import {AutomationIndex, countCrosses} from '../domain';
-import type {SituationDeps} from './deps';
-import {publish, raiseAlert, refreshKpis} from './support';
+import {DAY_MS, type DomainEventMsg, type Rid} from '@ontodecide/shared-kernel';
+import type {ObjectDto} from '@ontodecide/object-graph/contract';
+import {ensureInitialized, roomCtx, toView} from './install_pack_content';
+import {KpiTracker, markMetricsDirty} from './kpi_handlers';
+import type {AlertRecord, ApplyEventsResult} from './ports';
+import type {RoomRuntime} from './support';
 
-/** Outcome of one event. */
-export interface EventOutcome {
-  duplicate: boolean;
-  alertsRaised: number;
-  kpisRefreshed: number;
+/** Seen-event retention (dedupe window). */
+export const SEEN_EVENT_TTL_MS = DAY_MS;
+
+/** Largest rid batch per getObjects call. */
+export const GET_OBJECTS_CHUNK = 100;
+
+interface PendingChange {
+  type: string;
+  changed: Set<string>;
 }
 
-/** Per-batch cache of automation indexes by tenant. */
-export type AutomationIndexCache = Map<string, AutomationIndex>;
-
-/**
- * Processes one `situation-events` message; idempotent by eventId. Errors
- * propagate so the queue retries the message.
- */
-export class ProcessSituationEvent {
-  constructor(private readonly deps: SituationDeps) {}
-
-  async execute(
-    msg: SituationEventMsg,
-    cache: AutomationIndexCache = new Map(),
-  ): Promise<EventOutcome> {
-    const {repos, clock, logger} = this.deps;
-    if (await repos.processedEvents.has(msg.eventId)) {
-      return {duplicate: true, alertsRaised: 0, kpisRefreshed: 0};
+function collect(
+  events: readonly DomainEventMsg[],
+): Map<string, PendingChange> {
+  const out = new Map<string, PendingChange>();
+  for (const e of events) {
+    for (const c of e.changes ?? []) {
+      const p = out.get(c.rid);
+      if (p) for (const f of c.changed ?? []) p.changed.add(f);
+      else out.set(c.rid, {type: c.type, changed: new Set(c.changed ?? [])});
     }
-    const tenantId = msg.tenantId;
-    const ctx = systemCtx(tenantId, msg.eventId);
-    const now = clock.now();
-
-    if (msg.usage?.length) {
-      try {
-        const status = await this.deps.usage().record(msg.usage);
-        if (status.level !== 'ok') {
-          await publish(this.deps, tenantId, 'usage', status);
-        }
-      } catch (e) {
-        logger.warn('usage record failed', {
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
-    }
-
-    let index = cache.get(tenantId);
-    if (!index) {
-      index = new AutomationIndex(await repos.automations.list(tenantId));
-      cache.set(tenantId, index);
-    }
-
-    let alertsRaised = 0;
-    const opts = {now, correlationId: msg.eventId};
-    for (const change of msg.changes ?? []) {
-      for (const auto of index.matching(change)) {
-        const r = await raiseAlert(
-          this.deps,
-          tenantId,
-          auto,
-          {rid: change.rid, title: change.title, snapshot: change.after},
-          opts,
-        );
-        if (r.created) alertsRaised++;
-      }
-    }
-
-    const types = new Set((msg.changes ?? []).map(c => c.type));
-    for (const auto of index.countRulesFor(types)) {
-      if (auto.trigger.kind !== 'objectSetCount') continue;
-      const t = auto.trigger;
-      const count = await this.deps.objects.aggregate(ctx, {
-        objectSet: t.objectSet,
-        fn: 'count',
-      });
-      if (!countCrosses(count, t.op, t.value)) continue;
-      const r = await raiseAlert(
-        this.deps,
-        tenantId,
-        auto,
-        {
-          rid: null,
-          title: `${t.objectSet.objectType} count ${t.op} ${t.value}`,
-          snapshot: {count},
-        },
-        opts,
-      );
-      if (r.created) alertsRaised++;
-    }
-
-    let kpisRefreshed = 0;
-    if (types.size > 0) {
-      const kpis = (await repos.kpis.list(tenantId)).filter(k =>
-        types.has(k.objectSet.objectType),
-      );
-      if (kpis.length > 0) {
-        kpisRefreshed = (await refreshKpis(this.deps, ctx, kpis)).length;
-      }
-    }
-
-    await repos.processedEvents.add(msg.eventId, clock.now().getTime());
-    return {duplicate: false, alertsRaised, kpisRefreshed};
   }
+  return out;
+}
+
+/** Applies a group of domain events of the room's workspace. */
+export async function applyEvents(
+  rt: RoomRuntime,
+  tid: string,
+  events: readonly DomainEventMsg[],
+): Promise<ApplyEventsResult> {
+  if (rt.tombstoned())
+    return {applied: 0, duplicates: events.length, dropped: true};
+  rt.bindTid(tid);
+  const {store} = rt.deps;
+  const unseen = (list: readonly DomainEventMsg[]): DomainEventMsg[] => {
+    const ids = new Set<string>();
+    return list.filter(e => {
+      if (ids.has(e.eventId) || store.isSeen(e.eventId)) return false;
+      ids.add(e.eventId);
+      return true;
+    });
+  };
+  const fresh = unseen(events);
+  const duplicates = events.length - fresh.length;
+  if (!fresh.length) return {applied: 0, duplicates, dropped: false};
+
+  if (!rt.initialized()) {
+    // The first initialization reads the current state of every object,
+    // which already includes these changes.
+    await ensureInitialized(rt);
+    if (rt.tombstoned()) return {applied: 0, duplicates, dropped: true};
+    const now = rt.now();
+    for (const e of unseen(fresh)) store.markSeen(e.eventId, now);
+    return {applied: fresh.length, duplicates, dropped: false};
+  }
+
+  const pending = collect(fresh);
+  const rids = [...pending.keys()] as Rid[];
+  const current = new Map<string, ObjectDto>();
+  for (let i = 0; i < rids.length; i += GET_OBJECTS_CHUNK) {
+    const chunk = rids.slice(i, i + GET_OBJECTS_CHUNK);
+    for (const o of await rt.deps.objects.getObjects(roomCtx(tid), chunk)) {
+      current.set(o.rid, o);
+    }
+  }
+
+  // Synchronous from here on: atomic within the room.
+  if (rt.tombstoned()) return {applied: 0, duplicates, dropped: true};
+  const todo = unseen(fresh);
+  const now = rt.now();
+  const kpis = new KpiTracker(store);
+  const alerts: AlertRecord[] = [];
+  const {index, byId} = rt.ruleIndex();
+  for (const [rid, change] of collect(todo)) {
+    const before = store.getObject(rid);
+    const dto = current.get(rid);
+    const after = dto ? toView(dto) : null;
+    if (after) store.putObject(after);
+    else if (before) store.deleteObject(rid);
+    kpis.apply(before, after);
+    if (!after) {
+      rt.closeAlertsOf(rid, alerts);
+      continue;
+    }
+    const whole = before === null || before.type !== after.type;
+    for (const r of index.candidates(after.type, [...change.changed], whole)) {
+      const rule = byId.get(r.id);
+      if (rule) rt.evaluate(rule, rid, after, alerts);
+    }
+  }
+  for (const e of todo) store.markSeen(e.eventId, now);
+  store.pruneSeen(now - SEEN_EVENT_TTL_MS);
+
+  const changedKpis = kpis.commit(now);
+  if (changedKpis.length) {
+    markMetricsDirty(rt);
+    rt.push(
+      'kpi',
+      changedKpis.map(k => rt.kpiValue(k)),
+    );
+  }
+  rt.pushAlerts(alerts);
+  if (changedKpis.length) await rt.reschedule();
+  return {
+    applied: todo.length,
+    duplicates: events.length - todo.length,
+    dropped: false,
+  };
 }

@@ -1,177 +1,198 @@
 /**
- * @fileoverview Parser core: CSV fields / rows of the sample supplier file,
- * 500-row batching, limits (size, rows), JSON and format detection.
+ * @fileoverview Browser file parsing: CSV (BOM, empty rows, duplicate
+ * headers), JSON shapes, XLSX cell values (built with XLSX.utils), size and
+ * format pre-checks, the row safety bound and the worker request handler.
  */
 
 import {describe, expect, it} from 'vitest';
+import * as XLSX from 'xlsx';
 import {
   detectFormat,
+  handleParseRequest,
   jsonRecords,
-  parseFile,
-  type ParseMessage,
+  parseCsvText,
+  parseFileData,
+  parseJsonText,
+  parseXlsxBuffer,
+  ParseError,
+  precheckFile,
+  SAMPLE_ROWS,
 } from './parse_core';
 
-const SUPPLIERS_CSV = `supplierId,name,country,riskScore,capacity,onTimeRate,status,contactEmail,materials,share
-S-001,Shenzhen Precision Parts,CN,35,1200,0.96,active,ops@szpp.example,M-100;M-101,0.7
-S-002,Hanoi Circuit Works,VN,58,800,0.91,active,sales@hcw.example,M-101;M-102,0.3
-S-003,Penang Semicon,MY,22,1500,0.98,active,contact@penang.example,M-102,0.7
-S-004,Osaka Battery Co,JP,41,600,0.94,active,info@osakabat.example,M-103,1
-S-005,Bangkok Metal Forming,TH,18,900,0.97,active,hello@bmf.example,M-100,0.3
-`;
-
-async function run(
-  name: string,
-  data: string,
-  limits?: {rowsMax?: number; bytesMax?: number},
-) {
-  const out: ParseMessage[] = [];
-  await parseFile(
-    {name, size: new TextEncoder().encode(data).length, data, limits},
-    m => out.push(m),
-    () => 0,
+function xlsxBytes(rows: unknown[][]): Uint8Array {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Sheet1');
+  return new Uint8Array(
+    XLSX.write(wb, {type: 'array', bookType: 'xlsx'}) as ArrayBuffer,
   );
-  return out;
 }
 
-function bigCsv(rows: number): string {
-  const lines = ['id,value'];
-  for (let i = 0; i < rows; i++) lines.push(`K-${i},${i}`);
-  return lines.join('\n');
+async function parseError(p: Promise<unknown> | (() => unknown)) {
+  try {
+    await (typeof p === 'function' ? p() : p);
+  } catch (e) {
+    return e as ParseError;
+  }
+  throw new Error('expected a ParseError');
 }
 
-describe('parseFile (CSV)', () => {
-  it('parses the sample supplier CSV with header fields', async () => {
-    const out = await run('suppliers.csv', SUPPLIERS_CSV);
-    const meta = out.find(m => m.type === 'meta');
-    expect(meta).toMatchObject({
-      type: 'meta',
-      fields: [
-        'supplierId',
-        'name',
-        'country',
-        'riskScore',
-        'capacity',
-        'onTimeRate',
-        'status',
-        'contactEmail',
-        'materials',
-        'share',
-      ],
-    });
-    if (meta?.type !== 'meta') throw new Error('no meta');
-    expect(meta.sampleRows).toHaveLength(5);
-    expect(meta.sampleRows[1]).toMatchObject({
-      supplierId: 'S-002',
-      name: 'Hanoi Circuit Works',
-      riskScore: '58',
-      materials: 'M-101;M-102',
-    });
-    const batches = out.filter(m => m.type === 'batch');
-    expect(batches).toHaveLength(1);
-    expect(out.at(-1)).toEqual({type: 'done', rows: 5, ms: 0});
-  });
-
-  it('strips a BOM and skips blank lines', async () => {
-    const out = await run('x.csv', '﻿a,b\n1,2\n\n   \n3,4\n');
-    expect(out.find(m => m.type === 'meta')).toMatchObject({
-      fields: ['a', 'b'],
-    });
-    expect(out.at(-1)).toMatchObject({type: 'done', rows: 2});
-  });
-
-  it('emits batches of 500 rows with contiguous seq', async () => {
-    const out = await run('big.csv', bigCsv(1234));
-    const batches = out.filter(
-      (m): m is Extract<ParseMessage, {type: 'batch'}> => m.type === 'batch',
-    );
-    expect(batches.map(b => b.seq)).toEqual([0, 1, 2]);
-    expect(batches.map(b => b.rows.length)).toEqual([500, 500, 234]);
-    expect(batches[2].rows.at(-1)).toEqual({id: 'K-1233', value: '1233'});
-    expect(out[0].type).toBe('meta');
-    expect(out.at(-1)).toMatchObject({type: 'done', rows: 1234});
-  });
-
-  it('rejects files with more than 10,000 rows', async () => {
-    const out = await run('huge.csv', bigCsv(10_001));
-    expect(out.at(-1)).toMatchObject({type: 'error', code: 'TOO_MANY_ROWS'});
-    expect(out.some(m => m.type === 'done')).toBe(false);
-  });
-
-  it('accepts exactly 10,000 rows', async () => {
-    const out = await run('edge.csv', bigCsv(10_000));
-    expect(out.at(-1)).toMatchObject({type: 'done', rows: 10_000});
-    expect(out.filter(m => m.type === 'batch')).toHaveLength(20);
-  });
-
-  it('rejects files over 20 MB before parsing', async () => {
-    const out: ParseMessage[] = [];
-    await parseFile(
-      {name: 'a.csv', size: 20 * 1024 * 1024 + 1, data: 'a\n1'},
-      m => out.push(m),
-    );
-    expect(out).toEqual([
-      {
-        type: 'error',
-        code: 'FILE_TOO_LARGE',
-        detail: String(20 * 1024 * 1024 + 1),
-      },
-    ]);
-  });
-
-  it('honours custom row limits', async () => {
-    const out = await run('a.csv', bigCsv(20), {rowsMax: 10});
-    expect(out.at(-1)).toMatchObject({type: 'error', code: 'TOO_MANY_ROWS'});
-  });
-
-  it('reports an empty file', async () => {
-    const out = await run('a.csv', 'a,b\n');
-    expect(out.at(-1)).toMatchObject({type: 'error', code: 'EMPTY_FILE'});
-  });
-});
-
-describe('parseFile (JSON) and helpers', () => {
-  it('parses an array of objects', async () => {
-    const out = await run(
-      'a.json',
-      JSON.stringify([
-        {id: 'A', n: 1},
-        {id: 'B', extra: true},
-      ]),
-    );
-    expect(out.find(m => m.type === 'meta')).toMatchObject({
-      fields: ['id', 'n', 'extra'],
-    });
-    expect(out.at(-1)).toMatchObject({type: 'done', rows: 2});
-  });
-
-  it('rejects invalid JSON', async () => {
-    expect((await run('a.json', '{nope')).at(-1)).toMatchObject({
-      type: 'error',
-      code: 'INVALID_JSON',
-    });
-    expect((await run('a.json', '[1,2]')).at(-1)).toMatchObject({
-      type: 'error',
-      code: 'INVALID_JSON',
-    });
-  });
-
-  it('extracts records from wrappers', () => {
-    expect(jsonRecords({items: [{a: 1}]})).toEqual([{a: 1}]);
-    expect(jsonRecords({data: [{a: 1}]})).toEqual([{a: 1}]);
-    expect(jsonRecords({x: 1})).toBeNull();
-  });
-
-  it('detects formats', () => {
+describe('detectFormat / precheckFile', () => {
+  it('detects formats by extension and MIME type', () => {
     expect(detectFormat('a.CSV')).toBe('csv');
     expect(detectFormat('a.xlsx')).toBe('xlsx');
     expect(detectFormat('a.json')).toBe('json');
-    expect(detectFormat('a.pdf')).toBeNull();
+    expect(detectFormat('blob', 'application/json')).toBe('json');
+    expect(detectFormat('a.xls')).toBeNull();
+    expect(detectFormat('a.txt')).toBeNull();
   });
 
-  it('rejects unsupported formats', async () => {
-    expect((await run('a.pdf', 'x')).at(-1)).toMatchObject({
-      type: 'error',
-      code: 'UNSUPPORTED_FORMAT',
+  it('checks size (≤ 5 MB) and format before reading', () => {
+    expect(precheckFile({name: 'a.csv', size: 5 * 1024 * 1024})).toBeNull();
+    expect(precheckFile({name: 'a.csv', size: 5 * 1024 * 1024 + 1})?.code).toBe(
+      'FILE_TOO_LARGE',
+    );
+    expect(precheckFile({name: 'a.pdf', size: 10})?.code).toBe(
+      'UNSUPPORTED_FORMAT',
+    );
+    expect(precheckFile({name: 'a.csv', size: 0})?.code).toBe('EMPTY_FILE');
+  });
+
+  it('never reads an oversized file', async () => {
+    const data = {
+      text: () => {
+        throw new Error('read');
+      },
+    } as unknown as Blob;
+    const err = await parseError(
+      parseFileData({name: 'a.csv', size: 6 * 1024 * 1024, data}),
+    );
+    expect(err.code).toBe('FILE_TOO_LARGE');
+  });
+});
+
+describe('parseCsvText', () => {
+  it('strips the BOM, trims headers and skips empty rows', () => {
+    const t = parseCsvText(
+      '\uFEFFvendor_code, vendor_name ,risk\r\nS-017,苏州精密,82\r\n,,\r\n\r\nS-022,"Ningbo, Ltd",21\r\n',
+    );
+    expect(t.format).toBe('csv');
+    expect(t.fields).toEqual(['vendor_code', 'vendor_name', 'risk']);
+    expect(t.rows).toEqual([
+      {vendor_code: 'S-017', vendor_name: '苏州精密', risk: '82'},
+      {vendor_code: 'S-022', vendor_name: 'Ningbo, Ltd', risk: '21'},
+    ]);
+    expect(t.truncated).toBe(false);
+  });
+
+  it('renames duplicate headers and drops unnamed columns', () => {
+    const t = parseCsvText('a,a,,b\n1,2,3,4\n');
+    expect(t.fields).toEqual(['a', 'a_2', 'b']);
+    expect(t.rows[0]).toEqual({a: '1', a_2: '2', b: '4'});
+  });
+
+  it('keeps 20 sample rows and caps rows at the safety bound', () => {
+    const body = Array.from({length: 30}, (_, i) => `k${i},${i}`).join('\n');
+    const t = parseCsvText(`k,v\n${body}`, {maxRows: 25});
+    expect(t.sampleRows).toHaveLength(SAMPLE_ROWS);
+    expect(t.rows).toHaveLength(25);
+    expect(t.truncated).toBe(true);
+  });
+
+  it('fails on a header-only file', () => {
+    expect(() => parseCsvText('a,b\n')).toThrow(ParseError);
+  });
+});
+
+describe('JSON', () => {
+  it('accepts arrays and {items|data|records|rows} wrappers', () => {
+    const rows = [{a: 1}, {b: 'x'}];
+    expect(jsonRecords(rows)).toEqual(rows);
+    for (const k of ['items', 'data', 'records', 'rows']) {
+      expect(jsonRecords({[k]: rows})).toEqual(rows);
+    }
+    expect(jsonRecords({foo: rows})).toBeNull();
+    expect(jsonRecords([1, 2])).toBeNull();
+    expect(jsonRecords([[1]])).toBeNull();
+  });
+
+  it('parses objects with the union of their keys', () => {
+    const t = parseJsonText('{"data":[{"a":1},{"a":2,"b":true},{}]}');
+    expect(t.fields).toEqual(['a', 'b']);
+    expect(t.rows).toHaveLength(2);
+    expect(t.rows[1]).toEqual({a: 2, b: true});
+  });
+
+  it('reports invalid JSON', async () => {
+    expect((await parseError(() => parseJsonText('{'))).code).toBe(
+      'INVALID_JSON',
+    );
+    expect((await parseError(() => parseJsonText('{"x":1}'))).code).toBe(
+      'INVALID_JSON',
+    );
+  });
+});
+
+describe('parseXlsxBuffer', () => {
+  it('reads the first sheet as cell values', async () => {
+    const bytes = xlsxBytes([
+      ['supplierId', 'name', 'risk'],
+      ['S-1', 'Alpha', 82],
+      [null, null, null],
+      ['S-2', 'Beta', 21.5],
+    ]);
+    const t = await parseXlsxBuffer(bytes);
+    expect(t.format).toBe('xlsx');
+    expect(t.fields).toEqual(['supplierId', 'name', 'risk']);
+    expect(t.rows).toEqual([
+      {supplierId: 'S-1', name: 'Alpha', risk: 82},
+      {supplierId: 'S-2', name: 'Beta', risk: 21.5},
+    ]);
+  });
+
+  it('does not evaluate formulas (only the stored value is read)', async () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['a', 'b'],
+      [1, 2],
+    ]);
+    ws.B2 = {t: 'n', f: 'A2*100', v: 7};
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'S');
+    const buf = XLSX.write(wb, {type: 'array', bookType: 'xlsx'});
+    const t = await parseXlsxBuffer(buf as ArrayBuffer);
+    expect(t.rows[0]).toEqual({a: 1, b: 7});
+  });
+
+  it('parses through parseFileData with a Blob', async () => {
+    const bytes = xlsxBytes([['k'], ['v']]);
+    const blob = new Blob([bytes as BlobPart]);
+    const t = await parseFileData({
+      name: 'x.xlsx',
+      size: blob.size,
+      data: blob,
     });
+    expect(t.rows).toEqual([{k: 'v'}]);
+  });
+});
+
+describe('handleParseRequest', () => {
+  it('returns the table or an error code', async () => {
+    const ok = new Blob(['a,b\n1,2\n']);
+    expect(
+      await handleParseRequest({
+        name: 'a.csv',
+        size: ok.size,
+        type: 'text/csv',
+        data: ok,
+      }),
+    ).toMatchObject({ok: true, table: {fields: ['a', 'b']}});
+    expect(
+      await handleParseRequest({
+        name: 'a.csv',
+        size: 100,
+        type: '',
+        data: ok,
+        limits: {maxBytes: 10},
+      }),
+    ).toEqual({ok: false, code: 'FILE_TOO_LARGE', detail: '10'});
   });
 });

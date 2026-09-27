@@ -1,6 +1,10 @@
 /**
- * @fileoverview Ontology metamodel: object types, properties, link types,
- * action types, declarative functions and simulation KPIs.
+ * @fileoverview Ontology metamodel (详细设计 6.11.1): object types,
+ * properties, link types, action types, declarative functions and
+ * simulation KPIs, plus the template seeds situation-awareness installs.
+ *
+ * CE has a single version per workspace: a workspace references the shared
+ * read-only template until its first change, which copies it (copy-on-write).
  */
 
 import type {
@@ -34,6 +38,9 @@ export const SCALAR_TYPES = [
   'enum',
 ] as const;
 
+/** Indexed properties per object type (index write amplification). */
+export const MAX_INDEXED_PROPS = 8;
+
 /** A property of an object type. */
 export interface PropertyDef {
   apiName: string;
@@ -41,12 +48,10 @@ export interface PropertyDef {
   dataType: DataType;
   required?: boolean;
   unit?: string;
-  /** Builds og_prop_index rows; only indexed properties can be filtered/sorted in D1. */
+  /** Builds og_prop_index rows; only indexed properties filter/sort in D1. */
   indexed?: boolean;
-  /** Markings a caller must hold to see this property. */
-  markings?: string[];
   semanticTags?: string[];
-  /** Never sent to external LLM providers. */
+  /** Never sent to Workers AI. */
   sensitive?: boolean;
   enumValues?: string[];
   description?: I18nText;
@@ -60,8 +65,6 @@ export interface ObjectTypeDef {
   primaryKey: string;
   titleProperty: string;
   properties: PropertyDef[];
-  /** Projected into Neo4j for deep traversal. */
-  graphProjected?: boolean;
   description?: I18nText;
 }
 
@@ -82,7 +85,7 @@ export interface LinkTypeDef {
   propagation?: PropagationDef;
 }
 
-/** Suggests a value for an objectRef parameter (candidate prefilling). */
+/** Suggests a value for an objectRef parameter (deterministic candidates). */
 export interface ParamSuggestDef {
   objectType: string;
   filter?: FilterExpr;
@@ -121,10 +124,7 @@ export interface ImpactHint {
   change: number;
 }
 
-/** Where an executed action is written back. */
-export type WritebackDef = {kind: 'none'} | {kind: 'webhook'; url: string};
-
-/** An action type. */
+/** An action type. Actions only change objects inside the workspace. */
 export interface ActionTypeDef {
   apiName: string;
   displayName: I18nText;
@@ -132,13 +132,11 @@ export interface ActionTypeDef {
   parameters: ParamDef[];
   preconditions: PreconditionDef[];
   effects: EffectDef[];
-  requiresApproval: boolean;
   impact?: ImpactHint[];
-  writeback?: WritebackDef;
   description?: I18nText;
 }
 
-/** A declarative (JSONLogic) function. */
+/** A declarative (JSONLogic safe subset) function. */
 export interface FunctionDef {
   apiName: string;
   displayName?: I18nText;
@@ -159,40 +157,55 @@ export interface SimulationKpiDef {
   higherIsBetter: boolean;
 }
 
-/** A full ontology schema (the unit of versioning and publishing). */
-export interface SchemaDef {
-  apiName: string;
-  displayName: I18nText;
-  /** Semantic version, e.g. `1.2.0`. Set by publish when omitted. */
-  version?: string;
-  description?: I18nText;
+/** A workspace ontology (the single version). */
+export interface OntologyDef {
   objectTypes: ObjectTypeDef[];
   linkTypes: LinkTypeDef[];
   actionTypes: ActionTypeDef[];
   functions: FunctionDef[];
-  simulationKpis?: SimulationKpiDef[];
+  simulationKpis: SimulationKpiDef[];
 }
+
+/** Editable definition collections (REST resource names). */
+export type DefKind = 'object-types' | 'link-types' | 'action-types';
+
+/** Definition type of each {@link DefKind}. */
+export interface DefByKind {
+  'object-types': ObjectTypeDef;
+  'link-types': LinkTypeDef;
+  'action-types': ActionTypeDef;
+}
+
+/** Any editable definition. */
+export type TypeDef = ObjectTypeDef | LinkTypeDef | ActionTypeDef;
 
 /** Index plan entry derived from `indexed` properties. */
 export interface IndexPlanEntry {
   objectType: string;
   prop: string;
-  kind: 'num' | 'str';
 }
 
 /** Compiled object type (adds derived lookups). */
 export interface CompiledObjectType extends ObjectTypeDef {
-  schemaApi: string;
   propsByName: Record<string, PropertyDef>;
   indexedProps: string[];
   sensitiveProps: string[];
 }
 
-/** Compiled single schema. */
+/**
+ * Compiled workspace ontology. Workspaces that never changed their ontology
+ * share the template's compiled form.
+ */
 export interface CompiledSchema {
-  apiName: string;
-  version: string;
-  hash: string;
+  templateId: string;
+  templateVersion: string;
+  /** True once the workspace has its own copy. */
+  custom: boolean;
+  /**
+   * Schema version used for If-Match: 0 while the template is referenced,
+   * then the copy's etag counter (HTTP ETag `"v{etag}"`).
+   */
+  etag: number;
   objectTypes: Record<string, CompiledObjectType>;
   linkTypes: Record<string, LinkTypeDef>;
   actionTypes: Record<string, ActionTypeDef>;
@@ -201,44 +214,14 @@ export interface CompiledSchema {
   indexPlan: IndexPlanEntry[];
 }
 
-/**
- * The tenant's active model: all published schemas merged. Object, link and
- * action type api names are unique across a tenant's schemas.
- */
-export interface CompiledModel extends Omit<CompiledSchema, 'apiName'> {
-  tenantId: string;
-  schemas: {apiName: string; version: string}[];
-}
-
-/** Schema lifecycle status. */
-export type SchemaStatus = 'DRAFT' | 'PUBLISHED' | 'DEPRECATED';
-
-/** One stored schema version. */
-export interface SchemaDto {
-  apiName: string;
-  version: string;
-  status: SchemaStatus;
-  definition: SchemaDef;
-  publishedBy?: string;
-  publishedAt?: string;
-}
-
-/** Listing entry. */
-export interface SchemaSummary {
-  apiName: string;
-  displayName: I18nText;
-  currentVersion: string | null;
-  hasDraft: boolean;
-  objectTypeCount: number;
-  publishedAt?: string;
-}
-
-/** Result of saving a draft. */
-export interface DraftDto {
-  apiName: string;
-  version: string;
-  savedAt: string;
-  validation: ValidationIssue[];
+/** Workspace ontology as returned to the UI. */
+export interface OntologyDto {
+  templateId: string;
+  templateVersion: string;
+  custom: boolean;
+  etag: number;
+  definition: OntologyDef;
+  updatedAt: string | null;
 }
 
 /** A structural validation issue. */
@@ -247,64 +230,43 @@ export interface ValidationIssue {
   message: string;
 }
 
-/** One change in a schema diff. */
-export interface SchemaChange {
-  kind:
-    | 'objectTypeAdded'
-    | 'objectTypeRemoved'
-    | 'propertyAdded'
-    | 'propertyRemoved'
-    | 'propertyTypeChanged'
-    | 'propertyChanged'
-    | 'linkTypeAdded'
-    | 'linkTypeRemoved'
-    | 'actionTypeAdded'
-    | 'actionTypeRemoved'
-    | 'actionTypeChanged';
-  path: string;
-  breaking: boolean;
-  detail?: string;
+/** KPI aggregation. */
+export interface KpiAggregate {
+  fn: 'count' | 'sum' | 'avg' | 'min' | 'max';
+  prop?: string;
 }
 
-/** Draft vs current comparison. */
-export interface DiffReport {
-  apiName: string;
-  fromVersion: string | null;
-  toVersion: string;
-  breaking: boolean;
-  changes: SchemaChange[];
-  /** Suggested next version following semver. */
-  suggestedVersion: string;
-}
-
-/** Publish outcome. */
-export interface PublishReport {
-  apiName: string;
-  version: string;
-  diff: DiffReport;
-  indexChanges: IndexPlanEntry[];
-  publishedAt: string;
-}
-
-/** Scenario package content (schema + situation templates + sample data). */
-export interface OntologyPack {
+/** KPI seed shipped with a template (installed by situation-awareness). */
+export interface KpiSeed {
   id: string;
   name: I18nText;
-  version: string;
-  description?: I18nText;
-  schema: SchemaDef;
-  /** Opaque to ontology-manager; installed by situation-awareness. */
-  automations?: unknown[];
-  /** Opaque to ontology-manager; installed by situation-awareness. */
-  kpis?: unknown[];
-  sampleData?: {objectType: string; rows: Record<string, unknown>[]}[];
+  objectType: string;
+  aggregate: KpiAggregate;
+  filter?: FilterExpr;
+  unit?: string;
+  target?: number;
+  higherIsBetter?: boolean;
 }
 
-/** Pack listing entry. */
-export interface PackSummary {
+/** Automation seed shipped with a template (alert-only). */
+export interface AutomationSeed {
   id: string;
   name: I18nText;
-  version: string;
-  description?: I18nText;
-  builtIn: boolean;
+  trigger: 'threshold' | 'schedule';
+  objectType: string;
+  condition: FilterExpr;
+  /** Schedule interval for `schedule` triggers, ≥ 1 hour. */
+  everyHours?: number;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  cooldownSec: number;
+  enabled: boolean;
 }
+
+/** Seeds of a template. */
+export interface TemplateSeeds {
+  kpis: KpiSeed[];
+  automations: AutomationSeed[];
+}
+
+/** Built-in template id ("supply chain risk"). */
+export const SUPPLY_CHAIN_TEMPLATE_ID = 'supply-chain';

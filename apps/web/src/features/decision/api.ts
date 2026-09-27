@@ -1,242 +1,172 @@
 /**
- * @fileoverview Decision queries & mutations: scenarios, candidate actions,
- * recommendations (approve with optimistic update + rollback), feedback and
- * the per-user LLM quota.
+ * @fileoverview Decision queries and mutations: scenarios, recommendations
+ * (list / one / generate) and the Owner decision (Idempotency-Key created
+ * on click, optimistic status update rolled back on error). Keys start with
+ * `decision`.
  */
 
 import type {
-  CandidateAction,
-  Perturbation,
+  DecisionInput,
+  GenerateInput,
   RecStatus,
   RecommendationDto,
   ScenarioDto,
   ScenarioInput,
-  ScenarioResult,
 } from '@ontodecide/decision/contract';
-import type {Rid} from '@ontodecide/shared-kernel';
-import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
-import {api, asList, idempotencyKey} from '../../shared/api/client';
+import type {PageResult} from '@ontodecide/shared-kernel';
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+  type QueryClient,
+} from '@tanstack/react-query';
+import {api, apiRequest} from '../../shared/api/client';
 import {qk} from '../../shared/api/query_keys';
 
-/** Scenarios. */
-export function useScenarios() {
-  return useQuery({
-    queryKey: qk.scenarios(),
-    queryFn: async () => asList(await api.get<ScenarioDto[]>('/scenarios')),
-  });
-}
+/** Decision query keys (prefix `decision`). */
+export const decisionKeys = {
+  rec: (id: string) => ['decision', 'rec', id] as const,
+  recs: (status?: RecStatus) => ['decision', 'recs', status ?? 'all'] as const,
+  recsAll: () => ['decision', 'recs'] as const,
+  scenario: (id: string) => ['decision', 'scenario', id] as const,
+};
 
-/** One scenario. */
-export function useScenario(id: string | undefined) {
-  return useQuery({
-    queryKey: qk.scenario(id ?? ''),
-    queryFn: () =>
-      api.get<ScenarioDto>(`/scenarios/${encodeURIComponent(id!)}`),
-    enabled: !!id && id !== 'new',
-  });
-}
-
-/** Creates a scenario. */
-export function useCreateScenario() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: ScenarioInput) =>
-      api.post<ScenarioDto>('/scenarios', input),
-    onSuccess: s => {
-      qc.setQueryData(qk.scenario(s.id), s);
-      void qc.invalidateQueries({queryKey: qk.scenarios()});
-    },
-  });
-}
-
-/** Runs a scenario (persisted when an id is given). */
-export function useRunScenario() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({id, input}: {id?: string; input: ScenarioInput}) =>
-      id
-        ? api.post<ScenarioResult>(
-            `/scenarios/${encodeURIComponent(id)}/run`,
-            input,
-          )
-        : api.post<ScenarioResult>('/scenarios:run', input),
-    onSuccess: (_r, v) => {
-      if (v.id) void qc.invalidateQueries({queryKey: qk.scenario(v.id)});
-    },
-  });
-}
-
-/** Candidate actions for perturbations. */
-export function useCandidates(perturbations: Perturbation[]) {
-  const key = JSON.stringify(perturbations);
-  return useQuery({
-    queryKey: qk.candidates(key),
-    queryFn: async () =>
-      asList(
-        await api.post<CandidateAction[]>('/scenarios:candidates', {
-          perturbations,
-        }),
-      ),
-    enabled: perturbations.length > 0,
-    staleTime: 60_000,
-  });
-}
-
-/** Remaining LLM calls today. */
-export function useLlmQuota() {
-  return useQuery({
-    queryKey: qk.llmQuota(),
-    queryFn: () =>
-      api.get<{userRemaining: number; tenantRemaining: number}>('/llm/quota'),
-    staleTime: 15_000,
-  });
-}
-
-/** Queues AI recommendation generation (202 → jobId = recommendation id). */
-export function useGenerateRecommendation() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (req: {
-      alertId?: string;
-      scenarioId?: string;
-      focus: Rid;
-      locale?: string;
-    }) =>
-      api.post<{jobId: string}>('/recommendations:generate', req, {
-        idempotencyKey: idempotencyKey('gen'),
+/** Recommendations (optionally by status), cursor pages. */
+export function useRecommendations(status?: RecStatus) {
+  return useInfiniteQuery({
+    queryKey: decisionKeys.recs(status),
+    queryFn: ({pageParam}) =>
+      api.get<PageResult<RecommendationDto>>('/recommendations', {
+        query: {status, limit: 50, cursor: pageParam},
       }),
-    onSettled: () => {
-      void qc.invalidateQueries({queryKey: qk.llmQuota()});
-      void qc.invalidateQueries({queryKey: qk.recommendationsAll()});
-    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: last => last.nextCursor ?? undefined,
+    staleTime: 30_000,
   });
 }
 
-/** Recommendation list filter. */
-export interface RecFilter {
-  status?: RecStatus;
-  focus?: string;
-}
-
-/** Recommendations. */
-export function useRecommendations(f: RecFilter = {}) {
-  return useQuery({
-    queryKey: qk.recommendations(f),
-    queryFn: async () =>
-      asList(
-        await api.get<RecommendationDto[]>('/recommendations', {query: {...f}}),
-      ),
-  });
+/** Fetches one recommendation (ETag version wins). */
+export async function fetchRecommendation(
+  id: string,
+): Promise<RecommendationDto> {
+  const res = await apiRequest<RecommendationDto>(
+    `/recommendations/${encodeURIComponent(id)}`,
+  );
+  return {...res.data, version: res.version ?? res.data.version};
 }
 
 /** One recommendation. */
 export function useRecommendation(id: string | undefined) {
   return useQuery({
-    queryKey: qk.recommendation(id ?? ''),
-    queryFn: () =>
-      api.get<RecommendationDto>(`/recommendations/${encodeURIComponent(id!)}`),
+    queryKey: decisionKeys.rec(id ?? ''),
+    queryFn: () => fetchRecommendation(id!),
     enabled: !!id,
-    // Poll while generating (Draft) so the page fills in without WS.
-    refetchInterval: q => (q.state.data?.status === 'Draft' ? 3000 : false),
+    staleTime: 30_000,
   });
 }
 
-function patchRecInLists(
-  qc: ReturnType<typeof useQueryClient>,
+/** Generates a recommendation synchronously (AI ranking ≤ 3/day). */
+export function useGenerateRecommendation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: GenerateInput) =>
+      api.post<RecommendationDto>('/recommendations', input),
+    onSuccess: rec => {
+      qc.setQueryData(decisionKeys.rec(rec.id), rec);
+      void qc.invalidateQueries({queryKey: decisionKeys.recsAll()});
+      void qc.invalidateQueries({queryKey: qk.me()});
+      void qc.invalidateQueries({queryKey: qk.overview()});
+    },
+  });
+}
+
+/** Runs and stores a scenario. */
+export function useRunScenario() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ScenarioInput) =>
+      api.post<ScenarioDto>('/scenarios', input),
+    onSuccess: s => qc.setQueryData(decisionKeys.scenario(s.id), s),
+  });
+}
+
+/** One stored scenario. */
+export function useScenario(id: string | undefined) {
+  return useQuery({
+    queryKey: decisionKeys.scenario(id ?? ''),
+    queryFn: () =>
+      api.get<ScenarioDto>(`/scenarios/${encodeURIComponent(id!)}`),
+    enabled: !!id,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/** Decision input with the key generated when the dialog opened. */
+export interface DecideInput extends DecisionInput {
+  id: string;
+  idempotencyKey: string;
+}
+
+type RecPages = InfiniteData<PageResult<RecommendationDto>>;
+
+function optimisticStatus(
+  qc: QueryClient,
   id: string,
-  patch: Partial<RecommendationDto>,
-) {
-  qc.setQueriesData<RecommendationDto[]>(
-    {queryKey: qk.recommendationsAll()},
-    list => list?.map(r => (r.id === id ? {...r, ...patch} : r)),
-  );
+  status: RecStatus,
+): Array<[readonly unknown[], unknown]> {
+  const saved: Array<[readonly unknown[], unknown]> = [];
+  const one = qc.getQueryData<RecommendationDto>(decisionKeys.rec(id));
+  saved.push([decisionKeys.rec(id), one]);
+  if (one) qc.setQueryData(decisionKeys.rec(id), {...one, status});
+  for (const [key, data] of qc.getQueriesData<RecPages>({
+    queryKey: decisionKeys.recsAll(),
+  })) {
+    saved.push([key, data]);
+    if (!data) continue;
+    qc.setQueryData<RecPages>(key, {
+      ...data,
+      pages: data.pages.map(p => ({
+        ...p,
+        items: p.items.map(r => (r.id === id ? {...r, status} : r)),
+      })),
+    });
+  }
+  return saved;
 }
 
 /**
- * Approves & executes. Optimistically marks the recommendation `Approved`,
- * rolling back the detail and list caches on failure.
+ * Confirms (executes ranking[0] inside the workspace, audited) or rejects
+ * with a reason. The same idempotency key replays the stored result.
  */
-export function useApprove(id: string) {
+export function useDecide() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (v: DecideInput) =>
       api.post<RecommendationDto>(
-        `/recommendations/${encodeURIComponent(id)}/approve`,
-        undefined,
-        {
-          idempotencyKey: `approve:${id}`,
-        },
+        `/recommendations/${encodeURIComponent(v.id)}/decision`,
+        {decision: v.decision, ...(v.reason ? {reason: v.reason} : {})},
+        {idempotencyKey: v.idempotencyKey},
       ),
-    onMutate: async () => {
-      await qc.cancelQueries({queryKey: qk.recommendation(id)});
-      const prev = qc.getQueryData<RecommendationDto>(qk.recommendation(id));
-      const prevLists = qc.getQueriesData<RecommendationDto[]>({
-        queryKey: qk.recommendationsAll(),
-      });
-      if (prev)
-        qc.setQueryData(qk.recommendation(id), {
-          ...prev,
-          status: 'Approved' as RecStatus,
-        });
-      patchRecInLists(qc, id, {status: 'Approved'});
-      return {prev, prevLists};
+    onMutate: async v => {
+      await qc.cancelQueries({queryKey: ['decision']});
+      return {
+        saved: optimisticStatus(
+          qc,
+          v.id,
+          v.decision === 'confirm' ? 'Confirmed' : 'Rejected',
+        ),
+      };
     },
     onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.recommendation(id), ctx.prev);
-      for (const [key, data] of ctx?.prevLists ?? [])
-        qc.setQueryData(key, data);
+      for (const [key, data] of ctx?.saved ?? []) qc.setQueryData(key, data);
     },
-    onSuccess: r => {
-      qc.setQueryData(qk.recommendation(id), r);
-      patchRecInLists(qc, id, r);
-    },
+    onSuccess: rec => qc.setQueryData(decisionKeys.rec(rec.id), rec),
     onSettled: () => {
-      void qc.invalidateQueries({queryKey: qk.recommendationsAll()});
+      void qc.invalidateQueries({queryKey: decisionKeys.recsAll()});
       void qc.invalidateQueries({queryKey: qk.overview()});
+      void qc.invalidateQueries({queryKey: ['object']});
     },
-  });
-}
-
-/** Rejects with a mandatory reason (optimistic, with rollback). */
-export function useReject(id: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (reason: string) =>
-      api.post<RecommendationDto>(
-        `/recommendations/${encodeURIComponent(id)}/reject`,
-        {reason},
-      ),
-    onMutate: async reason => {
-      await qc.cancelQueries({queryKey: qk.recommendation(id)});
-      const prev = qc.getQueryData<RecommendationDto>(qk.recommendation(id));
-      if (prev)
-        qc.setQueryData(qk.recommendation(id), {
-          ...prev,
-          status: 'Rejected' as RecStatus,
-          rejectReason: reason,
-        });
-      return {prev};
-    },
-    onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.recommendation(id), ctx.prev);
-    },
-    onSuccess: r => qc.setQueryData(qk.recommendation(id), r),
-    onSettled: () => {
-      void qc.invalidateQueries({queryKey: qk.recommendationsAll()});
-      void qc.invalidateQueries({queryKey: qk.overview()});
-    },
-  });
-}
-
-/** Rates the outcome (1–5 stars). */
-export function useFeedback(id: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: {rating: number; comment?: string}) =>
-      api.post<RecommendationDto>(
-        `/recommendations/${encodeURIComponent(id)}/feedback`,
-        input,
-      ),
-    onSuccess: r => qc.setQueryData(qk.recommendation(id), r),
   });
 }

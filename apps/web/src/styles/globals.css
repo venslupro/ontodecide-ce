@@ -1,19 +1,24 @@
 /*
- * OntoDecide CE design tokens (前端详细设计 表 12) and Tailwind theme.
- * Dark "command center" theme is the default; light theme for office/print.
+ * OntoDecide CE design tokens (前端详细设计 6.11 视觉设计系统, 表 14) and the
+ * Tailwind theme. CE has exactly one theme: dark "command center" — deep
+ * navy-black background with a 32 px grid and two radial halos, glass cards
+ * with a 1 px cyan top highlight, cyan → blue → violet accents, tabular
+ * numerals. Text contrast on cards: --text 14.6, --muted 6.0, --dim 4.9
+ * (WCAG AA).
+ *
+ * Fonts are self-hosted with the build (CSP: no third-party CDN); the
+ * stack falls back to system fonts when Inter / Noto Sans SC / JetBrains
+ * Mono are not bundled.
  */
 @import 'tailwindcss';
 
-@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
-
-:root,
-:root[data-theme='dark'] {
+:root {
   color-scheme: dark;
   --bg: #070c18;
   --bg-2: #0b1224;
   --panel: rgba(17, 27, 51, 0.72);
   --panel-solid: #111b33;
-  --panel-2: rgba(22, 34, 64, 0.82);
+  --panel-2: rgba(22, 34, 64, 0.6);
   --panel-blur: 10px;
   --line: rgba(110, 150, 255, 0.16);
   --line-2: rgba(110, 150, 255, 0.28);
@@ -30,41 +35,13 @@
   --on-accent: #041018;
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
   --glow: 0 0 18px rgba(34, 211, 238, 0.35);
-  --grid-line: rgba(110, 150, 255, 0.06);
-  --halo-1: rgba(34, 211, 238, 0.1);
-  --halo-2: rgba(139, 92, 246, 0.1);
+  --grid-line: rgba(110, 150, 255, 0.05);
+  --halo-1: rgba(59, 130, 246, 0.14);
+  --halo-2: rgba(34, 211, 238, 0.08);
   --chart-grid: rgba(139, 152, 186, 0.09);
   --focus: #22d3ee;
-}
-
-:root[data-theme='light'] {
-  color-scheme: light;
-  --bg: #f5f7fb;
-  --bg-2: #eef2f9;
-  --panel: #ffffff;
-  --panel-solid: #ffffff;
-  --panel-2: #f8fafc;
-  --panel-blur: 0px;
-  --line: #e2e8f0;
-  --line-2: #cbd5e1;
-  --text: #0b1224;
-  --muted: #475569;
-  --dim: #64748b;
-  --cyan: #0891b2;
-  --blue: #2563eb;
-  --violet: #7c3aed;
-  --orange: #ea580c;
-  --good: #16a34a;
-  --warn: #d97706;
-  --crit: #dc2626;
-  --on-accent: #ffffff;
-  --shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
-  --glow: 0 0 14px rgba(37, 99, 235, 0.18);
-  --grid-line: transparent;
-  --halo-1: transparent;
-  --halo-2: transparent;
-  --chart-grid: rgba(71, 85, 105, 0.09);
-  --focus: #2563eb;
+  --radius-card-v: 14px;
+  --radius-btn-v: 8px;
 }
 
 @theme inline {
@@ -86,10 +63,12 @@
   --color-warn: var(--warn);
   --color-crit: var(--crit);
   --color-on-accent: var(--on-accent);
-  --font-sans: 'Inter', 'Noto Sans SC', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  --radius-card: 14px;
-  --radius-btn: 8px;
+  --font-sans:
+    'Inter', 'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius-card: var(--radius-card-v);
+  --radius-btn: var(--radius-btn-v);
   --shadow-glow: var(--glow);
   --shadow-panel: var(--shadow);
 }
@@ -98,19 +77,17 @@
   html {
     font-size: 14px;
   }
-  html[data-wall='true'] {
-    font-size: 21px; /* ×1.5 wall mode */
-  }
   body {
     margin: 0;
     min-height: 100vh;
     background-color: var(--bg);
     color: var(--text);
+    font-size: 13px;
     font-family: var(--font-sans);
     font-feature-settings: 'tnum' 1, 'cv11' 1;
     -webkit-font-smoothing: antialiased;
   }
-  /* Grid + two radial halos (dark only; transparent tokens in light). */
+  /* 32 px grid (5%) + a blue and a cyan radial halo. */
   body::before {
     content: '';
     position: fixed;
@@ -118,8 +95,8 @@
     z-index: -1;
     pointer-events: none;
     background:
-      radial-gradient(900px 520px at 12% -8%, var(--halo-1), transparent 60%),
-      radial-gradient(760px 480px at 100% 0%, var(--halo-2), transparent 60%),
+      radial-gradient(1000px 560px at 88% -12%, var(--halo-1), transparent 62%),
+      radial-gradient(760px 520px at -6% 108%, var(--halo-2), transparent 60%),
       linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / 32px 32px,
       linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / 32px 32px,
       linear-gradient(180deg, var(--bg), var(--bg-2));
@@ -143,7 +120,7 @@
     position: relative;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-card);
+    border-radius: var(--radius-card-v);
     box-shadow: var(--shadow);
     backdrop-filter: blur(var(--panel-blur));
     -webkit-backdrop-filter: blur(var(--panel-blur));
@@ -168,6 +145,83 @@
   }
   .num {
     font-variant-numeric: tabular-nums;
+  }
+  /* Sidebar trial card: cyan border, cyan → violet 160° gradient. */
+  .trial-card {
+    border: 1px solid color-mix(in srgb, var(--cyan) 45%, transparent);
+    border-radius: var(--radius-card-v);
+    background: linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--cyan) 12%, transparent),
+      color-mix(in srgb, var(--violet) 10%, transparent)
+    );
+  }
+  /* Sidebar admin card: violet border and gradient. */
+  .admin-card {
+    border: 1px solid color-mix(in srgb, var(--violet) 55%, transparent);
+    border-radius: var(--radius-card-v);
+    background: linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--violet) 18%, transparent),
+      color-mix(in srgb, var(--blue) 8%, transparent)
+    );
+  }
+  /* Admin view banner (40 px, under the top bar, not dismissible). */
+  .actas-banner {
+    border: 1px solid color-mix(in srgb, var(--violet) 60%, transparent);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--violet) 22%, transparent),
+      color-mix(in srgb, var(--violet) 6%, transparent)
+    );
+  }
+  /* Amber expiry banner: dark left to light right. */
+  .expiry-banner {
+    border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+    border-radius: var(--radius-card-v);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--warn) 18%, transparent),
+      color-mix(in srgb, var(--warn) 4%, transparent)
+    );
+  }
+  /* Danger zone: red 35% border, faint red gradient. */
+  .danger-zone {
+    border: 1px solid color-mix(in srgb, var(--crit) 35%, transparent);
+    border-radius: var(--radius-card-v);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--crit) 10%, transparent),
+      color-mix(in srgb, var(--crit) 3%, transparent)
+    );
+  }
+  /* 48 × 54 one-time-code box; the active box glows cyan. */
+  .otp-box {
+    width: 48px;
+    height: 54px;
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-2) 80%, transparent);
+    text-align: center;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    outline: none;
+    transition:
+      border-color 150ms ease-out,
+      box-shadow 150ms ease-out;
+  }
+  .otp-box:focus {
+    border-color: var(--cyan);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--cyan) 18%, transparent), var(--glow);
+  }
+  .otp-box[aria-invalid='true'] {
+    border-color: var(--crit);
+  }
+  /* Primary gradient progress (trial: cyan → amber). */
+  .bar-trial {
+    background: linear-gradient(90deg, var(--cyan), var(--warn));
   }
   .fade-in {
     animation: od-fade-in 220ms ease-out;
@@ -210,14 +264,13 @@
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :root,
-  :root[data-theme='dark'] {
+  :root {
     --panel: var(--panel-solid);
     --panel-blur: 0px;
   }
 }
 
-/* Solid panels on demand (low frame rate detection sets this). */
+/* Solid panels on low-end devices (low frame rate detection sets this). */
 html[data-solid='true'] {
   --panel: var(--panel-solid);
   --panel-blur: 0px;
@@ -226,5 +279,9 @@ html[data-solid='true'] {
 @media print {
   body::before {
     display: none;
+  }
+  body {
+    background: #fff;
+    color: #000;
   }
 }

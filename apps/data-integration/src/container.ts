@@ -2,73 +2,73 @@
  * @fileoverview Composition root of data-integration.
  */
 
-import {AwsClient} from 'aws4fetch';
-import {createLogger, systemClock, ulid} from '@ontodecide/shared-kernel';
-import type {Clock, Logger, QueueBatch} from '@ontodecide/shared-kernel';
+import {
+  AI_MODELS,
+  CE_LIMITS,
+  createLogger,
+  systemClock,
+  ulid,
+} from '@ontodecide/shared-kernel';
 import type {
-  AppDeps,
-  UploadPresigner,
-} from '@ontodecide/integration/application';
+  Clock,
+  Logger,
+  TenantLifecycleRpc,
+} from '@ontodecide/shared-kernel';
 import type {IntegrationRpc} from '@ontodecide/integration/contract';
+import type {
+  AiPort,
+  IntegrationConfig,
+  IntegrationDeps,
+} from '@ontodecide/integration/application';
 import {
-  AesSecretCipher,
-  B2Presigner,
-  CachedModelProvider,
   D1JobRepository,
-  D1MaintenanceRepository,
-  D1NonceRepository,
-  D1RawRecordRepository,
-  D1SourceRepository,
-  DisabledPresigner,
-  HttpRestFetcher,
-  QueueIngestPublisher,
-  QueueObjectWritePublisher,
+  D1UsageRepository,
+  WorkersAiPort,
 } from '@ontodecide/integration/infrastructure';
-import type {SigV4Signer} from '@ontodecide/integration/infrastructure';
 import {
-  createCronDispatcher,
+  createIntegrationLifecycle,
   createIntegrationRpc,
-  createQueueDispatcher,
 } from '@ontodecide/integration/interface';
 import type {Env} from './env';
 
-/** Test and runtime overrides. */
+/** Test and harness overrides. */
 export interface Overrides {
   clock?: Clock;
   logger?: Logger;
-  /** Outbound fetch used by REST pulls. */
-  fetch?: typeof fetch;
+  /** Replaces the Workers AI adapter (null forces rules only). */
+  ai?: AiPort | null;
+  newId?: (nowMs: number) => string;
 }
 
-/** Wired services. */
+/** Wired service parts. */
 export interface Container {
-  deps: AppDeps;
   rpc: IntegrationRpc;
-  queueHandler: (batch: QueueBatch<unknown>) => Promise<void>;
-  cron: (cron: string, now: Date) => Promise<void>;
+  lifecycle: TenantLifecycleRpc;
+  deps: IntegrationDeps;
 }
 
-function presigner(env: Env, clock: Clock, logger: Logger): UploadPresigner {
-  if (!env.B2_KEY_ID || !env.B2_APP_KEY || !env.B2_ENDPOINT || !env.B2_BUCKET) {
-    logger.info('B2 credentials absent; raw file archiving disabled');
-    return new DisabledPresigner(clock);
-  }
-  const client = new AwsClient({
-    accessKeyId: env.B2_KEY_ID,
-    secretAccessKey: env.B2_APP_KEY,
-    service: 's3',
-    region: env.B2_REGION,
-  });
-  return new B2Presigner({
-    signer: client as unknown as SigV4Signer,
-    endpoint: env.B2_ENDPOINT,
-    bucket: env.B2_BUCKET,
-    region: env.B2_REGION || undefined,
-    clock,
-  });
+function intVar(v: string | undefined, fallback: number): number {
+  const n = Number(v);
+  return v !== undefined && v !== '' && Number.isFinite(n) && n >= 0
+    ? Math.floor(n)
+    : fallback;
 }
 
-/** Builds the container from bindings. */
+/** Reads limits and budgets from the Worker vars. */
+export function configFrom(env: Env): IntegrationConfig {
+  return {
+    importRowsDaily: intVar(env.IMPORT_ROWS_DAILY, CE_LIMITS.importRowsDaily),
+    seedRowsDaily: intVar(env.SEED_ROWS_DAILY, 20_000),
+    mappingAiDaily: intVar(env.MAPPING_AI_DAILY, CE_LIMITS.mappingDraftsDaily),
+    neuronsDailyBudget: intVar(env.NEURONS_DAILY_BUDGET, 1500),
+    draftNeurons: 19,
+    reserveFactor: 1.3,
+    maxObjects: CE_LIMITS.objects,
+    maxLinks: CE_LIMITS.links,
+  };
+}
+
+/** Creates the container. */
 export function createContainer(
   env: Env,
   overrides: Overrides = {},
@@ -76,27 +76,27 @@ export function createContainer(
   const clock = overrides.clock ?? systemClock;
   const logger =
     overrides.logger ?? createLogger({service: 'data-integration'});
+  const ai =
+    overrides.ai !== undefined
+      ? overrides.ai
+      : env.AI
+        ? new WorkersAiPort(env.AI, env.AI_MODEL || AI_MODELS.primary)
+        : null;
   const db = env.INTEGRATION_DB;
-  const deps: AppDeps = {
-    sources: new D1SourceRepository(db),
-    jobs: new D1JobRepository(db),
-    rawRecords: new D1RawRecordRepository(db),
-    nonces: new D1NonceRepository(db),
-    maintenance: new D1MaintenanceRepository(db),
-    ingestQueue: new QueueIngestPublisher(env.INGEST_QUEUE),
-    objectWrites: new QueueObjectWritePublisher(env.OBJECT_WRITES_QUEUE),
-    presigner: presigner(env, clock, logger),
-    rest: new HttpRestFetcher(overrides.fetch),
-    cipher: new AesSecretCipher(env.CONNECTOR_ENC_KEY, logger),
-    models: new CachedModelProvider(env.ONTOLOGY, clock),
+  const deps: IntegrationDeps = {
+    jobs: ctx => new D1JobRepository(db, ctx.tid),
+    usage: new D1UsageRepository(db),
+    ontology: env.ONTOLOGY,
+    objects: env.OBJECTS,
+    ai,
     clock,
     logger,
-    newId: () => ulid(clock.now().getTime()),
+    config: configFrom(env),
+    newId: overrides.newId ?? (nowMs => ulid(nowMs)),
   };
   return {
-    deps,
     rpc: createIntegrationRpc(deps),
-    queueHandler: createQueueDispatcher(deps),
-    cron: createCronDispatcher(deps),
+    lifecycle: createIntegrationLifecycle(db, clock),
+    deps,
   };
 }

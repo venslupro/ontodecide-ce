@@ -23,14 +23,19 @@ export const DEFAULT_LANG: Lang = 'zh-CN';
 
 /** Translation namespaces (one per route group). */
 export const NAMESPACES = [
+  // Platform (shell, auth, account, admin).
   'common',
+  'auth',
+  'account',
+  'admin',
+  // Business pages.
   'cockpit',
   'objects',
+  'ontology',
+  'imports',
   'scenarios',
   'recommendations',
-  'sources',
-  'ontology',
-  'admin',
+  'automations',
 ] as const;
 
 /** A namespace. */

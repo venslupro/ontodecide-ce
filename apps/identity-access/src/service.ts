@@ -10,10 +10,14 @@ import type {Env} from './env';
 
 export type {Overrides} from './container';
 
-/** Creates the identity-access service. */
+/** Creates the identity-access service: `{rpc, scheduled}`. */
 export function createService(
   env: Env,
   overrides: Overrides = {},
 ): ServiceModule<IdentityRpc> {
-  return {rpc: createContainer(env, overrides).rpc};
+  const c = createContainer(env, overrides);
+  return {
+    rpc: c.rpc,
+    scheduled: (cron, now) => c.cron(cron, now),
+  };
 }

@@ -1,100 +1,153 @@
 /**
- * @fileoverview KPI time-series helpers: 5-minute buckets, the value 24 h
- * ago, and the 24-point hourly sparkline.
+ * @fileoverview KPI math (详细设计 6.11.4): contribution of one object to a
+ * KPI, full computation and incremental updates, plus the 15-minute metric
+ * point grid used for trends.
  */
 
-import {DAY_MS, HOUR_MS, MINUTE_MS} from '@ontodecide/shared-kernel';
-import type {MetricPoint} from '../contract';
+import {
+  DAY_MS,
+  type FilterExpr,
+  type I18nText,
+  MINUTE_MS,
+  matchFilter,
+} from '@ontodecide/shared-kernel';
+import type {KpiAggregate} from '@ontodecide/ontology/contract';
 
-/** Metric point in epoch milliseconds. */
-export interface RawPoint {
-  ts: number;
-  value: number;
+/** A KPI definition installed in a room. */
+export interface KpiDefinition {
+  id: string;
+  name: I18nText;
+  objectType: string;
+  aggregate: KpiAggregate;
+  filter?: FilterExpr;
+  unit: string | null;
+  target: number | null;
+  higherIsBetter: boolean;
 }
 
-/** Metric point granularity. */
-export const METRIC_BUCKET_MS = 5 * MINUTE_MS;
-
-/** Tolerance around "24 h ago" when picking the previous value. */
-export const PREVIOUS_TOLERANCE_MS = HOUR_MS;
-
-/** Start of the 5-minute bucket containing `ms`. */
-export function bucket5m(ms: number): number {
-  return Math.floor(ms / METRIC_BUCKET_MS) * METRIC_BUCKET_MS;
+/** Aggregation state kept per KPI so updates are O(1). */
+export interface KpiState {
+  /** Number of contributing objects. */
+  cnt: number;
+  /** Sum of contributions (sum / avg). */
+  total: number;
+  /** Current KPI value. */
+  value: number | null;
 }
 
-/** Metric key used for a KPI in sit_metric_point. */
-export function kpiMetric(kpiId: string): string {
-  return `kpi:${kpiId}`;
+/** An object as seen by KPI and rule evaluation. */
+export interface ObjectView {
+  rid: string;
+  type: string;
+  title: string;
+  props: Record<string, unknown>;
 }
 
-/**
- * The value closest to 24 h before `nowMs`, within ±1 h; null when no
- * point is close enough.
- */
-export function previousValue(
-  points: readonly RawPoint[],
-  nowMs: number,
-): number | null {
-  const target = nowMs - DAY_MS;
-  let best: RawPoint | null = null;
-  for (const p of points) {
-    const d = Math.abs(p.ts - target);
-    if (d > PREVIOUS_TOLERANCE_MS) continue;
-    if (!best || d < Math.abs(best.ts - target)) best = p;
-  }
-  return best ? best.value : null;
-}
+/** Metric point resolution. */
+export const METRIC_BUCKET_MS = 15 * MINUTE_MS;
 
-/**
- * Up to 24 hourly points covering the last 24 h (oldest first): the last
- * value recorded in each hour; hours without data are skipped.
- */
-export function sparkline(
-  points: readonly RawPoint[],
-  nowMs: number,
-): number[] {
-  return hourly(points, nowMs - DAY_MS, nowMs).map(p => p.value);
-}
+/** How long trend points are kept (the latest point per KPI is kept). */
+export const METRIC_RETENTION_MS = 7 * DAY_MS;
 
-/** Downsamples to the last value per hour within [fromMs, toMs]. */
-export function hourly(
-  points: readonly RawPoint[],
-  fromMs: number,
-  toMs: number,
-): RawPoint[] {
-  const byHour = new Map<number, RawPoint>();
-  for (const p of points) {
-    if (p.ts <= fromMs || p.ts > toMs) continue;
-    const h = Math.floor(p.ts / HOUR_MS) * HOUR_MS;
-    const cur = byHour.get(h);
-    if (!cur || p.ts >= cur.ts) byHour.set(h, p);
-  }
-  return [...byHour.entries()].sort((a, b) => a[0] - b[0]).map(([, p]) => p);
-}
-
-/** Trend window length. */
-export function trendRangeMs(range: '24h' | '7d'): number {
+/** Range → milliseconds. */
+export function rangeMs(range: '24h' | '7d'): number {
   return range === '7d' ? 7 * DAY_MS : DAY_MS;
 }
 
+/** Start of the 15-minute bucket containing `ms`. */
+export function bucketStart(ms: number): number {
+  return Math.floor(ms / METRIC_BUCKET_MS) * METRIC_BUCKET_MS;
+}
+
+/** First bucket boundary strictly after `ms`. */
+export function nextBucket(ms: number): number {
+  return bucketStart(ms) + METRIC_BUCKET_MS;
+}
+
+/** Rounds away floating-point noise from incremental sums. */
+export function roundKpi(v: number): number {
+  return Math.round(v * 1e6) / 1e6;
+}
+
 /**
- * Builds a trend: raw 5-minute points for 24 h, hourly points for 7 d.
+ * The value an object contributes to a KPI, or null when it does not
+ * contribute (other type, filtered out, or non-numeric property).
  */
-export function trend(
-  points: readonly RawPoint[],
-  range: '24h' | '7d',
-  nowMs: number,
-): MetricPoint[] {
-  const from = nowMs - trendRangeMs(range);
-  const selected =
-    range === '7d'
-      ? hourly(points, from, nowMs)
-      : [...points]
-          .filter(p => p.ts > from && p.ts <= nowMs)
-          .sort((a, b) => a.ts - b.ts);
-  return selected.map(p => ({
-    ts: new Date(p.ts).toISOString(),
-    value: p.value,
-  }));
+export function kpiContribution(
+  def: KpiDefinition,
+  obj: ObjectView | null,
+): number | null {
+  if (!obj || obj.type !== def.objectType) return null;
+  if (!matchFilter(def.filter, obj.props)) return null;
+  if (def.aggregate.fn === 'count') return 1;
+  const v = def.aggregate.prop ? obj.props[def.aggregate.prop] : undefined;
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function valueOf(
+  fn: KpiAggregate['fn'],
+  cnt: number,
+  total: number,
+): number | null {
+  if (fn === 'count') return cnt;
+  if (fn === 'sum') return roundKpi(total);
+  if (fn === 'avg') return cnt > 0 ? roundKpi(total / cnt) : null;
+  return null;
+}
+
+/** Computes a KPI from all contributions. */
+export function computeKpi(
+  def: KpiDefinition,
+  contributions: readonly number[],
+): KpiState {
+  const cnt = contributions.length;
+  const total = contributions.reduce((a, b) => a + b, 0);
+  const fn = def.aggregate.fn;
+  if (fn === 'min' || fn === 'max') {
+    const value =
+      cnt === 0
+        ? null
+        : fn === 'min'
+          ? Math.min(...contributions)
+          : Math.max(...contributions);
+    return {cnt, total, value};
+  }
+  return {cnt, total, value: valueOf(fn, cnt, total)};
+}
+
+/**
+ * Applies the change of one object's contribution (`before` → `after`).
+ * Returns null when the new value cannot be derived incrementally (the
+ * current min / max left) and the KPI must be recomputed.
+ */
+export function applyKpiDelta(
+  def: KpiDefinition,
+  state: KpiState,
+  before: number | null,
+  after: number | null,
+): KpiState | null {
+  if (before === after) return state;
+  const cnt = state.cnt + (after !== null ? 1 : 0) - (before !== null ? 1 : 0);
+  const total = state.total + (after ?? 0) - (before ?? 0);
+  const fn = def.aggregate.fn;
+  if (fn !== 'min' && fn !== 'max') {
+    return {cnt, total, value: valueOf(fn, cnt, total)};
+  }
+  if (cnt === 0) return {cnt, total, value: null};
+  const better = (a: number, b: number): boolean =>
+    fn === 'min' ? a < b : a > b;
+  const current = state.value;
+  if (
+    before !== null &&
+    current !== null &&
+    before === current &&
+    (after === null || better(before, after))
+  ) {
+    return null;
+  }
+  let value = current;
+  if (after !== null && (value === null || better(after, value))) {
+    value = after;
+  }
+  return {cnt, total, value};
 }

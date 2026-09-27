@@ -1,23 +1,34 @@
 /**
  * @fileoverview Deterministic what-if simulation over an impact subgraph:
- * simulation KPIs (baseline / scenario / with-action), risk level, affected
- * objects and the relative benefit of candidate actions.
+ * simulation KPIs from the ontology (sum / avg / count), the risk level,
+ * affected objects and the benefit of a candidate action.
  */
 
 import type {Rid} from '@ontodecide/shared-kernel';
 import type {GraphSlice} from '@ontodecide/object-graph/contract';
 import type {
-  ActionTypeDef,
-  CompiledModel,
+  CompiledSchema,
   SimulationKpiDef,
 } from '@ontodecide/ontology/contract';
-import type {KpiMeta, KpiSet, Perturbation, ScenarioResult} from '../contract';
+import {
+  DECISION_LIMITS,
+  type KpiMeta,
+  type KpiSet,
+  type Perturbation,
+  type ScenarioResult,
+} from '../contract';
 import {propagate, type Impact} from './propagation';
+
+/** The ontology parts the simulator reads. */
+export type SimSchema = Pick<
+  CompiledSchema,
+  'linkTypes' | 'simulationKpis' | 'objectTypes' | 'actionTypes'
+>;
 
 /** Δ at or below this marks a node as materially affected for `count`. */
 export const COUNT_AFFECTED_THRESHOLD = -0.1;
 
-/** Api name of the fallback KPI used when the model declares none. */
+/** Api name of the fallback KPI used when the ontology declares none. */
 export const FALLBACK_KPI = 'unaffectedObjects';
 
 const FALLBACK_KPI_DEF: SimulationKpiDef = {
@@ -28,16 +39,20 @@ const FALLBACK_KPI_DEF: SimulationKpiDef = {
   higherIsBetter: true,
 };
 
-/** Simulation KPIs of a model; falls back to a count of unaffected objects. */
-export function simulationKpis(model: CompiledModel): SimulationKpiDef[] {
-  return model.simulationKpis?.length
-    ? model.simulationKpis
+/** Simulation KPIs of a schema; falls back to a count of unaffected objects. */
+export function simulationKpis(
+  schema: Pick<SimSchema, 'simulationKpis'>,
+): SimulationKpiDef[] {
+  return schema.simulationKpis?.length
+    ? schema.simulationKpis
     : [FALLBACK_KPI_DEF];
 }
 
-/** The primary KPI (first simulation KPI, else the fallback). */
-export function primaryKpi(model: CompiledModel): SimulationKpiDef {
-  return simulationKpis(model)[0];
+/** The primary KPI (the first simulation KPI, else the fallback). */
+export function primaryKpi(
+  schema: Pick<SimSchema, 'simulationKpis'>,
+): SimulationKpiDef {
+  return simulationKpis(schema)[0];
 }
 
 /** KPI metadata for the result. */
@@ -50,20 +65,27 @@ export function kpiMeta(defs: readonly SimulationKpiDef[]): KpiMeta[] {
   }));
 }
 
-function num(v: unknown): number | null {
+/** Numeric value of a property (numbers and numeric strings), else null. */
+export function num(v: unknown): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)))
     return Number(v);
   return null;
 }
 
+/** Rounds to `digits` decimals to keep stored numbers stable. */
+export function round(v: number, digits = 6): number {
+  const f = 10 ** digits;
+  return Math.round(v * f) / f;
+}
+
 /**
- * Computes KPI values over the slice. `delta` absent (or empty) yields the
- * baseline. `sum` = Σ prop·(1+Δ); `avg` = mean of prop·(1+Δ) over nodes
- * with a numeric value; `count` = nodes of the type with Δ > −0.1.
+ * Computes KPI values over the slice. An empty `delta` yields the baseline.
+ * `sum` = Σ prop·(1+Δ); `avg` = mean of prop·(1+Δ) over nodes with a numeric
+ * value; `count` = nodes of the type with Δ > −0.1.
  */
 export function computeKpis(
-  slice: GraphSlice,
+  slice: Pick<GraphSlice, 'nodes'>,
   defs: readonly SimulationKpiDef[],
   delta: ReadonlyMap<Rid, number> = new Map(),
 ): KpiSet {
@@ -92,13 +114,7 @@ export function computeKpis(
   return out;
 }
 
-/** Rounds to 6 decimals to keep stored numbers stable. */
-export function round(v: number, digits = 6): number {
-  const f = 10 ** digits;
-  return Math.round(v * f) / f;
-}
-
-/** Risk level from the maximum absolute Δ. */
+/** Risk level from the largest |Δ|: ≥ 0.3 HIGH, ≥ 0.1 MEDIUM, else LOW. */
 export function riskLevel(
   deltas: Iterable<number>,
 ): ScenarioResult['riskLevel'] {
@@ -109,9 +125,9 @@ export function riskLevel(
   return 'LOW';
 }
 
-/** Affected objects (Δ ≠ 0), largest |Δ| first. */
+/** Affected objects (Δ ≠ 0), largest |Δ| first, then hop, then rid. */
 export function affectedList(
-  slice: GraphSlice,
+  slice: Pick<GraphSlice, 'nodes'>,
   impact: Impact,
 ): ScenarioResult['affected'] {
   const byRid = new Map(slice.nodes.map(n => [n.rid, n]));
@@ -121,48 +137,24 @@ export function affectedList(
     const node = byRid.get(rid);
     out.push({
       rid,
-      type: node?.type ?? rid.split('.')[2] ?? '',
+      type: node?.type ?? rid.split('.')[1] ?? '',
       title: node?.title ?? rid,
       delta: round(d),
       hop: impact.hop.get(rid) ?? 0,
     });
   }
   return out.sort(
-    (a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.hop - b.hop,
+    (a, b) =>
+      Math.abs(b.delta) - Math.abs(a.delta) ||
+      a.hop - b.hop ||
+      (a.rid < b.rid ? -1 : a.rid > b.rid ? 1 : 0),
   );
-}
-
-/** A concrete action to simulate. */
-export interface SimAction {
-  actionType: string;
-  target: Rid;
-}
-
-/** Key of a with-action KPI set. */
-export function actionKey(a: SimAction): string {
-  return `${a.actionType}:${a.target}`;
-}
-
-/** Base perturbations plus the action's impact hints applied to its target. */
-export function actionPerturbations(
-  base: readonly Perturbation[],
-  def: Pick<ActionTypeDef, 'impact'>,
-  target: Rid,
-): Perturbation[] {
-  return [
-    ...base,
-    ...(def.impact ?? []).map(h => ({
-      rid: target,
-      property: h.property,
-      change: h.change,
-    })),
-  ];
 }
 
 /**
  * Relative improvement of the primary KPI brought by an action:
  * (withAction − scenario) / max(|baseline|, 1e-9), sign-flipped when lower
- * is better.
+ * is better. Rounded to 4 decimals.
  */
 export function expectedImpact(
   primary: Pick<SimulationKpiDef, 'apiName' | 'higherIsBetter'>,
@@ -173,54 +165,80 @@ export function expectedImpact(
   const k = primary.apiName;
   const denom = Math.max(Math.abs(baseline[k] ?? 0), 1e-9);
   const raw = ((withAction[k] ?? 0) - (scenario[k] ?? 0)) / denom;
-  return round(primary.higherIsBetter ? raw : -raw, 4);
+  const v = round(primary.higherIsBetter ? raw : -raw, 4);
+  return v === 0 ? 0 : v;
 }
 
-/** Everything the simulator derives from one slice and perturbation set. */
+/** Objects whose Δ differs between two impacts by at least the prune bound. */
+export function changedCount(a: Impact, b: Impact): number {
+  const rids = new Set<Rid>([...a.delta.keys(), ...b.delta.keys()]);
+  let n = 0;
+  for (const rid of rids) {
+    const diff = (a.delta.get(rid) ?? 0) - (b.delta.get(rid) ?? 0);
+    if (Math.abs(diff) >= DECISION_LIMITS.pruneBelow) n++;
+  }
+  return n;
+}
+
+/** Baseline and scenario simulation of one perturbation set. */
 export interface Simulation {
   impact: Impact;
-  result: ScenarioResult;
+  baseline: KpiSet;
+  scenario: KpiSet;
+  kpis: SimulationKpiDef[];
 }
 
-/** Input of {@link simulate}. */
-export interface SimulateInput {
-  model: CompiledModel;
-  slice: GraphSlice;
-  perturbations: readonly Perturbation[];
-  actions?: readonly SimAction[];
-  degraded?: boolean;
-  now: Date;
-}
-
-/** Runs baseline, scenario and with-action simulations. */
-export function simulate(input: SimulateInput): Simulation {
-  const {model, slice, perturbations} = input;
-  const defs = simulationKpis(model);
-  const impact = propagate(slice, model.linkTypes, perturbations);
-  const baseline = computeKpis(slice, defs);
-  const scenario = computeKpis(slice, defs, impact.delta);
-  const result: ScenarioResult = {
-    baseline,
-    scenario,
-    affected: affectedList(slice, impact),
-    riskLevel: riskLevel(impact.delta.values()),
-    kpis: kpiMeta(defs),
-    nodeCount: slice.nodes.length,
-    degraded: input.degraded ?? false,
-    computedAt: input.now.toISOString(),
+/** Runs the baseline and scenario simulation. */
+export function simulate(
+  schema: SimSchema,
+  slice: Pick<GraphSlice, 'nodes' | 'edges'>,
+  perturbations: readonly Perturbation[],
+): Simulation {
+  const kpis = simulationKpis(schema);
+  const impact = propagate(slice, schema.linkTypes, perturbations);
+  return {
+    impact,
+    baseline: computeKpis(slice, kpis),
+    scenario: computeKpis(slice, kpis, impact.delta),
+    kpis,
   };
-  if (input.actions?.length) {
-    result.withActions = {};
-    for (const a of input.actions) {
-      const def = model.actionTypes[a.actionType];
-      if (!def) continue;
-      const p = propagate(
-        slice,
-        model.linkTypes,
-        actionPerturbations(perturbations, def, a.target),
-      );
-      result.withActions[actionKey(a)] = computeKpis(slice, defs, p.delta);
-    }
-  }
-  return {impact, result};
+}
+
+/** Outcome of re-simulating with extra (action) perturbations. */
+export interface ActionSimulation {
+  kpis: KpiSet;
+  impact: Impact;
+}
+
+/** Re-simulates the scenario with extra perturbations appended. */
+export function simulateWith(
+  schema: SimSchema,
+  slice: Pick<GraphSlice, 'nodes' | 'edges'>,
+  base: readonly Perturbation[],
+  extra: readonly Perturbation[],
+): ActionSimulation {
+  const impact = propagate(slice, schema.linkTypes, [...base, ...extra]);
+  return {
+    impact,
+    kpis: computeKpis(slice, simulationKpis(schema), impact.delta),
+  };
+}
+
+/** Assembles the stored {@link ScenarioResult}. */
+export function scenarioResult(
+  slice: Pick<GraphSlice, 'nodes'>,
+  sim: Simulation,
+  withActions: Record<string, KpiSet> | undefined,
+  now: Date,
+): ScenarioResult {
+  return {
+    baseline: sim.baseline,
+    scenario: sim.scenario,
+    ...(withActions && Object.keys(withActions).length ? {withActions} : {}),
+    affected: affectedList(slice, sim.impact),
+    riskLevel: riskLevel(sim.impact.delta.values()),
+    kpis: kpiMeta(sim.kpis),
+    nodeCount: slice.nodes.length,
+    computedAt: now.toISOString(),
+  };
 }

@@ -7,7 +7,7 @@
 import type {DataType} from '@ontodecide/ontology/contract';
 import type {FilterValue} from '@ontodecide/shared-kernel';
 import {Link} from '@tanstack/react-router';
-import {Check, MapPin, Minus, X} from 'lucide-react';
+import {Check, MapPin, X} from 'lucide-react';
 import type {ReactNode} from 'react';
 import type {ControllerRenderProps} from 'react-hook-form';
 import {useTranslation} from 'react-i18next';
@@ -16,6 +16,7 @@ import {Input} from '../../shared/ui/input';
 import {NativeSelect} from '../../shared/ui/select';
 import {Switch} from '../../shared/ui/switch';
 import {fmt} from '../../shared/lib/format';
+import {shortRid} from '../schema/model';
 import {ObjectRefInput} from './object_ref_input';
 
 /** Filter operators (subset of FilterExpr ops usable on one property). */
@@ -115,7 +116,7 @@ function toNumber(v: unknown): number | null {
 }
 
 function BoolCell({v}: {v: unknown}) {
-  const {t} = useTranslation('common');
+  const {t} = useTranslation('objects');
   if (isEmpty(v)) return <Empty />;
   const yes = v === true || v === 'true';
   return (
@@ -417,11 +418,6 @@ const enumRenderer: ValueRenderer = {
         : null,
 };
 
-function shortRid(rid: string): string {
-  const parts = rid.split('.');
-  return parts.length === 4 ? `${parts[2]}·${parts[3].slice(-6)}` : rid;
-}
-
 const objectRefRenderer: ValueRenderer = {
   align: 'left',
   filterOps: ['eq', 'exists'],
@@ -432,7 +428,7 @@ const objectRefRenderer: ValueRenderer = {
     if (!s.startsWith('ri.')) return <span>{s}</span>;
     return (
       <Link
-        to="/objects/rid/$rid"
+        to="/objects/$rid"
         params={{rid: s}}
         className="font-mono text-xs text-cyan hover:underline"
         title={s}
@@ -466,17 +462,3 @@ registerRenderer('timestamp', timestampRenderer);
 registerRenderer('geopoint', geopointRenderer);
 registerRenderer('enum', enumRenderer);
 registerRenderer('objectRef', objectRefRenderer);
-
-/** Renders a hidden-by-markings placeholder. */
-export function HiddenValue() {
-  const {t} = useTranslation('common');
-  return (
-    <span
-      className="inline-flex items-center gap-1 text-dim"
-      title={t('markings.hidden')}
-    >
-      <Minus className="size-3" aria-hidden />
-      <span className="sr-only">{t('markings.hidden')}</span>
-    </span>
-  );
-}

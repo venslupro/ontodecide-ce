@@ -1,51 +1,28 @@
 /**
- * @fileoverview ModelProvider over OntologyRpc.getActiveModel with an
- * isolate-local cache per tenant (by version for writes, TTL for reads).
+ * @fileoverview SchemaProvider over the `ONTOLOGY` service binding. The
+ * compiled schema is memoized per call context object so one request never
+ * asks ontology-manager twice (ontology-manager caches by (tid, etag)).
  */
 
-import type {CompiledModel, OntologyRpc} from '@ontodecide/ontology/contract';
-import {systemClock} from '@ontodecide/shared-kernel';
-import type {CallCtx, Clock} from '@ontodecide/shared-kernel';
-import type {ModelProvider} from '../application/ports';
+import type {CallCtx} from '@ontodecide/shared-kernel';
+import type {CompiledSchema, OntologyRpc} from '@ontodecide/ontology/contract';
+import type {SchemaProvider} from '../application/ports';
 
-/** Cached model provider. */
-export class OntologyModelProvider implements ModelProvider {
-  private readonly cache = new Map<
-    string,
-    {model: CompiledModel; at: number; accepted: Set<string>}
-  >();
+/** Reads the compiled ontology through OntologyRpc. */
+export class OntologySchemaProvider implements SchemaProvider {
+  private readonly memo = new WeakMap<CallCtx, Promise<CompiledSchema>>();
 
   constructor(
-    private readonly ontology: Pick<OntologyRpc, 'getActiveModel'>,
-    private readonly clock: Clock = systemClock,
-    private readonly ttlMs = 60_000,
+    private readonly ontology: Pick<OntologyRpc, 'getCompiledSchema'>,
   ) {}
 
-  async get(
-    ctx: CallCtx,
-    opts: {expectedVersion?: string; refresh?: boolean} = {},
-  ): Promise<CompiledModel> {
-    const now = this.clock.now().getTime();
-    const hit = this.cache.get(ctx.tenantId);
-    const fresh = hit !== undefined && now - hit.at < this.ttlMs;
-    if (hit && !opts.refresh) {
-      const expected = opts.expectedVersion;
-      if (expected === undefined) {
-        if (fresh) return hit.model;
-      } else if (
-        hit.model.version === expected ||
-        (fresh && hit.accepted.has(expected))
-      ) {
-        // A producer version that differs from the model version (e.g. a
-        // schema version) is accepted for the TTL to avoid refetching per
-        // message.
-        return hit.model;
-      }
+  get(ctx: CallCtx): Promise<CompiledSchema> {
+    let p = this.memo.get(ctx);
+    if (!p) {
+      p = this.ontology.getCompiledSchema(ctx);
+      this.memo.set(ctx, p);
+      p.catch(() => this.memo.delete(ctx));
     }
-    const model = await this.ontology.getActiveModel(ctx);
-    const accepted = new Set<string>();
-    if (opts.expectedVersion !== undefined) accepted.add(opts.expectedVersion);
-    this.cache.set(ctx.tenantId, {model, at: now, accepted});
-    return model;
+    return p;
   }
 }

@@ -1,81 +1,44 @@
 /**
- * @fileoverview Tests for the segment router.
+ * @fileoverview Router tests: `{param}` patterns, literal precedence and
+ * decoding.
  */
 
 import {describe, expect, it} from 'vitest';
-import {Router} from './router';
+import {Router, compilePattern} from './router';
 
 describe('Router', () => {
-  const router = new Router<string>()
-    .add('GET', '/recommendations', 'list')
-    .add('GET', '/recommendations/:id', 'get')
-    .add('POST', '/recommendations:generate', 'generate')
-    .add('POST', '/recommendations/:id/approve', 'approve')
-    .add('POST', '/sources/:id/uploads:presign', 'presign')
-    .add('POST', '/users/:id/password:reset', 'reset')
-    .add('GET', '/objects/:type', 'listObjects')
-    .add('GET', '/objects/rid/:rid', 'getObject')
-    .add('POST', '/object-sets:evaluate', 'evalAdhoc')
-    .add('POST', '/object-sets/:id/evaluate', 'evalSaved');
+  const r = new Router<string>()
+    .add('GET', '/objects/{rid}', 'getObject')
+    .add('GET', '/objects/stats', 'stats')
+    .add('GET', '/objects/{rid}/links', 'links')
+    .add('POST', '/objects/{rid}', 'post');
 
-  it('treats colon-containing segments as literals', () => {
-    expect(router.match('POST', '/recommendations:generate')).toEqual({
-      kind: 'found',
-      value: 'generate',
-      params: {},
-    });
-    expect(router.match('POST', '/sources/s1/uploads:presign')).toEqual({
-      kind: 'found',
-      value: 'presign',
-      params: {id: 's1'},
-    });
-    expect(router.match('POST', '/users/u9/password:reset')).toMatchObject({
-      value: 'reset',
-      params: {id: 'u9'},
-    });
-    expect(router.match('POST', '/object-sets:evaluate')).toMatchObject({
-      value: 'evalAdhoc',
-    });
-  });
-
-  it('extracts and decodes params', () => {
-    expect(router.match('GET', '/recommendations/r%201')).toMatchObject({
-      value: 'get',
-      params: {id: 'r 1'},
-    });
-    expect(
-      router.match('GET', '/objects/rid/ri.t1.Supplier.01ABC'),
-    ).toMatchObject({
+  it('prefers literal segments over parameters', () => {
+    expect(r.match('GET', '/objects/stats')).toMatchObject({value: 'stats'});
+    expect(r.match('GET', '/objects/ri.A.1')).toMatchObject({
       value: 'getObject',
-      params: {rid: 'ri.t1.Supplier.01ABC'},
-    });
-    expect(router.match('GET', '/objects/Supplier')).toMatchObject({
-      value: 'listObjects',
-      params: {type: 'Supplier'},
+      params: {rid: 'ri.A.1'},
     });
   });
 
-  it('does not treat a colon literal as a param match', () => {
-    expect(router.match('POST', '/recommendations:other').kind).toBe(
-      'not_found',
-    );
-    expect(router.match('POST', '/sources/s1/uploads').kind).toBe('not_found');
+  it('matches by method, HEAD falls back to GET', () => {
+    expect(r.match('POST', '/objects/x')).toMatchObject({value: 'post'});
+    expect(r.match('HEAD', '/objects/x')).toMatchObject({value: 'getObject'});
+    expect(r.match('DELETE', '/objects/x')).toEqual({kind: 'not_found'});
   });
 
-  it('returns 405 with allowed methods and 404 otherwise', () => {
-    expect(router.match('DELETE', '/recommendations')).toEqual({
-      kind: 'method_not_allowed',
-      allow: ['GET'],
+  it('decodes parameters and rejects malformed escapes', () => {
+    expect(r.match('GET', '/objects/a%20b/links')).toMatchObject({
+      params: {rid: 'a b'},
     });
-    expect(router.match('GET', '/nope')).toEqual({kind: 'not_found'});
-    expect(router.match('GET', '/recommendations/a/b/c')).toEqual({
-      kind: 'not_found',
-    });
+    expect(r.match('GET', '/objects/%E0%A4%A')).toEqual({kind: 'not_found'});
   });
 
-  it('ignores trailing slashes', () => {
-    expect(router.match('GET', '/recommendations/')).toMatchObject({
-      value: 'list',
-    });
+  it('compiles only {name} segments as parameters', () => {
+    expect(compilePattern('/a/{id}/b')).toEqual([
+      {kind: 'literal', value: 'a'},
+      {kind: 'param', name: 'id'},
+      {kind: 'literal', value: 'b'},
+    ]);
   });
 });

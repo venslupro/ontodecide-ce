@@ -1,10 +1,8 @@
 /**
- * @fileoverview Public contract of the Ontology context. Other packages may
- * only import from here.
+ * @fileoverview Public contract of the ontology context.
  */
 
-export * from './events';
-export type * from './rpc';
+export * from './rpc';
 export * from './schema';
 export * from './schemas';
 export * from './validate_props';

@@ -1,19 +1,28 @@
 /**
- * @fileoverview Identity application layer: use-case handlers and ports.
+ * @fileoverview Identity-access application layer: use cases of the
+ * Identity, Tenancy, Notification and PlatformAdmin modules and their ports.
+ * Modules call each other only through these application services.
  */
 
-export * from './change_password';
-export * from './create_user';
-export * from './delete_user';
-export * from './deps';
-export * from './grant_marking';
-export * from './list_users';
-export * from './login';
-export * from './logout';
-export * from './me';
+export * from './config';
+export * from './housekeeping_service';
+export * from './identity/account_service';
+export * from './identity/auth_service';
+export * from './identity/bootstrap_admin';
+export * from './identity/export_service';
+export * from './identity/otp_service';
+export * from './identity/passkey_service';
+export * from './identity/session_service';
+export * from './notification/notification_service';
+export * from './notification/routed_email_sender';
+export * from './platform_admin/admin_service';
+export * from './platform_admin/audit_service';
+export * from './platform_admin/maintenance_service';
+export * from './platform_admin/policy_service';
 export * from './ports';
-export * from './refresh';
-export * from './reset_password';
-export * from './support';
-export * from './token_issuer';
-export * from './update_user';
+export * from './secrets';
+export * from './tenancy/admission_service';
+export * from './tenancy/archive_saga_service';
+export * from './tenancy/trial_service';
+export * from './tenancy/workspace_directory';
+export * from './tokens';

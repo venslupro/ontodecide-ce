@@ -1,43 +1,57 @@
 /**
- * @fileoverview Receives recommendation summaries from decision-engine.
+ * @fileoverview Stores the latest recommendation summary (and its impacted
+ * objects) and pushes it to the cockpit.
  */
 
-import {AppError, type CallCtx} from '@ontodecide/shared-kernel';
-import type {RecommendationSummary} from '../contract';
-import type {SituationDeps} from './deps';
-import {publish, requireRole} from './support';
+import {type CallCtx, parseOrThrow} from '@ontodecide/shared-kernel';
+import {z} from 'zod';
+import type {RecommendationSummary} from '../contract/types';
+import {META, type RoomRuntime} from './support';
 
-/**
- * Stores the summary, links it to its alert and pushes a `recommendation`
- * message (Operator; decision-engine calls with a system context).
- */
-export class PushRecommendation {
-  constructor(private readonly deps: SituationDeps) {}
+const summarySchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    status: z.string().max(32),
+    summary: z.string().max(4000),
+    confidence: z.number(),
+    rankedBy: z.enum(['ai', 'rules']),
+    focus: z.string().max(200),
+    expectedImpact: z.number(),
+    createdAt: z.string(),
+    expiresAt: z.string(),
+    impacted: z
+      .array(
+        z.object({
+          rid: z.string(),
+          type: z.string(),
+          title: z.string(),
+          delta: z.number(),
+          hop: z.number(),
+        }),
+      )
+      .max(300)
+      .optional(),
+  })
+  .loose();
 
-  async execute(ctx: CallCtx, dto: RecommendationSummary): Promise<void> {
-    requireRole(ctx, 'Operator');
-    if (!dto || typeof dto.id !== 'string' || typeof dto.status !== 'string') {
-      throw new AppError('VALIDATION_FAILED', 'id and status are required');
-    }
-    const {repos, clock} = this.deps;
-    await repos.recommendations.upsert(
-      ctx.tenantId,
-      dto,
-      clock.now().getTime(),
-    );
-    if (dto.alertId) {
-      const linked = await repos.alerts.linkRecommendation(
-        ctx.tenantId,
-        dto.alertId,
-        dto.id,
-      );
-      if (!linked) {
-        this.deps.logger.warn('recommendation alert not found', {
-          tenantId: ctx.tenantId,
-          alertId: dto.alertId,
-        });
-      }
-    }
-    await publish(this.deps, ctx.tenantId, 'recommendation', dto);
-  }
+/** Handles SituationRpc.pushRecommendation. */
+export async function pushRecommendation(
+  rt: RoomRuntime,
+  ctx: CallCtx,
+  rec: RecommendationSummary,
+): Promise<void> {
+  rt.touch(ctx);
+  const parsed = parseOrThrow(summarySchema, rec) as RecommendationSummary;
+  const stored: RecommendationSummary = {
+    ...parsed,
+    ...(parsed.impacted
+      ? {
+          impacted: [...parsed.impacted]
+            .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+            .slice(0, 20),
+        }
+      : {}),
+  };
+  rt.deps.store.setMeta(META.recommendation, JSON.stringify(stored));
+  rt.push('recommendation', stored);
 }

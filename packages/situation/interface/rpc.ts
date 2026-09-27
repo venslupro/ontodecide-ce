@@ -1,80 +1,79 @@
 /**
- * @fileoverview RPC handler object implementing SituationRpc.
+ * @fileoverview SituationRpc implementation: validates inputs and routes
+ * every call to the workspace's SituationRoom (`idFromName(ctx.tid)`).
  */
 
 import {
-  DeleteAutomation,
-  DeleteKpi,
-  DryRunAutomation,
-  EvaluateScheduled,
-  GetKpiTrend,
-  GetLayout,
-  GetOverview,
-  GetUsage,
-  InstallPackContent,
-  ListAlerts,
-  ListAutomations,
-  ListDeadLetters,
-  ListKpis,
-  PushRecommendation,
-  RecordUsage,
-  RefreshKpis,
-  ReplayDeadLetters,
-  SaveAutomation,
-  SaveKpi,
-  SaveLayout,
-  type SituationDeps,
-  UpdateAlert,
-} from '../application';
-import type {SituationRpc} from '../contract';
+  AppError,
+  type CallCtx,
+  clampLimit,
+  parseOrThrow,
+} from '@ontodecide/shared-kernel';
+import {z} from 'zod';
+import {parseAutomationDef, type SituationRoomApi} from '../application';
+import type {SituationRpc} from '../contract/rpc';
+import type {AlertFilter} from '../contract/types';
 
-/** Builds the RPC surface over the use-case handlers. */
-export function createSituationRpc(deps: SituationDeps): SituationRpc {
-  const h = {
-    overview: new GetOverview(deps),
-    listKpis: new ListKpis(deps),
-    saveKpi: new SaveKpi(deps),
-    deleteKpi: new DeleteKpi(deps),
-    kpiTrend: new GetKpiTrend(deps),
-    refreshKpis: new RefreshKpis(deps),
-    listAutomations: new ListAutomations(deps),
-    saveAutomation: new SaveAutomation(deps),
-    deleteAutomation: new DeleteAutomation(deps),
-    dryRun: new DryRunAutomation(deps),
-    listAlerts: new ListAlerts(deps),
-    updateAlert: new UpdateAlert(deps),
-    installPack: new InstallPackContent(deps),
-    getLayout: new GetLayout(deps),
-    saveLayout: new SaveLayout(deps),
-    pushRecommendation: new PushRecommendation(deps),
-    recordUsage: new RecordUsage(deps),
-    getUsage: new GetUsage(deps),
-    evaluateScheduled: new EvaluateScheduled(deps),
-    listDeadLetters: new ListDeadLetters(deps),
-    replayDeadLetters: new ReplayDeadLetters(deps),
-  };
+/** Resolves the room stub of a workspace. */
+export type RoomResolver<T = SituationRoomApi> = (tid: string) => T;
+
+const filterSchema = z.object({
+  status: z.enum(['OPEN', 'ACKED', 'CLOSED']).optional(),
+  severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
+  rid: z.string().max(200).optional(),
+});
+
+function version(ifMatch: unknown): number {
+  if (
+    typeof ifMatch !== 'number' ||
+    !Number.isInteger(ifMatch) ||
+    ifMatch < 1
+  ) {
+    throw new AppError('PRECONDITION_FAILED', 'If-Match version required');
+  }
+  return ifMatch;
+}
+
+function id(value: unknown): string {
+  if (typeof value !== 'string' || !value || value.length > 64) {
+    throw new AppError('NOT_FOUND');
+  }
+  return value;
+}
+
+/** Builds the SituationRpc surface over room stubs. */
+export function createSituationRpc(rooms: RoomResolver): SituationRpc {
+  const room = (ctx: CallCtx): SituationRoomApi => rooms(ctx.tid);
   return {
-    overview: ctx => h.overview.execute(ctx),
-    listKpis: ctx => h.listKpis.execute(ctx),
-    saveKpi: (ctx, def) => h.saveKpi.execute(ctx, def),
-    deleteKpi: (ctx, id) => h.deleteKpi.execute(ctx, id),
-    kpiTrend: (ctx, id, range) => h.kpiTrend.execute(ctx, id, range),
-    refreshKpis: ctx => h.refreshKpis.execute(ctx),
-    listAutomations: ctx => h.listAutomations.execute(ctx),
-    saveAutomation: (ctx, def) => h.saveAutomation.execute(ctx, def),
-    deleteAutomation: (ctx, id) => h.deleteAutomation.execute(ctx, id),
-    dryRunAutomation: (ctx, def) => h.dryRun.execute(ctx, def),
-    listAlerts: (ctx, filter) => h.listAlerts.execute(ctx, filter),
-    updateAlert: (ctx, id, patch) => h.updateAlert.execute(ctx, id, patch),
-    installPackContent: (ctx, content) => h.installPack.execute(ctx, content),
-    getLayout: ctx => h.getLayout.execute(ctx),
-    saveLayout: (ctx, layout) => h.saveLayout.execute(ctx, layout),
-    pushRecommendation: (ctx, dto) => h.pushRecommendation.execute(ctx, dto),
-    recordUsage: batch => h.recordUsage.execute(batch),
-    getUsage: ctx => h.getUsage.execute(ctx),
-    evaluateScheduled: now => h.evaluateScheduled.execute(now),
-    listDeadLetters: (ctx, queue) => h.listDeadLetters.execute(ctx, queue),
-    replayDeadLetters: (ctx, queue, ids) =>
-      h.replayDeadLetters.execute(ctx, queue, ids),
+    overview: async (ctx, q) =>
+      room(ctx).overview(ctx, {range: q?.range === '7d' ? '7d' : '24h'}),
+    listAlerts: async (ctx, filter, page) =>
+      room(ctx).listAlerts(
+        ctx,
+        parseOrThrow(filterSchema, filter ?? {}) as AlertFilter,
+        {
+          ...(page?.cursor ? {cursor: String(page.cursor)} : {}),
+          limit: clampLimit(page?.limit),
+        },
+      ),
+    acknowledgeAlert: async (ctx, alertId) =>
+      room(ctx).acknowledgeAlert(ctx, id(alertId)),
+    listAutomations: async ctx => room(ctx).listAutomations(ctx),
+    getAutomation: async (ctx, automationId) =>
+      room(ctx).getAutomation(ctx, id(automationId)),
+    createAutomation: async (ctx, def) =>
+      room(ctx).createAutomation(ctx, parseAutomationDef(def)),
+    putAutomation: async (ctx, automationId, def, ifMatch) =>
+      room(ctx).putAutomation(
+        ctx,
+        id(automationId),
+        parseAutomationDef(def),
+        version(ifMatch),
+      ),
+    deleteAutomation: async (ctx, automationId, ifMatch) =>
+      room(ctx).deleteAutomation(ctx, id(automationId), version(ifMatch)),
+    issueStreamTicket: async ctx => room(ctx).issueStreamTicket(ctx),
+    pushRecommendation: async (ctx, rec) =>
+      room(ctx).pushRecommendation(ctx, rec),
   };
 }

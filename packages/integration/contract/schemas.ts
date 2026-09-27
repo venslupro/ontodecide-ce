@@ -1,75 +1,63 @@
 /**
- * @fileoverview Zod schemas for data integration REST inputs.
+ * @fileoverview Zod schemas for data-integration REST inputs.
  */
 
 import {z} from 'zod';
-import {INGEST_LIMITS} from './types';
 
+const apiName = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/);
 const transform = z.string().max(200).optional();
 
+/** MappingSpec. */
 export const mappingSpecSchema = z.object({
-  targetType: z.string().min(1),
+  targetType: apiName,
   primaryKey: z.object({from: z.string().min(1), transform}),
-  fields: z.array(
-    z.object({to: z.string().min(1), from: z.string().min(1), transform}),
-  ),
+  fields: z
+    .array(
+      z.object({
+        to: apiName,
+        from: z.string().min(1),
+        transform,
+        matchedBy: z
+          .enum(['exact', 'synonym', 'similarity', 'ai', 'manual'])
+          .optional(),
+      }),
+    )
+    .max(100),
   links: z
     .array(
       z.object({
-        type: z.string(),
-        toType: z.string(),
-        toKey: z.string(),
-        split: z.string().optional(),
+        type: apiName,
+        toType: apiName,
+        toKey: z.string().min(1),
+        split: z.string().max(4).optional(),
         weightFrom: z.string().optional(),
       }),
     )
+    .max(10)
     .optional(),
-  sourceTsFrom: z.string().optional(),
 });
 
-export const qualityRuleSchema = z.object({
-  prop: z.string(),
-  kind: z.enum(['required', 'range', 'format', 'ref', 'freshness']),
-  arg: z.unknown().optional(),
-  onFail: z.enum(['reject', 'clamp', 'defer']),
+/** POST /imports body. */
+export const createImportSchema = z.object({
+  fileName: z.string().min(1).max(200),
+  targetType: apiName,
+  totalRows: z.number().int().min(1).max(2000),
+  mapping: mappingSpecSchema.optional(),
 });
 
-export const sourceDefSchema = z.object({
-  name: z.string().min(1).max(100),
-  kind: z.enum(['file', 'rest', 'webhook']),
-  config: z.record(z.string(), z.unknown()).default({}),
-  mapping: mappingSpecSchema,
-  qualityRules: z.array(qualityRuleSchema).max(50).optional(),
-  conflictPolicy: z
-    .enum(['latest-wins', 'source-priority', 'max-confidence'])
-    .optional(),
-  priority: z.number().int().min(0).max(100).optional(),
-  schedule: z.string().max(50).optional(),
-  enabled: z.boolean().optional(),
-});
+/** PUT /imports/{id}/mapping body. */
+export const putMappingSchema = z.object({mapping: mappingSpecSchema});
 
-export const batchInputSchema = z.object({
-  jobId: z.string().optional(),
-  seq: z.number().int().min(0),
+/** POST /imports/{id}/batches body. */
+export const batchSchema = z.object({
+  seq: z.number().int().min(0).max(10_000),
   last: z.boolean(),
-  records: z
-    .array(z.record(z.string(), z.unknown()))
-    .min(1)
-    .max(INGEST_LIMITS.batchRecordsMax),
-  txnType: z.enum(['APPEND', 'SNAPSHOT']).optional(),
+  rows: z.array(z.record(z.string(), z.unknown())).min(0).max(100),
 });
 
-export const presignInputSchema = z.object({
-  fileName: z.string().min(1).max(255),
-  bytes: z.number().int().min(1).max(INGEST_LIMITS.fileBytesMax),
+/** POST /imports/{id}/mapping-draft body. */
+export const mappingDraftSchema = z.object({
+  fields: z.array(z.string().max(200)).min(1).max(100),
+  sampleRows: z.array(z.array(z.unknown())).max(20),
+  targetType: apiName,
 });
-
-export const replayInputSchema = z
-  .object({
-    fixes: z
-      .array(
-        z.object({id: z.string(), payload: z.record(z.string(), z.unknown())}),
-      )
-      .optional(),
-  })
-  .default({});

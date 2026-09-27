@@ -1,134 +1,146 @@
 /**
- * @fileoverview Candidate action checklist for a scenario: display name,
- * target, params, approval badge; ineligible candidates are disabled with
- * their unmet preconditions listed. At most 10 can be selected.
+ * @fileoverview Candidate actions from the ontology (「候选动作（来自本体）」):
+ * a checkbox list "action → target" for action types whose target type
+ * matches a perturbed or impacted object. Checked actions show a minimal
+ * parameter form (ontology defaults, renderer registry inputs).
  */
 
-import type {CandidateAction} from '@ontodecide/decision/contract';
-import {resolveText} from '@ontodecide/shared-kernel';
-import {Ban, ListChecks, ShieldCheck} from 'lucide-react';
+import {useId} from 'react';
+import type {ControllerRenderProps} from 'react-hook-form';
 import {useTranslation} from 'react-i18next';
-import {cn} from '../../../shared/lib/cn';
-import {Badge} from '../../../shared/ui/badge';
-import {EmptyState} from '../../../shared/ui/empty_state';
-import {Checkbox} from '../../../shared/ui/input';
-import {Skeleton} from '../../../shared/ui/skeleton';
-import {actionKey} from '../model';
-import {ParamsSummary} from './params_summary';
+import {getRenderer} from '../../../entities/renderers/registry';
+import {Checkbox, Label} from '../../../shared/ui/input';
+import {
+  CANDIDATE_ACTIONS_MAX,
+  type CandidateOption,
+  type CandidateSelection,
+  defaultParams,
+} from '../model';
 
-/** Maximum candidates per run (scenarioInputSchema). */
-export const CANDIDATES_MAX = 10;
+type Field = ControllerRenderProps<Record<string, unknown>, string>;
 
-/** Candidate checklist. */
-export function CandidateList({
-  candidates,
-  selected,
-  onToggle,
-  loading,
-  disabled,
+function fieldOf(
+  name: string,
+  value: unknown,
+  onChange: (v: unknown) => void,
+): Field {
+  return {
+    name,
+    value,
+    onChange,
+    onBlur: () => {},
+    ref: () => {},
+    disabled: false,
+  } as unknown as Field;
+}
+
+function ParamsForm({
+  option,
+  params,
+  onChange,
 }: {
-  candidates: readonly CandidateAction[] | undefined;
-  selected: ReadonlySet<string>;
-  onToggle(key: string, on: boolean): void;
-  loading?: boolean;
-  disabled?: boolean;
+  option: CandidateOption;
+  params: Record<string, unknown>;
+  onChange(p: Record<string, unknown>): void;
 }) {
-  const {t, i18n} = useTranslation('scenarios');
-  if (loading) {
-    return (
-      <div className="flex flex-col gap-2" aria-busy>
-        <Skeleton className="h-14" />
-        <Skeleton className="h-14" />
-      </div>
-    );
-  }
-  if (!candidates || candidates.length === 0) {
-    return (
-      <EmptyState
-        icon={<ListChecks aria-hidden />}
-        title={t('candidates.empty')}
-        description={t('candidates.emptyHint')}
-        className="py-6"
-      />
-    );
-  }
-  const full = selected.size >= CANDIDATES_MAX;
+  const {t} = useTranslation('scenarios');
+  const base = useId();
+  if (!option.action.parameters.length) return null;
   return (
-    <div className="flex flex-col gap-2">
-      <ul className="flex flex-col gap-2" aria-label={t('candidates.title')}>
-        {candidates.map(c => {
-          const key = actionKey(c);
-          const checked = selected.has(key);
-          const off = disabled || !c.eligible || (!checked && full);
-          const id = `cand-${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-          const name = resolveText(c.displayName, i18n.language, c.actionType);
-          return (
-            <li
-              key={key}
-              className={cn(
-                'flex items-start gap-3 rounded-[10px] border px-3 py-2.5 transition-colors',
-                checked
-                  ? 'border-cyan/50 bg-cyan/5'
-                  : 'border-line bg-panel-2/50',
-                !c.eligible && 'opacity-70',
-              )}
-            >
-              <Checkbox
-                id={id}
-                className="mt-0.5"
-                checked={checked}
-                disabled={off}
-                onCheckedChange={v => onToggle(key, v === true)}
-                aria-describedby={c.eligible ? undefined : `${id}-unmet`}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <label
-                    htmlFor={id}
-                    className={cn(
-                      'text-sm font-medium text-text',
-                      off ? 'cursor-not-allowed' : 'cursor-pointer',
-                    )}
-                  >
-                    {name}
-                    <span className="text-muted"> · {c.targetTitle}</span>
-                  </label>
-                  {c.requiresApproval && (
-                    <Badge tone="warn">
-                      <ShieldCheck aria-hidden />
-                      {t('candidates.requiresApproval')}
-                    </Badge>
-                  )}
-                </div>
-                <div className="mt-1 text-xs">
-                  <ParamsSummary actionType={c.actionType} params={c.params} />
-                </div>
-                {!c.eligible && (
-                  <div id={`${id}-unmet`} className="mt-1.5 text-xs text-crit">
-                    <span className="inline-flex items-center gap-1 font-medium">
-                      <Ban className="size-3.5" aria-hidden />
-                      {t('candidates.ineligible')}
-                    </span>
-                    {(c.unmetPreconditions ?? []).length > 0 && (
-                      <ul className="mt-0.5 list-disc pl-5">
-                        {c.unmetPreconditions!.map(u => (
-                          <li key={u}>{u}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-      <p className={cn('text-xs num', full ? 'text-warn' : 'text-dim')}>
-        {t('candidates.selectedCount', {
-          count: selected.size,
-          max: CANDIDATES_MAX,
-        })}
-      </p>
+    <div className="mt-2 ml-6 flex flex-col gap-2 border-l border-line pl-3">
+      {option.action.parameters.map(p => {
+        const id = `${base}-${p.apiName}`;
+        return (
+          <div key={p.apiName} className="flex flex-col gap-1">
+            <Label htmlFor={id} className="text-xs text-muted">
+              {p.displayName}
+            </Label>
+            {getRenderer(p.dataType).input(
+              {
+                apiName: p.apiName,
+                displayName: p.displayName,
+                dataType: p.dataType,
+                required: p.required,
+              },
+              fieldOf(p.apiName, params[p.apiName] ?? null, v =>
+                onChange({...params, [p.apiName]: v}),
+              ),
+              {id},
+            )}
+          </div>
+        );
+      })}
+      <p className="text-[11px] text-dim">{t('candidates.paramsHint')}</p>
     </div>
+  );
+}
+
+/** Candidate action checkbox list. */
+export function CandidateList({
+  options,
+  selection,
+  onChange,
+}: {
+  options: CandidateOption[];
+  selection: CandidateSelection;
+  onChange(next: CandidateSelection): void;
+}) {
+  const {t} = useTranslation('scenarios');
+  const base = useId();
+  const count = Object.keys(selection).length;
+  const full = count >= CANDIDATE_ACTIONS_MAX;
+  return (
+    <section aria-labelledby={`${base}-title`} className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <h2 id={`${base}-title`} className="text-sm font-semibold text-text">
+          {t('candidates.title')}
+        </h2>
+        {options.length > 0 && (
+          <span className="num text-xs text-muted">
+            {t('candidates.selected', {count, max: CANDIDATE_ACTIONS_MAX})}
+          </span>
+        )}
+      </div>
+      {options.length === 0 ? (
+        <p className="text-xs text-dim">{t('candidates.empty')}</p>
+      ) : (
+        <ul className="flex max-h-72 flex-col divide-y divide-line overflow-y-auto">
+          {options.map(o => {
+            const id = `${base}-${o.key}`;
+            const checked = !!selection[o.key];
+            return (
+              <li key={o.key} className="py-2">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id={id}
+                    checked={checked}
+                    disabled={!checked && full}
+                    onCheckedChange={c => {
+                      const next = {...selection};
+                      if (c === true) next[o.key] = defaultParams(o.action);
+                      else delete next[o.key];
+                      onChange(next);
+                    }}
+                  />
+                  <Label htmlFor={id} className="text-sm text-text">
+                    {t('candidates.option', {
+                      action: o.displayName,
+                      target: o.targetTitle,
+                    })}
+                  </Label>
+                </div>
+                {checked && (
+                  <ParamsForm
+                    option={o}
+                    params={selection[o.key]}
+                    onChange={p => onChange({...selection, [o.key]: p})}
+                  />
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }

@@ -1,85 +1,73 @@
 /**
- * @fileoverview Hourly job: schedule automations, KPI refresh and TTL
- * cleanup.
+ * @fileoverview The room's single DO alarm (详细设计 6.11.4 定时自动化):
+ * final deletion of a tombstone, metric flush and due scheduled rules.
  */
 
-import {DAY_MS, matchFilter, systemCtx} from '@ontodecide/shared-kernel';
-import {AutomationIndex} from '../domain';
-import type {SituationDeps} from './deps';
-import {raiseAlert, refreshKpis} from './support';
+import {advanceRun} from '../domain';
+import {flushMetrics} from './kpi_handlers';
+import type {AlertRecord} from './ports';
+import {META, type RoomRuntime} from './support';
 
-/** Retention of metric points. */
-export const METRIC_TTL_MS = 90 * DAY_MS;
-/** Retention of processed event ids. */
-export const PROCESSED_EVENT_TTL_MS = 7 * DAY_MS;
-/** Retention of closed alerts. */
-export const CLOSED_ALERT_TTL_MS = 365 * DAY_MS;
-/** Objects evaluated per schedule rule (pages of 200). */
-export const SCHEDULE_MAX_OBJECTS = 1000;
+/** Result of one alarm run (for tests and logs). */
+export interface AlarmResult {
+  kind: 'deleted' | 'tombstone' | 'inactive' | 'ran';
+  rulesRun: number;
+  pointsWritten: number;
+}
 
-/** Runs the hourly evaluation for every tenant. */
-export class EvaluateScheduled {
-  constructor(private readonly deps: SituationDeps) {}
-
-  async execute(nowIso: string): Promise<{fired: number}> {
-    const {repos, logger} = this.deps;
-    const parsed = new Date(nowIso);
-    const now = Number.isNaN(parsed.getTime()) ? this.deps.clock.now() : parsed;
-    const tenants = new Set([
-      ...(await repos.automations.tenants()),
-      ...(await repos.kpis.tenants()),
-    ]);
-    let fired = 0;
-    for (const tenantId of tenants) {
-      try {
-        fired += await this.evaluateTenant(tenantId, now);
-      } catch (e) {
-        logger.error('scheduled evaluation failed', {
-          tenantId,
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
+/** Handles the alarm. */
+export async function runAlarm(rt: RoomRuntime): Promise<AlarmResult> {
+  const {store, storage, logger} = rt.deps;
+  const now = rt.now();
+  const until = store.tombstoneUntil();
+  if (until !== null) {
+    if (now >= until) {
+      await storage.deleteAll();
+      await storage.deleteAlarm();
+      rt.reset();
+      logger.info('situation.tombstone_deleted', {});
+      return {kind: 'deleted', rulesRun: 0, pointsWritten: 0};
     }
-    const t = now.getTime();
-    await repos.metrics.deleteOlderThan(t - METRIC_TTL_MS);
-    await repos.processedEvents.deleteOlderThan(t - PROCESSED_EVENT_TTL_MS);
-    await repos.alerts.deleteClosedBefore(t - CLOSED_ALERT_TTL_MS);
-    return {fired};
+    await storage.setAlarm(until);
+    return {kind: 'tombstone', rulesRun: 0, pointsWritten: 0};
+  }
+  if (store.getMeta(META.inactive) !== null) {
+    await rt.reschedule();
+    return {kind: 'inactive', rulesRun: 0, pointsWritten: 0};
   }
 
-  private async evaluateTenant(tenantId: string, now: Date): Promise<number> {
-    const {repos} = this.deps;
-    const correlationId = `cron:${now.toISOString()}`;
-    const ctx = systemCtx(tenantId, correlationId);
-    const index = new AutomationIndex(await repos.automations.list(tenantId));
-    let fired = 0;
-    for (const auto of index.schedules()) {
-      if (auto.trigger.kind !== 'schedule') continue;
-      let cursor: string | undefined;
-      let seen = 0;
-      do {
-        const page = await this.deps.objects.evaluateObjectSet(
-          ctx,
-          auto.trigger.objectSet,
-          {limit: 200, ...(cursor ? {cursor} : {})},
-        );
-        for (const o of page.items) {
-          seen++;
-          if (!matchFilter(auto.condition, o.props)) continue;
-          const r = await raiseAlert(
-            this.deps,
-            tenantId,
-            auto,
-            {rid: o.rid, title: o.title, snapshot: o.props},
-            {now, correlationId},
-          );
-          if (r.created) fired++;
-        }
-        cursor = page.nextCursor ?? undefined;
-      } while (cursor && seen < SCHEDULE_MAX_OBJECTS);
-    }
-    const kpis = await repos.kpis.list(tenantId);
-    if (kpis.length > 0) await refreshKpis(this.deps, ctx, kpis);
-    return fired;
+  let pointsWritten = 0;
+  const flush = store.getMeta(META.metricFlushAt);
+  if (flush !== null && Number(flush) <= now) {
+    pointsWritten = flushMetrics(rt, now);
   }
+
+  const alerts: AlertRecord[] = [];
+  let rulesRun = 0;
+  for (const rule of store.listAutomations()) {
+    if (
+      rule.trigger !== 'schedule' ||
+      !rule.enabled ||
+      rule.nextRunAt === null ||
+      rule.nextRunAt > now ||
+      !rule.everyHours
+    ) {
+      continue;
+    }
+    rulesRun++;
+    const seen = new Set<string>();
+    for (const o of store.listObjects(rule.objectType)) {
+      seen.add(o.rid);
+      rt.evaluate(rule, o.rid, o, alerts);
+    }
+    for (const a of store.activeAlertsOf(rule.id)) {
+      if (a.rid && !seen.has(a.rid)) rt.evaluate(rule, a.rid, null, alerts);
+    }
+    rule.nextRunAt = advanceRun(rule.nextRunAt, rule.everyHours, now);
+    store.updateAutomation(rule);
+  }
+  if (rulesRun) rt.rulesChanged();
+  rt.pushAlerts(alerts);
+  await rt.reschedule();
+  return {kind: 'ran', rulesRun, pointsWritten};
 }

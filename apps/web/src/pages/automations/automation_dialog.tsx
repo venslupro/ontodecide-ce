@@ -1,634 +1,391 @@
 /**
- * @fileoverview Create / edit dialog for an automation rule: name (zh / en),
- * trigger + object type, condition builder (shared FilterBuilder), effects
- * (alert / recommend with optional perturbation / approval-free action),
- * severity, cooldown and enabled. Saving always dry-runs first and asks for
- * confirmation with the expected number of firings.
+ * @fileoverview Create / edit dialog of an automation rule (alert-only):
+ * name zh / en, trigger (threshold | schedule every n hours), object type →
+ * AND / OR condition builder, severity, cooldown and enabled. The only
+ * effect is 「产生告警」 (read-only). Saving is disabled with the reason when
+ * it would create a 4th scheduled rule or the interval is outside 1..24 h.
+ * 412 opens the conflict dialog; 400 VALIDATION_FAILED is shown inline.
  */
 
-import {zodResolver} from '@hookform/resolvers/zod';
 import type {
   AutomationDef,
   AutomationDto,
+  Severity,
 } from '@ontodecide/situation/contract';
-import {Link} from '@tanstack/react-router';
-import {FlaskConical, Info} from 'lucide-react';
-import {type ReactNode, useMemo, useState} from 'react';
-import {Controller, useForm, useWatch} from 'react-hook-form';
+import {CE_LIMITS} from '@ontodecide/shared-kernel';
+import {useQueryClient} from '@tanstack/react-query';
+import {Bell, Lock} from 'lucide-react';
+import {useId, useMemo, useState} from 'react';
 import {useTranslation} from 'react-i18next';
-import {FilterBuilder} from '../../entities/object_set/filter_builder';
-import {newGroup} from '../../entities/object_set/filter_model';
+import {FilterBuilder} from '../../entities/schema/filter_builder';
+import {newGroup} from '../../entities/schema/filter_model';
 import {useUiModel} from '../../entities/schema/api';
+import {ConflictDialog} from '../../features/object-graph/components/conflict_dialog';
 import {
-  dryRunAutomation,
-  useSaveAutomation,
+  situationKeys,
+  useCreateAutomation,
+  useUpdateAutomation,
 } from '../../features/situation/api';
+import {apiRequest} from '../../shared/api/client';
 import {errorMessage} from '../../shared/api/error_message';
-import {cn} from '../../shared/lib/cn';
-import {fmt} from '../../shared/lib/format';
-import {useOnline} from '../../shared/lib/hooks';
+import {isApiError} from '../../shared/api/errors';
 import {Button} from '../../shared/ui/button';
 import {DialogContent} from '../../shared/ui/dialog';
-import {Checkbox, Field, Input, Label} from '../../shared/ui/input';
-import {Mono} from '../../shared/ui/page_header';
+import {Field, Input} from '../../shared/ui/input';
 import {NativeSelect} from '../../shared/ui/select';
-import {Slider} from '../../shared/ui/slider';
 import {Switch} from '../../shared/ui/switch';
 import {toast} from '../../shared/ui/toast';
 import {
-  type AutomationFormValues,
-  conditionProperties,
-  conditionSummary,
+  type AutomationForm,
   emptyForm,
+  type FormErrors,
   formFromDto,
-  makeFormSchema,
   MAX_COOLDOWN,
-  numericProperties,
+  MAX_SCHEDULE_HOURS,
   propMap,
+  saveBlockReason,
+  scheduledCount,
   SEVERITIES,
   toDef,
-  triggerSummary,
+  validateForm,
 } from './automation_model';
 
-type DryResult = {wouldFire: number; sample: string[]};
-
-function Section({title, children}: {title: ReactNode; children: ReactNode}) {
-  return (
-    <fieldset className="flex flex-col gap-3 border-t border-line pt-4 first:border-0 first:pt-0">
-      <legend className="mb-1 text-xs font-semibold tracking-wide text-dim uppercase">
-        {title}
-      </legend>
-      {children}
-    </fieldset>
-  );
+/** Dialog props. */
+export interface AutomationDialogProps {
+  /** Edited rule; undefined creates a new one. */
+  automation?: AutomationDto;
+  /** All rules of the workspace (for the scheduled-rule limit). */
+  list: readonly AutomationDto[];
+  onDone(): void;
 }
 
-function DryRunResult({result}: {result: DryResult}) {
-  const {t} = useTranslation('cockpit');
-  return (
-    <div
-      role="status"
-      data-testid="dry-run-result"
-      className={cn(
-        'rounded-[10px] border px-3 py-2.5 text-sm',
-        result.wouldFire > 0
-          ? 'border-cyan/40 bg-cyan/10'
-          : 'border-line-2 bg-panel-2',
-      )}
-    >
-      <p className="flex items-center gap-2 font-medium text-text">
-        <FlaskConical className="size-4 text-cyan" aria-hidden />
-        {t('automations.dryRun.result', {count: result.wouldFire})}
-      </p>
-      {result.sample.length > 0 && (
-        <div className="mt-2">
-          <p className="text-xs text-dim">{t('automations.dryRun.sample')}</p>
-          <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-            {result.sample.slice(0, 10).map(rid => (
-              <li key={rid}>
-                <Link
-                  to="/objects/rid/$rid"
-                  params={{rid}}
-                  className="hover:underline"
-                >
-                  <Mono className="text-cyan">{rid}</Mono>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <p className="mt-2 text-xs text-dim">{t('automations.dryRun.hint')}</p>
-    </div>
-  );
+function serverFieldErrors(err: unknown): string | null {
+  if (!isApiError(err, 'VALIDATION_FAILED')) return null;
+  const list = err.extras.errors;
+  if (Array.isArray(list) && list.length) {
+    return list
+      .map(e => {
+        const r = (e ?? {}) as {path?: unknown; message?: unknown};
+        return [r.path, r.message]
+          .filter(x => typeof x === 'string' && x)
+          .join(': ');
+      })
+      .join('; ');
+  }
+  return err.detail ?? '';
 }
 
-/** Dialog body (render inside a `Dialog`). Remount per open to reset. */
+/** Dialog body (render inside a `Dialog`; remount per open to reset). */
 export function AutomationDialog({
   automation,
+  list,
   onDone,
-}: {
-  automation?: AutomationDto;
-  onDone(): void;
-}) {
-  const {t} = useTranslation('cockpit');
+}: AutomationDialogProps) {
+  const {t} = useTranslation('automations');
+  const id = useId();
+  const qc = useQueryClient();
   const {model} = useUiModel();
-  const online = useOnline();
-  const save = useSaveAutomation();
-  const [step, setStep] = useState<'edit' | 'confirm'>('edit');
-  const [dry, setDry] = useState<DryResult | null>(null);
-  const [dryError, setDryError] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-  const [pending, setPending] = useState<AutomationDef | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  const keptTrigger =
-    automation?.trigger.kind === 'objectSetCount'
-      ? automation.trigger
-      : undefined;
-  const keptAction = automation?.effects.find(e => e.kind === 'action');
-  const keptParams =
-    keptAction?.kind === 'action' ? keptAction.params : undefined;
-
-  const form = useForm<AutomationFormValues>({
-    defaultValues: automation ? formFromDto(automation) : emptyForm(),
-    // Resolver is rebuilt on each render so it sees the current type's properties.
-    resolver: (values, ctx, opts) => {
-      const type = model.byName[values.objectType];
-      return zodResolver(
-        makeFormSchema(t, {props: propMap(type), keptTrigger}),
-      )(values, ctx, opts as never);
-    },
-  });
-  const {register, control, handleSubmit, setValue, formState} = form;
-  const errors = formState.errors;
-  const [objectType, triggerKind, recommend, perturb, action, perturbChange] =
-    useWatch({
-      control,
-      name: [
-        'objectType',
-        'triggerKind',
-        'recommend',
-        'perturb',
-        'action',
-        'perturbChange',
-      ],
-    });
-  const type = model.byName[objectType];
-  const condProps = useMemo(() => conditionProperties(type), [type]);
-  const numeric = useMemo(() => numericProperties(type), [type]);
-  const freeActions = useMemo(
-    () => (type?.actions ?? []).filter(a => !a.requiresApproval),
-    [type],
+  const create = useCreateAutomation();
+  const update = useUpdateAutomation();
+  const [base, setBase] = useState<AutomationDto | undefined>(automation);
+  const [form, setForm] = useState<AutomationForm>(() =>
+    automation ? formFromDto(automation) : emptyForm(model.types[0]?.apiName),
   );
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [serverError, setServerError] = useState<string | null>(null);
+  const [otherError, setOtherError] = useState<unknown>(null);
+  const [conflict, setConflict] = useState<AutomationDef | null>(null);
 
-  const buildDef = (v: AutomationFormValues) =>
-    toDef(v, {
-      id: automation?.id,
-      keptTrigger,
-      props: propMap(model.byName[v.objectType]),
-      keptParams,
-    });
+  const type = model.byName[form.objectType];
+  const props = useMemo(() => propMap(type), [type]);
+  const block = saveBlockReason(form, list, base?.id);
+  const pending = create.isPending || update.isPending;
+  const set = (patch: Partial<AutomationForm>) =>
+    setForm(f => ({...f, ...patch}));
 
-  const runDry = async (v: AutomationFormValues, thenConfirm: boolean) => {
-    const def = buildDef(v);
-    setRunning(true);
-    setDryError(null);
-    try {
-      const r = await dryRunAutomation(def);
-      setDry(r);
-      if (thenConfirm) {
-        setPending(def);
-        setSaveError(null);
-        setStep('confirm');
-      }
-    } catch (e) {
-      setDry(null);
-      setDryError(
-        t('automations.dryRun.failed', {message: errorMessage(e, t)}),
-      );
-    } finally {
-      setRunning(false);
-    }
+  const onSave = () => {
+    setServerError(null);
+    setOtherError(null);
+    const r = validateForm(form, props);
+    setErrors(r.errors);
+    if (!r.def) return;
+    const def = r.def;
+    const handlers = {
+      onSuccess: () => {
+        toast.success(base ? t('toast.updated') : t('toast.created'));
+        onDone();
+      },
+      onError: (e: unknown) => {
+        if (isApiError(e, 'PRECONDITION_FAILED') && e.status === 412) {
+          setConflict(def);
+          return;
+        }
+        const se = serverFieldErrors(e);
+        if (se !== null) setServerError(se);
+        else setOtherError(e);
+      },
+    };
+    if (base)
+      update.mutate({id: base.id, def, version: base.version}, handlers);
+    else create.mutate(def, handlers);
   };
 
-  const onSave = handleSubmit(v => runDry(v, true));
-  const onDryRun = handleSubmit(v => runDry(v, false));
-
-  const confirm = async () => {
-    if (!pending) return;
-    setSaveError(null);
-    try {
-      await save.mutateAsync(pending);
-      toast.success(t('automations.saved'));
-      onDone();
-    } catch (e) {
-      setSaveError(errorMessage(e, t));
-    }
+  const loadFresh = async (): Promise<AutomationDto | undefined> => {
+    if (!base) return undefined;
+    const res = await apiRequest<AutomationDto>(
+      `/automations/${encodeURIComponent(base.id)}`,
+    );
+    return {...res.data, version: res.version ?? res.data.version};
   };
 
-  const title = automation
-    ? t('automations.dialog.editTitle')
-    : t('automations.dialog.createTitle');
+  const scheduled =
+    scheduledCount(list, base?.id) + (form.trigger === 'schedule' ? 1 : 0);
 
-  if (step === 'confirm' && pending && dry) {
-    return (
+  return (
+    <>
       <DialogContent
-        size="lg"
-        title={t('automations.dialog.confirmTitle')}
+        size="xl"
+        title={base ? t('dialog.editTitle') : t('dialog.createTitle')}
+        description={t('dialog.description')}
         footer={
           <>
-            <Button
-              variant="ghost"
-              onClick={() => setStep('edit')}
-              disabled={save.isPending}
-            >
-              {t('automations.dialog.back')}
+            {block && (
+              <p
+                role="status"
+                data-testid="save-block-reason"
+                className="mr-auto flex items-center gap-1.5 text-xs text-warn"
+              >
+                <Lock className="size-3.5" aria-hidden />
+                {t(`block.${block}`, {
+                  max: CE_LIMITS.maxScheduledAutomations,
+                  min: CE_LIMITS.minScheduleHours,
+                  maxHours: MAX_SCHEDULE_HOURS,
+                })}
+              </p>
+            )}
+            <Button variant="ghost" onClick={onDone}>
+              {t('actions.cancel')}
             </Button>
             <Button
               variant="primary"
-              onClick={() => void confirm()}
-              loading={save.isPending}
-              disabled={!online}
+              loading={pending}
+              disabled={!!block}
+              onClick={onSave}
             >
-              {t('automations.dialog.confirmSave')}
+              {t('actions.save')}
             </Button>
           </>
         }
       >
-        <div className="flex flex-col gap-3">
-          <DryRunResult result={dry} />
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
-            <dt className="text-dim">{t('automations.col.name')}</dt>
-            <dd className="text-text">{form.getValues('nameZh')}</dd>
-            <dt className="text-dim">{t('automations.col.trigger')}</dt>
-            <dd className="text-text">
-              {triggerSummary(pending.trigger, model, t)}
-            </dd>
-            <dt className="text-dim">{t('automations.col.condition')}</dt>
-            <dd className="text-text">
-              {conditionSummary(pending.condition, type, t)}
-            </dd>
-            <dt className="text-dim">{t('automations.col.severity')}</dt>
-            <dd className="text-text">
-              {t(`common:severity.${pending.severity}`)}
-            </dd>
-          </dl>
-          {saveError && (
-            <p role="alert" className="text-sm text-crit">
-              {saveError}
-            </p>
-          )}
-        </div>
-      </DialogContent>
-    );
-  }
-
-  return (
-    <DialogContent
-      size="lg"
-      title={title}
-      description={t('automations.dialog.description')}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onDone}>
-            {t('common:actions.cancel')}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => void onDryRun()}
-            loading={running && step === 'edit'}
-            disabled={!online}
-          >
-            <FlaskConical aria-hidden />
-            {t('automations.dryRun.run')}
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => void onSave()}
-            disabled={!online || running}
-          >
-            {t('common:actions.save')}
-          </Button>
-        </>
-      }
-    >
-      <form
-        className="flex flex-col gap-5"
-        noValidate
-        onSubmit={e => {
-          e.preventDefault();
-          void onSave();
-        }}
-      >
-        <Section title={t('automations.form.basics')}>
-          <div className="grid gap-3 sm:grid-cols-2">
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field
-              label={t('automations.form.nameZh')}
-              htmlFor="auto-name-zh"
+              label={t('form.nameZh')}
+              htmlFor={`${id}-zh`}
               required
-              error={errors.nameZh?.message}
+              error={errors.nameZh && t(`form.error.${errors.nameZh}`)}
             >
               <Input
-                id="auto-name-zh"
+                id={`${id}-zh`}
+                value={form.nameZh}
                 aria-invalid={!!errors.nameZh}
-                {...register('nameZh')}
+                onChange={e => set({nameZh: e.target.value})}
               />
             </Field>
             <Field
-              label={t('automations.form.nameEn')}
-              htmlFor="auto-name-en"
-              hint={t('automations.form.nameEnHint')}
+              label={t('form.nameEn')}
+              htmlFor={`${id}-en`}
+              hint={t('form.nameEnHint')}
             >
-              <Input id="auto-name-en" {...register('nameEn')} />
+              <Input
+                id={`${id}-en`}
+                value={form.nameEn}
+                onChange={e => set({nameEn: e.target.value})}
+              />
             </Field>
           </div>
-        </Section>
 
-        <Section title={t('automations.form.triggerSection')}>
-          {triggerKind === 'keep' ? (
-            <p className="flex items-center gap-2 rounded-[10px] border border-line-2 bg-panel-2 px-3 py-2 text-xs text-muted">
-              <Info className="size-4 shrink-0 text-blue" aria-hidden />
-              {t('automations.form.unsupportedTrigger')}
-              {automation &&
-                ` (${triggerSummary(automation.trigger, model, t)})`}
-            </p>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label={t('form.trigger')} htmlFor={`${id}-trigger`}>
+              <NativeSelect
+                id={`${id}-trigger`}
+                value={form.trigger}
+                options={[
+                  {value: 'threshold', label: t('trigger.threshold')},
+                  {value: 'schedule', label: t('trigger.schedule')},
+                ]}
+                onChange={e =>
+                  set({trigger: e.target.value as AutomationForm['trigger']})
+                }
+              />
+            </Field>
+            {form.trigger === 'schedule' && (
               <Field
-                label={t('automations.form.objectType')}
-                htmlFor="auto-type"
-                required
-                error={errors.objectType?.message}
+                label={t('form.everyHours')}
+                htmlFor={`${id}-hours`}
+                hint={t('form.everyHoursHint', {
+                  used: scheduled,
+                  max: CE_LIMITS.maxScheduledAutomations,
+                })}
               >
-                <NativeSelect
-                  id="auto-type"
-                  aria-invalid={!!errors.objectType}
-                  placeholder={t('automations.form.chooseType')}
-                  options={model.types.map(o => ({
-                    value: o.apiName,
-                    label: o.displayName,
-                  }))}
-                  {...register('objectType', {
-                    onChange: () => {
-                      setValue('condition', newGroup('and'));
-                      setValue('perturbProperty', '');
-                      setValue('actionType', '');
-                    },
-                  })}
+                <Input
+                  id={`${id}-hours`}
+                  type="number"
+                  min={CE_LIMITS.minScheduleHours}
+                  max={MAX_SCHEDULE_HOURS}
+                  step={1}
+                  className="num"
+                  aria-invalid={
+                    block === 'minInterval' ||
+                    block === 'maxInterval' ||
+                    block === 'intervalInteger'
+                  }
+                  value={form.everyHours}
+                  onChange={e => set({everyHours: e.target.value})}
                 />
               </Field>
-              <Field
-                label={t('automations.form.triggerKind')}
-                htmlFor="auto-trigger"
-                hint={t(`automations.triggerHint.${triggerKind}`)}
-              >
-                <NativeSelect
-                  id="auto-trigger"
-                  options={(['threshold', 'schedule'] as const).map(k => ({
-                    value: k,
-                    label: t(`automations.trigger.${k}`),
-                  }))}
-                  {...register('triggerKind')}
-                />
-              </Field>
-            </div>
-          )}
-        </Section>
-
-        <Section title={t('automations.form.condition')}>
-          {type ? (
-            <Controller
-              control={control}
-              name="condition"
-              render={({field}) => (
-                <FilterBuilder
-                  label={t('automations.form.conditionLabel')}
-                  value={field.value}
-                  onChange={field.onChange}
-                  properties={condProps}
-                />
-              )}
-            />
-          ) : (
-            <p className="text-xs text-dim">
-              {t('automations.form.conditionNeedsType')}
-            </p>
-          )}
-        </Section>
-
-        <Section title={t('automations.form.effects')}>
-          {errors.alert?.message && (
-            <p role="alert" className="text-xs text-crit">
-              {errors.alert.message}
-            </p>
-          )}
-          <div className="flex flex-col gap-3">
-            <Controller
-              control={control}
-              name="alert"
-              render={({field}) => (
-                <div className="flex items-start gap-2.5">
-                  <Checkbox
-                    id="eff-alert"
-                    checked={field.value}
-                    onCheckedChange={v => field.onChange(v === true)}
-                    className="mt-0.5"
-                  />
-                  <div>
-                    <Label htmlFor="eff-alert" className="text-sm text-text">
-                      {t('automations.effect.alert')}
-                    </Label>
-                    <p className="text-xs text-dim">
-                      {t('automations.effectHint.alert')}
-                    </p>
-                  </div>
-                </div>
-              )}
-            />
-            <Controller
-              control={control}
-              name="recommend"
-              render={({field}) => (
-                <div className="flex items-start gap-2.5">
-                  <Checkbox
-                    id="eff-rec"
-                    checked={field.value}
-                    onCheckedChange={v => field.onChange(v === true)}
-                    className="mt-0.5"
-                  />
-                  <div>
-                    <Label htmlFor="eff-rec" className="text-sm text-text">
-                      {t('automations.effect.recommend')}
-                    </Label>
-                    <p className="text-xs text-dim">
-                      {t('automations.effectHint.recommend')}
-                    </p>
-                  </div>
-                </div>
-              )}
-            />
-            {recommend && (
-              <div className="ml-6 flex flex-col gap-3 rounded-[10px] border border-line bg-panel-2/50 p-3">
-                <Controller
-                  control={control}
-                  name="perturb"
-                  render={({field}) => (
-                    <div className="flex items-center gap-2.5">
-                      <Checkbox
-                        id="eff-perturb"
-                        checked={field.value}
-                        onCheckedChange={v => field.onChange(v === true)}
-                      />
-                      <Label
-                        htmlFor="eff-perturb"
-                        className="text-sm text-text"
-                      >
-                        {t('automations.form.perturbation')}
-                      </Label>
-                    </div>
-                  )}
-                />
-                {perturb &&
-                  (numeric.length === 0 ? (
-                    <p className="text-xs text-dim">
-                      {t('automations.form.noNumeric')}
-                    </p>
-                  ) : (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <Field
-                        label={t('automations.form.perturbProperty')}
-                        htmlFor="auto-perturb-prop"
-                        error={errors.perturbProperty?.message}
-                      >
-                        <NativeSelect
-                          id="auto-perturb-prop"
-                          size="sm"
-                          placeholder={t('automations.form.chooseProperty')}
-                          options={numeric.map(p => ({
-                            value: p.apiName,
-                            label: p.displayName,
-                          }))}
-                          {...register('perturbProperty')}
-                        />
-                      </Field>
-                      <Field
-                        label={`${t('automations.form.perturbChange')}: ${fmt.signedPercent(perturbChange / 100, 0)}`}
-                      >
-                        <Controller
-                          control={control}
-                          name="perturbChange"
-                          render={({field}) => (
-                            <Slider
-                              min={-100}
-                              max={100}
-                              step={5}
-                              value={[field.value]}
-                              onValueChange={([v]) => field.onChange(v)}
-                              thumbLabel={t('automations.form.perturbChange')}
-                              className="mt-1.5"
-                            />
-                          )}
-                        />
-                      </Field>
-                    </div>
-                  ))}
-              </div>
             )}
-            <Controller
-              control={control}
-              name="action"
-              render={({field}) => (
-                <div className="flex items-start gap-2.5">
-                  <Checkbox
-                    id="eff-action"
-                    checked={field.value}
-                    onCheckedChange={v => field.onChange(v === true)}
-                    className="mt-0.5"
-                  />
-                  <div>
-                    <Label htmlFor="eff-action" className="text-sm text-text">
-                      {t('automations.effect.action')}
-                    </Label>
-                    <p className="text-xs text-dim">
-                      {t('automations.effectHint.action')}
-                    </p>
-                  </div>
-                </div>
-              )}
-            />
-            {action && (
-              <div className="ml-6">
-                {freeActions.length === 0 ? (
-                  <p className="text-xs text-dim">
-                    {t('automations.form.noActions')}
-                  </p>
-                ) : (
-                  <Field
-                    label={t('automations.form.actionType')}
-                    htmlFor="auto-action"
-                    error={errors.actionType?.message}
-                  >
-                    <NativeSelect
-                      id="auto-action"
-                      size="sm"
-                      className="sm:w-64"
-                      placeholder={t('automations.form.chooseAction')}
-                      options={freeActions.map(a => ({
-                        value: a.apiName,
-                        label: a.displayName,
-                      }))}
-                      {...register('actionType')}
-                    />
-                  </Field>
-                )}
-              </div>
-            )}
-          </div>
-        </Section>
-
-        <Section title={t('automations.col.severity')}>
-          <div className="grid gap-3 sm:grid-cols-3">
             <Field
-              label={t('automations.form.severity')}
-              htmlFor="auto-severity"
+              label={t('form.objectType')}
+              htmlFor={`${id}-type`}
+              required
+              error={errors.objectType && t(`form.error.${errors.objectType}`)}
             >
               <NativeSelect
-                id="auto-severity"
+                id={`${id}-type`}
+                value={form.objectType}
+                placeholder={t('form.chooseType')}
+                options={model.types.map(x => ({
+                  value: x.apiName,
+                  label: x.displayName,
+                }))}
+                onChange={e =>
+                  set({objectType: e.target.value, condition: newGroup('and')})
+                }
+              />
+            </Field>
+          </div>
+
+          <fieldset className="flex flex-col gap-2 rounded-[10px] border border-line p-3">
+            <legend className="px-1 text-xs font-semibold text-muted">
+              {t('form.condition')}
+            </legend>
+            {type ? (
+              <FilterBuilder
+                label={t('form.condition')}
+                value={form.condition}
+                properties={type.properties}
+                onChange={c => set({condition: c})}
+              />
+            ) : (
+              <p className="text-xs text-dim">{t('form.chooseTypeFirst')}</p>
+            )}
+            {errors.condition && (
+              <p role="alert" className="text-xs text-crit">
+                {t(`form.error.${errors.condition}`)}
+              </p>
+            )}
+          </fieldset>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label={t('form.severity')} htmlFor={`${id}-sev`}>
+              <NativeSelect
+                id={`${id}-sev`}
+                value={form.severity}
                 options={SEVERITIES.map(s => ({
                   value: s,
-                  label: t(`common:severity.${s}`),
+                  label: t(`severity.${s}`),
                 }))}
-                {...register('severity')}
+                onChange={e => set({severity: e.target.value as Severity})}
               />
             </Field>
             <Field
-              label={t('automations.form.cooldown')}
-              htmlFor="auto-cooldown"
-              hint={t('automations.form.cooldownHint')}
-              error={errors.cooldownSec?.message}
+              label={t('form.cooldown')}
+              htmlFor={`${id}-cd`}
+              hint={t('form.cooldownHint', {max: MAX_COOLDOWN})}
+              error={
+                errors.cooldownSec &&
+                t(`form.error.${errors.cooldownSec}`, {max: MAX_COOLDOWN})
+              }
             >
               <Input
-                id="auto-cooldown"
+                id={`${id}-cd`}
                 type="number"
                 min={0}
                 max={MAX_COOLDOWN}
                 step={60}
+                className="num"
                 aria-invalid={!!errors.cooldownSec}
-                {...register('cooldownSec', {valueAsNumber: true})}
+                value={form.cooldownSec}
+                onChange={e => set({cooldownSec: e.target.value})}
               />
             </Field>
-            <Controller
-              control={control}
-              name="enabled"
-              render={({field}) => (
-                <div className="flex items-center gap-2.5 sm:pt-6">
-                  <Switch
-                    id="auto-enabled"
-                    checked={field.value}
-                    onCheckedChange={field.onChange}
-                  />
-                  <Label htmlFor="auto-enabled" className="text-sm text-text">
-                    {t('automations.form.enabled')}
-                  </Label>
-                </div>
-              )}
-            />
+            <div className="flex items-end pb-2">
+              <label className="flex items-center gap-2 text-sm text-text">
+                <Switch
+                  checked={form.enabled}
+                  aria-label={t('form.enabled')}
+                  onCheckedChange={v => set({enabled: v})}
+                />
+                {t('form.enabled')}
+              </label>
+            </div>
           </div>
-        </Section>
 
-        {errors.root?.message && (
-          <p role="alert" className="text-sm text-crit">
-            {errors.root.message}
-          </p>
-        )}
-        {dryError && (
-          <p role="alert" className="text-sm text-crit">
-            {dryError}
-          </p>
-        )}
-        {dry && step === 'edit' && <DryRunResult result={dry} />}
-      </form>
-    </DialogContent>
+          <div
+            data-testid="effect-row"
+            className="flex flex-wrap items-center gap-3 rounded-[10px] border border-line bg-panel-2 px-3 py-2.5"
+          >
+            <span className="text-xs font-semibold text-muted">
+              {t('form.effect')}
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-blue/40 bg-blue/10 px-2 py-0.5 text-xs text-blue">
+              <Bell className="size-3" aria-hidden />
+              {t('effect.alert')}
+            </span>
+            <span className="text-xs text-dim">{t('effect.note')}</span>
+          </div>
+
+          {(serverError !== null || !!errors.root || !!otherError) && (
+            <p role="alert" className="text-sm text-crit">
+              {serverError !== null
+                ? t('form.error.server', {detail: serverError})
+                : errors.root
+                  ? t('form.error.server', {detail: errors.root})
+                  : errorMessage(otherError, t)}
+            </p>
+          )}
+        </div>
+      </DialogContent>
+
+      <ConflictDialog
+        open={!!conflict}
+        onOpenChange={o => !o && setConflict(null)}
+        mine={
+          (conflict ?? toDef(form, props)) as unknown as Record<string, unknown>
+        }
+        loadTheirs={async () => {
+          const fresh = await loadFresh();
+          if (!fresh) return undefined;
+          const {
+            id: _i,
+            version: _v,
+            nextRunAt: _n,
+            lastFiredAt: _l,
+            ...def
+          } = fresh;
+          return def as unknown as Record<string, unknown>;
+        }}
+        onRefresh={() => {
+          void qc.invalidateQueries({queryKey: situationKeys.automations()});
+          void loadFresh().then(fresh => {
+            if (!fresh) return;
+            setBase(fresh);
+            setForm(formFromDto(fresh));
+            setErrors({});
+          });
+        }}
+      />
+    </>
   );
 }

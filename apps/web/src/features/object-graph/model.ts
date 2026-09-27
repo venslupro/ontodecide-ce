@@ -1,56 +1,68 @@
 /**
- * @fileoverview Object graph view models: URL param parsing, column models,
- * risk levels, dynamic action-parameter schemas, graph conversions (object
- * neighborhoods, traversal slices, paths) and the unified object timeline.
- * Pure functions only — no React, no translations.
+ * @fileoverview Object-graph view model (pure): URL filter/sort params,
+ * ontology-driven columns, graph slices → graph view elements, action
+ * availability from preconditions, action parameter defaults and
+ * validation, merge-patch construction, provenance and the unified object
+ * timeline (property changes, alerts, recommendations, actions).
  */
 
 import type {RecommendationDto} from '@ontodecide/decision/contract';
 import type {
   ActionLogDto,
   GraphSlice,
+  MergePatch,
   ObjectDto,
-  ObjectSummary,
 } from '@ontodecide/object-graph/contract';
-import type {FilterExpr, OrderBy, Rid} from '@ontodecide/shared-kernel';
-import type {AlertDto} from '@ontodecide/situation/contract';
-import {z} from 'zod';
-import {rendererKey} from '../../entities/renderers/registry';
 import {
-  orderedProperties,
-  type UiLinkType,
-  type UiObjectType,
-  type UiParam,
-  type UiProperty,
+  evalLogic,
+  filterExprSchema,
+  type FilterExpr,
+  type OrderBy,
+  type Provenance,
+} from '@ontodecide/shared-kernel';
+import type {AlertDto} from '@ontodecide/situation/contract';
+import type {
+  UiActionType,
+  UiObjectType,
+  UiParam,
+  UiProperty,
 } from '../../entities/schema/model';
+import {orderedProperties} from '../../entities/schema/model';
 import type {GEdge, GNode} from '../../shared/graph/limit';
-import {isApiError} from '../../shared/api/errors';
 
-// ----------------------------------------------------------------------------
-// URL params
-// ----------------------------------------------------------------------------
+// --- List ------------------------------------------------------------------
 
-/** Parses the `filter=<json FilterExpr>` search param (invalid → undefined). */
-export function parseFilterParam(
-  raw: string | undefined,
-): FilterExpr | undefined {
-  if (!raw) return undefined;
+/** Parses the `filter` search param (JSON FilterExpr); invalid → undefined. */
+export function parseFilterParam(raw: unknown): FilterExpr | undefined {
+  if (typeof raw !== 'string' || !raw) {
+    if (raw && typeof raw === 'object') {
+      const r = filterExprSchema.safeParse(raw);
+      return r.success ? r.data : undefined;
+    }
+    return undefined;
+  }
   try {
-    const v = JSON.parse(raw) as unknown;
-    return v && typeof v === 'object' && 'op' in v
-      ? (v as FilterExpr)
-      : undefined;
+    const r = filterExprSchema.safeParse(JSON.parse(raw));
+    return r.success ? r.data : undefined;
   } catch {
     return undefined;
   }
 }
 
-/** Serializes a FilterExpr for the URL (undefined when empty). */
+/** Serializes a filter for the URL. */
 export function filterParam(expr: FilterExpr | undefined): string | undefined {
   return expr ? JSON.stringify(expr) : undefined;
 }
 
-/** Cycles a header's sort state: none → asc → desc → none. */
+/** Parses `prop:dir`. */
+export function parseOrderBy(raw: unknown): OrderBy | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const [prop, dir] = raw.split(':');
+  if (!prop || (dir !== 'asc' && dir !== 'desc')) return undefined;
+  return {prop, dir};
+}
+
+/** Next sort state when a column header is clicked: asc → desc → none. */
 export function nextSort(
   current: OrderBy | undefined,
   prop: string,
@@ -60,424 +72,202 @@ export function nextSort(
   return undefined;
 }
 
-// ----------------------------------------------------------------------------
-// Columns
-// ----------------------------------------------------------------------------
-
-/** Whether a property can be sorted server-side (indexed and visible). */
+/** Only indexed properties are sorted/filtered in D1. */
 export function isSortable(p: UiProperty): boolean {
-  return p.indexed && p.visible;
+  return p.indexed;
 }
 
-/** Default column width (px) for a property in the object table. */
-export function columnWidth(p: UiProperty, isTitle: boolean): number {
-  if (isTitle) return 240;
-  switch (rendererKey(p.dataType)) {
-    case 'integer':
-    case 'double':
-      return 140;
-    case 'boolean':
-      return 100;
-    case 'enum':
-      return 130;
-    case 'date':
-      return 130;
-    case 'timestamp':
-      return 180;
-    case 'geopoint':
-      return 180;
-    case 'objectRef':
-      return 170;
-    default:
-      return 180;
+/** Table columns from the ontology (title and primary key first). */
+export function resolveColumns(t: UiObjectType, max = 10): UiProperty[] {
+  return orderedProperties(t).slice(0, max);
+}
+
+/** Row count above which the table is virtualized. */
+export const VIRTUALIZE_ABOVE = 100;
+
+// --- Graph -----------------------------------------------------------------
+
+/** Converts a GraphSlice into graph view nodes/edges. */
+export function sliceToGraph(
+  slice: GraphSlice | undefined,
+  rootRid?: string,
+): {nodes: GNode[]; edges: GEdge[]} {
+  if (!slice) return {nodes: [], edges: []};
+  return {
+    nodes: slice.nodes.map(n => ({
+      id: n.rid,
+      label: n.title,
+      type: n.type,
+      hop: n.hop,
+      root: n.rid === rootRid || (rootRid === undefined && n.hop === 0),
+    })),
+    edges: slice.edges.map(e => ({
+      id: `${e.type}:${e.src}:${e.dst}`,
+      source: e.src,
+      target: e.dst,
+      type: e.type,
+      weight: e.weight,
+    })),
+  };
+}
+
+/** Filters a slice to the given link types (empty = all), keeping reachable nodes. */
+export function filterSlice(
+  slice: GraphSlice | undefined,
+  linkTypes: readonly string[],
+): GraphSlice | undefined {
+  if (!slice || linkTypes.length === 0) return slice;
+  const edges = slice.edges.filter(e => linkTypes.includes(e.type));
+  const keep = new Set<string>();
+  for (const n of slice.nodes) if (n.hop === 0) keep.add(n.rid);
+  for (const e of edges) {
+    keep.add(e.src);
+    keep.add(e.dst);
   }
+  return {...slice, edges, nodes: slice.nodes.filter(n => keep.has(n.rid))};
 }
 
-/**
- * Resolves the visible columns of a type: the persisted choice (unknown
- * names dropped, schema order kept) or every property. The title column is
- * always included.
- */
-export function resolveColumns(
-  t: UiObjectType,
-  persisted: readonly string[] | undefined,
-): UiProperty[] {
-  const all = orderedProperties(t);
-  if (!persisted || persisted.length === 0) return all;
-  const keep = new Set([...persisted, t.titleProperty]);
-  const cols = all.filter(p => keep.has(p.apiName));
-  return cols.length ? cols : all;
+/** Types present in a slice, in first-seen order (legend). */
+export function sliceTypes(slice: GraphSlice | undefined): string[] {
+  return [...new Set((slice?.nodes ?? []).map(n => n.type))];
 }
 
-// ----------------------------------------------------------------------------
-// Risk
-// ----------------------------------------------------------------------------
+// --- Actions ---------------------------------------------------------------
 
-/** Risk level of a 0–100 score: ≥ 70 crit, ≥ 40 warn, otherwise good. */
-export function riskLevel(v: unknown): 'good' | 'warn' | 'crit' | null {
-  const n =
-    typeof v === 'number'
-      ? v
-      : typeof v === 'string' && v.trim() !== ''
-        ? Number(v)
-        : NaN;
-  if (!Number.isFinite(n)) return null;
-  if (n >= 70) return 'crit';
-  if (n >= 40) return 'warn';
-  return 'good';
-}
-
-// ----------------------------------------------------------------------------
-// Action parameters
-// ----------------------------------------------------------------------------
-
-/** Messages used by the dynamic action-parameter schema. */
-export interface ParamSchemaMessages {
-  required: string;
-  number: string;
-  integer: string;
-}
-
-function isBlank(v: unknown): boolean {
-  return (
-    v === null || v === undefined || (typeof v === 'string' && v.trim() === '')
-  );
-}
-
-/**
- * Builds a zod schema for action parameters: required params must be
- * non-empty; numeric params must be (integer) numbers.
- */
-export function paramsSchema(
-  params: readonly UiParam[],
-  msg: ParamSchemaMessages,
-) {
-  const shape: Record<string, z.ZodType<unknown>> = {};
-  for (const p of params) {
-    const key = rendererKey(p.dataType);
-    shape[p.apiName] = z.unknown().superRefine((v, ctx) => {
-      if (isBlank(v)) {
-        if (p.required) ctx.addIssue({code: 'custom', message: msg.required});
-        return;
-      }
-      if (key === 'integer' || key === 'double') {
-        if (typeof v !== 'number' || !Number.isFinite(v))
-          ctx.addIssue({code: 'custom', message: msg.number});
-        else if (key === 'integer' && !Number.isInteger(v))
-          ctx.addIssue({code: 'custom', message: msg.integer});
-      }
-    });
-  }
-  return z.object(shape);
-}
-
-/** Default form values from the parameters' `defaultValue`s. */
-export function paramDefaults(
-  params: readonly UiParam[],
-): Record<string, unknown> {
+/** Default parameter values of an action. */
+export function paramDefaults(a: UiActionType): Record<string, unknown> {
   return Object.fromEntries(
-    params.map(p => [
-      p.apiName,
-      p.defaultValue ?? (rendererKey(p.dataType) === 'boolean' ? false : null),
-    ]),
+    a.parameters.map(p => [p.apiName, p.defaultValue ?? null]),
   );
 }
 
-/** Drops blank values before sending parameters to the server. */
+/**
+ * Evaluates the preconditions against the object (and default params).
+ * Returns the unmet messages; an expression that cannot be evaluated
+ * locally is left to the server.
+ */
+export function unmetPreconditions(
+  a: UiActionType,
+  obj: Pick<ObjectDto, 'props'>,
+  params: Record<string, unknown> = paramDefaults(a),
+): string[] {
+  const data = {target: obj.props, params};
+  return a.preconditions.flatMap(pc => {
+    try {
+      return evalLogic(pc.expr, data) ? [] : [pc.message];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/** Actions of the object's type whose preconditions are satisfied. */
+export function availableActions(
+  t: UiObjectType | undefined,
+  obj: Pick<ObjectDto, 'props'> | undefined,
+): UiActionType[] {
+  if (!t || !obj) return [];
+  return t.actions.filter(a => unmetPreconditions(a, obj).length === 0);
+}
+
+function emptyValue(v: unknown): boolean {
+  return v === null || v === undefined || v === '';
+}
+
+/** Missing required parameters (api names). */
+export function missingParams(
+  params: readonly UiParam[],
+  values: Record<string, unknown>,
+): string[] {
+  return params
+    .filter(p => p.required && emptyValue(values[p.apiName]))
+    .map(p => p.apiName);
+}
+
+/** Drops empty optional parameters. */
 export function cleanParams(
   values: Record<string, unknown>,
 ): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(values).filter(([, v]) => !isBlank(v)),
+    Object.entries(values).filter(([, v]) => !emptyValue(v)),
   );
 }
 
-/** Classified action error (table 8). */
-export type ActionErrorView =
-  | {kind: 'approval'; code: string; recommendationId?: string}
-  | {kind: 'conflict'}
-  | {kind: 'precondition'; unmet: string[]}
-  | {kind: 'other'; error: unknown};
-
-/** Classifies an error thrown by an action execution. */
-export function classifyActionError(err: unknown): ActionErrorView {
-  if (isApiError(err, 'APPROVAL_REQUIRED', 'INVALID_TRANSITION')) {
-    const id = err.extras.recommendationId;
-    return {
-      kind: 'approval',
-      code: err.code,
-      recommendationId: typeof id === 'string' && id ? id : undefined,
-    };
-  }
-  if (isApiError(err, 'VERSION_CONFLICT')) return {kind: 'conflict'};
-  if (isApiError(err, 'PRECONDITION_FAILED')) {
-    const raw = err.extras.unmet;
-    const unmet = Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
-    return {
-      kind: 'precondition',
-      unmet: unmet.length ? unmet : err.detail ? [err.detail] : [],
-    };
-  }
-  return {kind: 'other', error: err};
-}
-
-// ----------------------------------------------------------------------------
-// Graph conversions
-// ----------------------------------------------------------------------------
-
-/** Display name lookup for link types. */
-export function linkLabels(
-  links: readonly UiLinkType[],
-): Record<string, string> {
-  return Object.fromEntries(links.map(l => [l.apiName, l.displayName]));
-}
-
-/** A graph ready for {@link GraphView}. */
-export interface GraphData {
-  nodes: GNode[];
-  edges: GEdge[];
-}
-
-/** Empty graph. */
-export const EMPTY_GRAPH: GraphData = {nodes: [], edges: []};
-
-function edgeId(type: string, src: string, dst: string): string {
-  return `${type}:${src}->${dst}`;
-}
-
-/** Converts an object with `links` + `neighbors` into a graph rooted at it. */
-export function objectToGraph(
-  o: ObjectDto,
-  labels: Record<string, string> = {},
-): GraphData {
-  const nodes = new Map<string, GNode>();
-  nodes.set(o.rid, {
-    id: o.rid,
-    label: o.title,
-    type: o.type,
-    root: true,
-    hop: 0,
-  });
-  for (const n of o.neighbors ?? []) {
-    if (!nodes.has(n.rid))
-      nodes.set(n.rid, {id: n.rid, label: n.title, type: n.type, hop: 1});
-  }
-  const edges = new Map<string, GEdge>();
-  for (const l of o.links ?? []) {
-    const id = edgeId(l.type, l.src, l.dst);
-    if (!edges.has(id))
-      edges.set(id, {
-        id,
-        source: l.src,
-        target: l.dst,
-        type: l.type,
-        label: labels[l.type] ?? l.type,
-        weight: l.weight,
-      });
-  }
-  // Link endpoints not listed in `neighbors` still need a node.
-  for (const e of edges.values()) {
-    for (const r of [e.source, e.target]) {
-      if (!nodes.has(r))
-        nodes.set(r, {
-          id: r,
-          label: shortRid(r),
-          type: typeOfRid(r) ?? '?',
-          hop: 1,
-        });
-    }
-  }
-  return {nodes: [...nodes.values()], edges: [...edges.values()]};
-}
-
-/** Merges graphs (first occurrence wins; `root` is kept from the base). */
-export function mergeGraphs(base: GraphData, ...more: GraphData[]): GraphData {
-  const nodes = new Map(base.nodes.map(n => [n.id, n] as const));
-  const edges = new Map(
-    base.edges.map(
-      e => [e.id ?? edgeId(e.type, e.source, e.target), e] as const,
-    ),
-  );
-  for (const g of more) {
-    for (const n of g.nodes)
-      if (!nodes.has(n.id)) nodes.set(n.id, {...n, root: false});
-    for (const e of g.edges) {
-      const id = e.id ?? edgeId(e.type, e.source, e.target);
-      if (!edges.has(id)) edges.set(id, e);
-    }
-  }
-  return {nodes: [...nodes.values()], edges: [...edges.values()]};
-}
-
-/** Keeps only edges of the allowed link types (empty = all) and drops orphans except roots. */
-export function filterByLinkTypes(
-  g: GraphData,
-  allowed: readonly string[],
-): GraphData {
-  if (allowed.length === 0) return g;
-  const set = new Set(allowed);
-  const edges = g.edges.filter(e => set.has(e.type));
-  const used = new Set(edges.flatMap(e => [e.source, e.target]));
-  return {nodes: g.nodes.filter(n => n.root || used.has(n.id)), edges};
-}
-
-/** Converts an impact slice into a graph with intensity by hop. */
-export function impactToGraph(
-  s: GraphSlice,
-  root: string | undefined,
-  maxHops: number,
-  labels: Record<string, string> = {},
-): GraphData {
-  const nodes: GNode[] = s.nodes.map(n => {
-    const hop = n.rid === root ? 0 : (n.hop ?? maxHops);
-    const delta = Math.abs(
-      Number((n.props as Record<string, unknown> | undefined)?.delta ?? NaN),
-    );
-    const byHop = 1 - hop / (maxHops + 1);
-    const impact = Number.isFinite(delta)
-      ? Math.max(byHop, Math.min(1, delta))
-      : byHop;
-    return {
-      id: n.rid,
-      label: n.title,
-      type: n.type,
-      hop,
-      impact,
-      score: impact,
-      root: n.rid === root,
-    };
-  });
-  const ids = new Set(nodes.map(n => n.id));
-  const edges: GEdge[] = s.edges
-    .filter(e => ids.has(e.src) && ids.has(e.dst))
-    .map(e => ({
-      id: edgeId(e.type, e.src, e.dst),
-      source: e.src,
-      target: e.dst,
-      type: e.type,
-      label: labels[e.type] ?? e.type,
-      weight: e.weight,
-    }));
-  return {nodes, edges};
-}
+// --- Edit ------------------------------------------------------------------
 
 /**
- * Converts paths (RID chains) into a graph; nodes on the highlighted path
- * get full intensity, the endpoints are marked as roots.
+ * RFC 7396 merge patch between the stored and the edited properties:
+ * changed values are set, cleared values become `null`.
  */
-export function pathsToGraph(
-  paths: readonly Rid[][],
-  titles: Record<string, string>,
-  highlight = 0,
-): GraphData {
-  const on = new Set(paths[highlight] ?? []);
-  const nodes = new Map<string, GNode>();
-  const edges = new Map<string, GEdge>();
-  for (const p of paths) {
-    p.forEach((r, i) => {
-      if (!nodes.has(r)) {
-        nodes.set(r, {
-          id: r,
-          label: titles[r] ?? shortRid(r),
-          type: typeOfRid(r) ?? '?',
-          hop: i,
-          impact: on.has(r) ? 1 : 0.2,
-          root: i === 0 || i === p.length - 1,
-        });
-      }
-      if (i > 0) {
-        const id = edgeId('path', p[i - 1], r);
-        if (!edges.has(id))
-          edges.set(id, {id, source: p[i - 1], target: r, type: 'path'});
-      }
-    });
+export function buildMergePatch(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): MergePatch {
+  const patch: MergePatch = {};
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const k of keys) {
+    const a = after[k];
+    const b = before[k];
+    if (emptyValue(a)) {
+      if (!emptyValue(b)) patch[k] = null;
+    } else if (JSON.stringify(a) !== JSON.stringify(b)) patch[k] = a;
   }
-  return {nodes: [...nodes.values()], edges: [...edges.values()]};
+  return patch;
 }
 
-/** Object type encoded in a RID (`ri.<tenant>.<Type>.<id>`). */
-export function typeOfRid(rid: string): string | undefined {
-  const parts = rid.split('.');
-  return parts.length >= 4 ? parts[2] : undefined;
+// --- Provenance & timeline -------------------------------------------------
+
+/** Provenance of one property, if the value came from an import. */
+export function provenanceOf(
+  obj: Pick<ObjectDto, 'provenance'>,
+  prop: string,
+): Provenance | undefined {
+  return obj.provenance?.[prop];
 }
 
-/** Short RID for compact display. */
-export function shortRid(rid: string): string {
-  const parts = rid.split('.');
-  return parts.length >= 4 ? `${parts[2]}·${parts.slice(3).join('.')}` : rid;
-}
-
-/** Neighbors grouped by link type and direction (accessible graph fallback). */
-export interface NeighborGroup {
-  linkType: string;
-  direction: 'out' | 'in';
-  items: ObjectSummary[];
-}
-
-/** Groups the direct neighbors of an object by link type. */
-export function groupNeighbors(o: ObjectDto): NeighborGroup[] {
-  const byRid = new Map((o.neighbors ?? []).map(n => [n.rid, n] as const));
-  const groups = new Map<string, NeighborGroup>();
-  for (const l of o.links ?? []) {
-    const isOut = l.src === o.rid;
-    if (!isOut && l.dst !== o.rid) continue;
-    const other = isOut ? l.dst : l.src;
-    const key = `${l.type}:${isOut ? 'out' : 'in'}`;
-    const g = groups.get(key) ?? {
-      linkType: l.type,
-      direction: isOut ? 'out' : 'in',
-      items: [],
-    };
-    if (!g.items.some(i => i.rid === other)) {
-      g.items.push(
-        byRid.get(other) ?? {
-          rid: other,
-          type: typeOfRid(other) ?? '?',
-          title: shortRid(other),
-        },
-      );
-    }
-    groups.set(key, g);
-  }
-  return [...groups.values()];
-}
-
-// ----------------------------------------------------------------------------
-// Timeline
-// ----------------------------------------------------------------------------
-
-/** One entry of the unified object timeline. */
+/** Unified timeline entry. */
 export type TimelineEntry =
-  | {kind: 'action'; id: string; at: string; log: ActionLogDto}
-  | {kind: 'alert'; id: string; at: string; alert: AlertDto}
-  | {kind: 'recommendation'; id: string; at: string; rec: RecommendationDto}
-  | {kind: 'update'; id: string; at: string; version: number};
+  | {kind: 'import'; at: number; prop: string; jobId: string; row: number}
+  | {kind: 'action'; at: number; log: ActionLogDto}
+  | {kind: 'alert'; at: number; alert: AlertDto}
+  | {
+      kind: 'recommendation';
+      at: number;
+      rec: Pick<RecommendationDto, 'id' | 'summary' | 'status' | 'rankedBy'>;
+    };
 
-/** Builds the timeline (newest first). */
+/** Builds the timeline (newest first, ≤ `max`). */
 export function buildTimeline(input: {
-  object?: Pick<ObjectDto, 'rid' | 'updatedAt' | 'version'>;
+  object?: Pick<ObjectDto, 'provenance'>;
   actions?: readonly ActionLogDto[];
   alerts?: readonly AlertDto[];
-  recommendations?: readonly RecommendationDto[];
+  recommendations?: readonly Pick<
+    RecommendationDto,
+    'id' | 'summary' | 'status' | 'rankedBy' | 'createdAt'
+  >[];
+  max?: number;
 }): TimelineEntry[] {
   const out: TimelineEntry[] = [];
-  if (input.object)
-    out.push({
-      kind: 'update',
-      id: `u:${input.object.rid}`,
-      at: input.object.updatedAt,
-      version: input.object.version,
-    });
+  for (const [prop, p] of Object.entries(input.object?.provenance ?? {}))
+    out.push({kind: 'import', at: p.at, prop, jobId: p.jobId, row: p.row});
   for (const log of input.actions ?? [])
-    out.push({kind: 'action', id: `a:${log.id}`, at: log.executedAt, log});
+    out.push({kind: 'action', at: Date.parse(log.executedAt), log});
   for (const alert of input.alerts ?? [])
-    out.push({kind: 'alert', id: `al:${alert.id}`, at: alert.raisedAt, alert});
+    out.push({kind: 'alert', at: Date.parse(alert.raisedAt), alert});
   for (const rec of input.recommendations ?? [])
-    out.push({
-      kind: 'recommendation',
-      id: `r:${rec.id}`,
-      at: rec.createdAt,
-      rec,
-    });
-  return out.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+    out.push({kind: 'recommendation', at: Date.parse(rec.createdAt), rec});
+  return out
+    .filter(e => Number.isFinite(e.at))
+    .sort((a, b) => b.at - a.at)
+    .slice(0, input.max ?? 30);
+}
+
+/** Changed properties of an action (before → after). */
+export function actionChanges(
+  log: Pick<ActionLogDto, 'before' | 'after'>,
+): {prop: string; before: unknown; after: unknown}[] {
+  const keys = new Set([...Object.keys(log.before), ...Object.keys(log.after)]);
+  return [...keys]
+    .filter(k => JSON.stringify(log.before[k]) !== JSON.stringify(log.after[k]))
+    .map(k => ({prop: k, before: log.before[k], after: log.after[k]}));
 }

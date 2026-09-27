@@ -3,40 +3,50 @@
  */
 
 import {FixedClock, silentLogger} from '@ontodecide/shared-kernel';
+import {createTestD1, rpcBinding, TEST_TID, testCtx} from '@ontodecide/testing';
 import {describe, expect, it} from 'vitest';
-import {createTestD1, MemoryKV, rpcBinding, testCtx} from '@ontodecide/testing';
 import type {Env} from './env';
 import {createService} from './service';
 
 describe('createService', () => {
-  it('serves the ontology RPC over fake bindings', async () => {
-    const kv = new MemoryKV();
+  it('serves OntologyRpc and TenantLifecycle over fake bindings', async () => {
     const env: Env = {
-      ONTOLOGY_DB: createTestD1('ontology'),
-      SCHEMA_CACHE: kv.asKV(),
+      ONTOLOGY_DB: createTestD1('ontology-manager'),
+      ENVIRONMENT: 'test',
+      APP_VERSION: '2.4.0',
     };
     const svc = createService(env, {
       clock: new FixedClock(),
       logger: silentLogger,
     });
+    expect(svc.queue).toBeUndefined();
+    expect(svc.scheduled).toBeUndefined();
     const rpc = rpcBinding(svc.rpc);
+    const lc = rpcBinding(svc.lifecycle);
     const ctx = testCtx();
 
-    expect((await rpc.getActiveModel(ctx)).version).toBe('0');
-    const {report} = await rpc.importPack(ctx, {packId: 'supply-chain'});
-    expect(report).toMatchObject({apiName: 'supplyChain', version: '1.0.0'});
-    expect(report.publishedAt).toBe('2026-09-24T00:00:00.000Z');
-    expect((await rpc.getActiveModel(ctx)).version).toBe('supplyChain@1.0.0');
-    expect(await rpc.listSchemas(ctx)).toEqual([
-      expect.objectContaining({
-        apiName: 'supplyChain',
-        currentVersion: '1.0.0',
-        hasDraft: false,
-      }),
-    ]);
-    const compiled = await rpc.getCompiledSchema(ctx, 'supplyChain');
+    const compiled = await rpc.getCompiledSchema(ctx);
+    expect(compiled).toMatchObject({custom: false, etag: 0});
     expect(compiled.indexPlan.length).toBeGreaterThan(0);
-    expect(kv.writes).toBe(2);
-    expect(svc.queue).toBeUndefined();
+
+    const supplier = (await rpc.getDefinition(ctx, 'object-types', 'Supplier'))
+      .item;
+    const {etag} = await rpc.putDefinition(
+      ctx,
+      'object-types',
+      'Supplier',
+      {...supplier, icon: 'truck'},
+      0,
+    );
+    expect(etag).toBe(1);
+    expect((await rpc.getOntology(ctx)).custom).toBe(true);
+    expect(await lc.countTenant(TEST_TID)).toBe(1);
+    expect(await lc.purgeTenant(TEST_TID, 500)).toEqual({
+      deleted: 1,
+      done: true,
+    });
+    expect(
+      (await rpc.getTemplateSeeds('supply-chain')).kpis.length,
+    ).toBeGreaterThan(0);
   });
 });

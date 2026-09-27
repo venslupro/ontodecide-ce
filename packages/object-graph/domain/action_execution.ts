@@ -1,236 +1,271 @@
 /**
- * @fileoverview Action execution rules: parameter normalization,
- * preconditions (JSONLogic over `{target, params}`) and effects producing new
- * properties and link changes. Pure; objectRef parameters are resolved to
- * RIDs by the caller before effects run.
+ * @fileoverview Action execution rules (详细设计 6.11.3): parameter
+ * resolution, JSONLogic preconditions and the set / increment / relink /
+ * unlink effects. Pure: the application loads the target, its links and the
+ * referenced objects, the repository commits the result.
  */
 
 import {AppError, evalLogic, resolveText} from '@ontodecide/shared-kernel';
 import type {JsonLogic, Rid} from '@ontodecide/shared-kernel';
-import type {ActionTypeDef, ParamDef} from '@ontodecide/ontology/contract';
-import {linkKey} from './stored_object';
-import type {StoredLink} from './stored_object';
+import {validateProps} from '@ontodecide/ontology/contract';
+import type {
+  ActionTypeDef,
+  CompiledObjectType,
+  CompiledSchema,
+  PropertyDef,
+} from '@ontodecide/ontology/contract';
+import {patchProps} from './conflict_resolution';
+import type {PropState} from './conflict_resolution';
+import {linkKey} from './entity_resolution';
+import type {StoredLink, StoredObject} from './stored_object';
 
-/** Parameter normalization result. */
-export interface NormalizedParams {
+/** An objectRef parameter value that must exist in the workspace. */
+export interface ParamRef {
+  param: string;
+  objectType: string;
+  rid: Rid;
+}
+
+/** Resolved parameters. */
+export interface ResolvedParams {
   params: Record<string, unknown>;
-  errors: {param: string; detail: string}[];
-}
-
-function coerceParam(
-  def: ParamDef,
-  value: unknown,
-): {ok: boolean; value: unknown} {
-  const t = def.dataType;
-  if (t === 'integer' || t === 'double') {
-    const n = typeof value === 'number' ? value : Number(value);
-    if (!Number.isFinite(n)) return {ok: false, value};
-    return {ok: true, value: t === 'integer' ? Math.trunc(n) : n};
-  }
-  if (t === 'boolean') {
-    if (typeof value === 'boolean') return {ok: true, value};
-    if (value === 'true' || value === 1) return {ok: true, value: true};
-    if (value === 'false' || value === 0) return {ok: true, value: false};
-    return {ok: false, value};
-  }
-  if (t === 'enum') return {ok: true, value: String(value)};
-  if (typeof value === 'object') return {ok: false, value};
-  return {ok: true, value: String(value)};
-}
-
-/** Applies defaults, checks required parameters and coerces types. */
-export function normalizeParams(
-  action: ActionTypeDef,
-  raw: Record<string, unknown>,
-): NormalizedParams {
-  const params: Record<string, unknown> = {};
-  const errors: {param: string; detail: string}[] = [];
-  for (const def of action.parameters) {
-    let v = raw[def.apiName];
-    if (v === undefined || v === null || v === '') v = def.defaultValue;
-    if (v === undefined || v === null || v === '') {
-      if (def.required) {
-        errors.push({param: def.apiName, detail: 'Parameter is required'});
-      }
-      continue;
-    }
-    const c = coerceParam(def, v);
-    if (!c.ok) {
-      errors.push({param: def.apiName, detail: `Expected ${def.dataType}`});
-      continue;
-    }
-    params[def.apiName] = c.value;
-  }
-  return {params, errors};
-}
-
-/** Parameters referencing objects (`objectRef:<Type>`). */
-export function objectRefParams(
-  action: ActionTypeDef,
-): {param: string; objectType: string}[] {
-  return action.parameters
-    .filter(p => p.dataType.startsWith('objectRef:'))
-    .map(p => ({
-      param: p.apiName,
-      objectType: p.dataType.slice('objectRef:'.length),
-    }));
-}
-
-function truthy(v: unknown): boolean {
-  return Array.isArray(v) ? v.length > 0 : Boolean(v);
-}
-
-/** Evaluates preconditions; returns the messages of unmet ones. */
-export function evaluatePreconditions(
-  action: ActionTypeDef,
-  target: Record<string, unknown>,
-  params: Record<string, unknown>,
-  locale = 'en-US',
-): string[] {
-  const data = {target, params};
-  return action.preconditions
-    .filter(pc => !truthy(evalLogic(pc.expr, data)))
-    .map(pc => resolveText(pc.message, locale, 'Precondition failed'));
-}
-
-/** A link change requested by an effect. */
-export interface LinkEffect {
-  kind: 'relink' | 'unlink';
-  link: string;
-  direction: 'in' | 'out';
-  /** Resolved RID of the other end (relink: required). */
-  to?: Rid;
-}
-
-/** Effects applied to a target. */
-export interface EffectOutcome {
-  /** Property updates (full new values; null deletes). */
-  updates: Record<string, unknown>;
-  linkEffects: LinkEffect[];
+  refs: ParamRef[];
 }
 
 /**
- * Computes effects. `params` must already hold RIDs for objectRef
- * parameters used by relink/unlink.
+ * Applies defaults, coerces values by data type and rejects unknown or
+ * missing required parameters (VALIDATION_FAILED, 400).
  */
-export function applyEffects(
+export function resolveParams(
   action: ActionTypeDef,
-  target: Record<string, unknown>,
+  input: Record<string, unknown>,
+): ResolvedParams {
+  const properties: PropertyDef[] = action.parameters.map(p => ({
+    apiName: p.apiName,
+    displayName: p.displayName,
+    dataType: p.dataType,
+    required: p.required,
+  }));
+  const withDefaults: Record<string, unknown> = {...input};
+  for (const p of action.parameters) {
+    if (withDefaults[p.apiName] === undefined && p.defaultValue !== undefined) {
+      withDefaults[p.apiName] = p.defaultValue;
+    }
+  }
+  const pseudo = {
+    apiName: action.apiName,
+    displayName: action.displayName,
+    primaryKey: '',
+    titleProperty: '',
+    properties,
+    propsByName: Object.fromEntries(properties.map(p => [p.apiName, p])),
+    indexedProps: [],
+    sensitiveProps: [],
+  } as CompiledObjectType;
+  const v = validateProps(pseudo, withDefaults, {strict: true});
+  if (v.errors.length) {
+    throw new AppError('VALIDATION_FAILED', 'Invalid action parameters', {
+      extras: {errors: v.errors.map(e => ({prop: e.prop, code: e.code}))},
+    });
+  }
+  const refs: ParamRef[] = [];
+  for (const p of action.parameters) {
+    const value = v.props[p.apiName];
+    if (value === undefined || !p.dataType.startsWith('objectRef:')) continue;
+    refs.push({
+      param: p.apiName,
+      objectType: p.dataType.slice('objectRef:'.length),
+      rid: String(value) as Rid,
+    });
+  }
+  return {params: v.props, refs};
+}
+
+/** JSONLogic data context of an action: `{target, params}`. */
+export function actionData(
+  target: StoredObject,
   params: Record<string, unknown>,
-): EffectOutcome {
-  const data = {target, params};
-  const working: Record<string, unknown> = {...target};
-  const updates: Record<string, unknown> = {};
-  const linkEffects: LinkEffect[] = [];
-  for (const e of action.effects) {
-    switch (e.kind) {
+): Record<string, unknown> {
+  return {
+    target: {
+      ...target.props,
+      rid: target.rid,
+      primaryKey: target.primaryKey,
+    },
+    params,
+  };
+}
+
+/** Messages of the preconditions that evaluate falsy. */
+export function unmetPreconditions(
+  action: ActionTypeDef,
+  data: Record<string, unknown>,
+  locale: string,
+): string[] {
+  const unmet: string[] = [];
+  for (const pre of action.preconditions) {
+    const ok = evalLogic(pre.expr, data);
+    if (!ok || (Array.isArray(ok) && ok.length === 0)) {
+      unmet.push(resolveText(pre.message, locale, 'Precondition not met'));
+    }
+  }
+  return unmet;
+}
+
+/** Outcome of an action's effects. */
+export interface EffectPlan {
+  after: PropState;
+  changed: string[];
+  removeLinks: StoredLink[];
+  addLinks: StoredLink[];
+}
+
+function effectFailed(detail: string): never {
+  throw new AppError('VALIDATION_FAILED', detail, {status: 422});
+}
+
+/**
+ * Applies the effects in order. `links` are the target's current links of
+ * every link type the effects touch; `refs` maps referenced rids to their
+ * object type. Property results are coerced by the target type.
+ */
+export function applyEffects(input: {
+  schema: CompiledSchema;
+  action: ActionTypeDef;
+  type: CompiledObjectType;
+  target: StoredObject;
+  params: Record<string, unknown>;
+  links: StoredLink[];
+  refTypes: Map<string, string>;
+}): EffectPlan {
+  const {schema, action, type, target, params} = input;
+  const data = actionData(target, params);
+  const next: Record<string, unknown> = {...target.props};
+  const touched = new Set<string>();
+  const links = new Map(
+    input.links.map(l => [linkKey(l.src, l.type, l.dst), l]),
+  );
+  for (const effect of action.effects) {
+    switch (effect.kind) {
       case 'set': {
-        const v = evalLogic(e.value as JsonLogic, data);
-        working[e.prop] = v;
-        updates[e.prop] = v;
+        if (!type.propsByName[effect.prop]) {
+          effectFailed(`Unknown property ${effect.prop}`);
+        }
+        next[effect.prop] = evalLogic(effect.value as JsonLogic, data);
+        touched.add(effect.prop);
         break;
       }
       case 'increment': {
-        const by = Number(evalLogic(e.by as JsonLogic, data));
-        const base = Number(working[e.prop] ?? 0);
-        const v = base + by;
-        if (!Number.isFinite(v)) {
-          throw new AppError(
-            'VALIDATION_FAILED',
-            `Cannot increment ${e.prop}: not a number`,
-          );
+        if (!type.propsByName[effect.prop]) {
+          effectFailed(`Unknown property ${effect.prop}`);
         }
-        working[e.prop] = v;
-        updates[e.prop] = v;
+        const by = Number(evalLogic(effect.by as JsonLogic, data));
+        const cur = Number(next[effect.prop] ?? 0);
+        if (!Number.isFinite(by) || !Number.isFinite(cur)) {
+          effectFailed(`Cannot increment ${effect.prop}`);
+        }
+        next[effect.prop] = cur + by;
+        touched.add(effect.prop);
         break;
       }
-      case 'relink': {
-        const to = params[e.toParam];
-        if (typeof to !== 'string' || !to) {
-          throw new AppError(
-            'VALIDATION_FAILED',
-            `Parameter ${e.toParam} is required`,
-          );
-        }
-        linkEffects.push({
-          kind: 'relink',
-          link: e.link,
-          direction: e.direction,
-          to: to as Rid,
-        });
-        break;
-      }
+      case 'relink':
       case 'unlink': {
-        const to = e.toParam ? params[e.toParam] : undefined;
-        linkEffects.push({
-          kind: 'unlink',
-          link: e.link,
-          direction: e.direction,
-          ...(typeof to === 'string' && to ? {to: to as Rid} : {}),
-        });
+        const def = schema.linkTypes[effect.link];
+        if (!def) effectFailed(`Unknown link type ${effect.link}`);
+        const out = effect.direction === 'out';
+        if ((out ? def.from : def.to) !== target.type) {
+          effectFailed(`Link ${effect.link} does not fit the target`);
+        }
+        const other = effect.toParam
+          ? (params[effect.toParam] as string | undefined)
+          : undefined;
+        if (effect.kind === 'relink' || effect.toParam) {
+          if (!other) effectFailed(`Missing parameter ${effect.toParam}`);
+          if (input.refTypes.get(other) !== (out ? def.to : def.from)) {
+            effectFailed(`Parameter ${effect.toParam} has the wrong type`);
+          }
+        }
+        for (const [k, l] of links) {
+          if (l.type !== effect.link) continue;
+          const mine = out ? l.src === target.rid : l.dst === target.rid;
+          if (!mine) continue;
+          const far = out ? l.dst : l.src;
+          if (effect.kind === 'relink' || !other || far === other) {
+            links.delete(k);
+          }
+        }
+        if (effect.kind === 'relink' && other) {
+          const l: StoredLink = out
+            ? {
+                src: target.rid,
+                type: effect.link,
+                dst: other as Rid,
+                weight: null,
+              }
+            : {
+                src: other as Rid,
+                type: effect.link,
+                dst: target.rid,
+                weight: null,
+              };
+          links.set(linkKey(l.src, l.type, l.dst), l);
+        }
         break;
       }
-      default:
-        break;
     }
   }
-  return {updates, linkEffects};
-}
 
-/** Links to remove and add. */
-export interface LinkChanges {
-  remove: StoredLink[];
-  add: StoredLink[];
-}
-
-/**
- * Plans link changes for a target from its current links. `relink`
- * replaces every link of the type on that side with one to `to` (carrying
- * over the weight of a replaced link); `unlink` removes them (or only the
- * one to `to`).
- */
-export function planLinkChanges(
-  target: Rid,
-  effects: readonly LinkEffect[],
-  existing: readonly StoredLink[],
-): LinkChanges {
-  const current = new Map(existing.map(l => [linkKey(l), l]));
-  const removed = new Map<string, StoredLink>();
-  const added = new Map<string, StoredLink>();
-  for (const e of effects) {
-    const onSide = (l: StoredLink): boolean =>
-      l.type === e.link && (e.direction === 'out' ? l.src : l.dst) === target;
-    const other = (l: StoredLink): Rid =>
-      e.direction === 'out' ? l.dst : l.src;
-    const matching = [...current.values()].filter(onSide);
-    if (e.kind === 'unlink') {
-      for (const l of matching) {
-        if (e.to && other(l) !== e.to) continue;
-        current.delete(linkKey(l));
-        if (added.has(linkKey(l))) added.delete(linkKey(l));
-        else removed.set(linkKey(l), l);
-      }
-      continue;
-    }
-    const to = e.to!;
-    let weight: number | null | undefined;
-    for (const l of matching) {
-      if (other(l) === to) continue;
-      weight ??= l.weight;
-      current.delete(linkKey(l));
-      if (added.has(linkKey(l))) added.delete(linkKey(l));
-      else removed.set(linkKey(l), l);
-    }
-    const link: StoredLink =
-      e.direction === 'out'
-        ? {type: e.link, src: target, dst: to, weight: weight ?? null}
-        : {type: e.link, src: to, dst: target, weight: weight ?? null};
-    const key = linkKey(link);
-    if (!current.has(key)) {
-      current.set(key, link);
-      if (removed.has(key)) removed.delete(key);
-      else added.set(key, link);
-    }
+  const patch: Record<string, unknown> = {};
+  const toCoerce: Record<string, unknown> = {};
+  for (const prop of touched) {
+    const v = next[prop];
+    if (v === null || v === undefined) patch[prop] = null;
+    else toCoerce[prop] = v;
   }
-  return {remove: [...removed.values()], add: [...added.values()]};
+  const v = validateProps(type, toCoerce, {partial: true});
+  if (v.errors.length) {
+    effectFailed(
+      `Effect produced invalid values: ${v.errors.map(e => e.prop).join(',')}`,
+    );
+  }
+  for (const prop of touched) {
+    const def = type.propsByName[prop];
+    if (patch[prop] === null && def.required) {
+      effectFailed(`Effect cleared required property ${prop}`);
+    }
+    if (prop in v.props) patch[prop] = v.props[prop];
+  }
+  const outcome = patchProps(
+    {props: target.props, provenance: target.provenance},
+    patch,
+  );
+
+  const before = new Map(
+    input.links.map(l => [linkKey(l.src, l.type, l.dst), l]),
+  );
+  return {
+    after: outcome.state,
+    changed: outcome.changed,
+    removeLinks: [...before].filter(([k]) => !links.has(k)).map(([, l]) => l),
+    addLinks: [...links].filter(([k]) => !before.has(k)).map(([, l]) => l),
+  };
+}
+
+/** Link types an action's effects touch. */
+export function touchedLinkTypes(action: ActionTypeDef): string[] {
+  const out = new Set<string>();
+  for (const e of action.effects) {
+    if (e.kind === 'relink' || e.kind === 'unlink') out.add(e.link);
+  }
+  return [...out];
+}
+
+/** Subset of props named in `keys` (for before/after snapshots). */
+export function pick(
+  props: Record<string, unknown>,
+  keys: string[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (props[k] !== undefined) out[k] = props[k];
+  return out;
 }

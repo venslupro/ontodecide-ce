@@ -1,174 +1,249 @@
 /**
- * @fileoverview Simulation service shared by scenario runs, candidate
- * listing, recommendation jobs and outcome evaluation: loads the model and
- * the impact subgraph, runs the deterministic simulator and scores
- * candidate actions.
+ * @fileoverview Simulation service shared by runScenario and
+ * generateRecommendation: loads the compiled ontology and the impact
+ * subgraph, runs the deterministic simulator and builds candidates
+ * (resolving parameter suggestions through object-graph).
  */
 
-import {
-  AppError,
-  parseRid,
-  type CallCtx,
-  type Clock,
-  type Rid,
-} from '@ontodecide/shared-kernel';
+import {AppError, type CallCtx, type Rid} from '@ontodecide/shared-kernel';
 import type {GraphSlice} from '@ontodecide/object-graph/contract';
-import type {CompiledModel} from '@ontodecide/ontology/contract';
-import {DECISION_LIMITS, type KpiSet, type Perturbation} from '../contract';
+import type {
+  ActionTypeDef,
+  CompiledSchema,
+  ParamSuggestDef,
+} from '@ontodecide/ontology/contract';
 import {
-  actionKey,
-  buildCandidates,
+  DECISION_LIMITS,
+  type CandidateActionInput,
+  type Perturbation,
+} from '../contract';
+import {
   candidateSlots,
-  expectedImpact,
-  primaryKpi,
+  numberCandidates,
+  pickSuggestion,
+  preconditionsMet,
+  prefillParams,
   propagatingLinkTypes,
+  scoreCandidate,
+  selectCandidates,
   simulate,
-  suggestRequests,
+  type ObjectLike,
   type ScoredCandidate,
-  type SimAction,
+  type SelectedCandidates,
   type Simulation,
-  type SuggestResults,
+  type Suggestions,
 } from '../domain';
-import type {GraphPort, ModelPort} from './ports';
+import type {DecisionDeps} from './ports';
 
-/** Model and subgraph a simulation runs on. */
+/** Ontology and subgraph a simulation runs on. */
 export interface SimContext {
-  model: CompiledModel;
+  schema: CompiledSchema;
   slice: GraphSlice;
-  degraded: boolean;
 }
 
-/** Checks count, range and tenant of perturbations. */
-export function validatePerturbations(
-  ctx: CallCtx,
-  perturbations: readonly Perturbation[] | undefined,
-): Perturbation[] {
-  if (
-    !Array.isArray(perturbations) ||
-    perturbations.length === 0 ||
-    perturbations.length > DECISION_LIMITS.perturbationsMax
-  ) {
-    throw new AppError(
-      'PERTURBATION_INVALID',
-      `1–${DECISION_LIMITS.perturbationsMax} perturbations are required`,
-    );
-  }
-  for (const p of perturbations) {
-    const parts = typeof p?.rid === 'string' ? parseRid(p.rid) : null;
-    if (!parts || parts.tenantId !== ctx.tenantId) {
-      throw new AppError(
-        'PERTURBATION_INVALID',
-        `Invalid rid: ${String(p?.rid)}`,
-      );
-    }
-    if (typeof p.property !== 'string' || !p.property) {
-      throw new AppError('PERTURBATION_INVALID', 'property is required');
-    }
-    if (typeof p.change !== 'number' || !(p.change >= -1 && p.change <= 1)) {
-      throw new AppError('PERTURBATION_INVALID', 'change must be within −1..1');
-    }
-  }
-  return perturbations.map(p => ({
-    rid: p.rid,
-    property: p.property,
-    change: p.change,
-  }));
-}
+/** Pool size requested for suggestion lookups without a shared link. */
+const SUGGEST_POOL = 100;
 
 /** Simulation service. */
 export class Simulator {
-  constructor(
-    private readonly graph: GraphPort,
-    private readonly models: ModelPort,
-    private readonly clock: Clock,
-  ) {}
+  constructor(private readonly deps: DecisionDeps) {}
 
-  /** Loads the active model and the ≤ 3-hop impact subgraph of the roots. */
+  /** Loads the compiled ontology and the depth-2 impact subgraph (≤ 300). */
   async load(ctx: CallCtx, roots: readonly Rid[]): Promise<SimContext> {
-    const model = await this.models.getActiveModel(ctx);
-    const slice = await this.graph.impactSubgraph(ctx, {
+    const schema = await this.deps.ontology.getCompiledSchema(ctx);
+    const slice = await this.deps.objects.impactSubgraph(ctx, {
       rids: [...new Set(roots)],
-      linkTypes: propagatingLinkTypes(model.linkTypes),
-      maxHops: DECISION_LIMITS.maxHops,
+      linkTypes: propagatingLinkTypes(schema.linkTypes),
+      depth: DECISION_LIMITS.maxHops,
       limit: DECISION_LIMITS.subgraphNodesMax,
     });
-    if (slice.nodes.length > DECISION_LIMITS.subgraphNodesMax) {
-      throw new AppError(
-        'GRAPH_TOO_LARGE',
-        `Impact subgraph exceeds ${DECISION_LIMITS.subgraphNodesMax} nodes`,
-      );
-    }
+    const nodes = slice.nodes.slice(0, DECISION_LIMITS.subgraphNodesMax);
+    const keep = new Set(nodes.map(n => n.rid));
     return {
-      model,
-      slice: {nodes: slice.nodes, edges: slice.edges},
-      degraded: Boolean(slice.degraded),
+      schema,
+      slice: {
+        nodes,
+        edges: slice.edges.filter(e => keep.has(e.src) && keep.has(e.dst)),
+        truncated: slice.truncated || nodes.length < slice.nodes.length,
+      },
     };
   }
 
-  /** Runs the simulator on a loaded context. */
-  run(
-    sc: SimContext,
-    perturbations: readonly Perturbation[],
-    actions?: readonly SimAction[],
-  ): Simulation {
-    return simulate({
-      model: sc.model,
-      slice: sc.slice,
-      perturbations,
-      actions,
-      degraded: sc.degraded,
-      now: this.clock.now(),
-    });
+  /** NOT_FOUND unless every rid is a node of the subgraph (same workspace). */
+  requireNodes(sc: SimContext, rids: readonly Rid[]): void {
+    const have = new Set(sc.slice.nodes.map(n => n.rid));
+    for (const rid of rids) {
+      if (!have.has(rid))
+        throw new AppError('NOT_FOUND', `Object ${rid} not found`);
+    }
+  }
+
+  /** Baseline and scenario. */
+  simulate(sc: SimContext, perturbations: readonly Perturbation[]): Simulation {
+    return simulate(sc.schema, sc.slice, perturbations);
   }
 
   /**
-   * Builds candidates for the affected objects and the focus, resolves
-   * `suggest` parameters through the object graph and scores each candidate
-   * by re-simulating with its impact hints.
+   * Deterministic candidates: eligible (params complete, preconditions
+   * met) action/target pairs, scored and cut to the best three (c1..c3).
    */
-  async candidates(
+  async deterministic(
     ctx: CallCtx,
     sc: SimContext,
-    sim: Simulation,
     perturbations: readonly Perturbation[],
-    focus: Rid,
-    locale: string,
-  ): Promise<{
-    candidates: ScoredCandidate[];
-    withActions: Record<string, KpiSet>;
-  }> {
-    const slots = candidateSlots(sc.model, sc.slice, sim.impact, focus);
-    const suggestions: SuggestResults = {};
-    for (const req of suggestRequests(slots, sc.slice, sim.impact)) {
-      const exclude = new Set<string>(req.exclude);
-      const page = await this.graph.evaluateObjectSet(
+    sim: Simulation,
+    focus?: Rid,
+  ): Promise<SelectedCandidates> {
+    const slots = candidateSlots(
+      sc.schema.actionTypes,
+      sc.slice.nodes,
+      sim.impact,
+      focus,
+    );
+    const exclude = this.excluded(sc, perturbations, sim);
+    const lookups = new Map<string, Promise<ObjectLike[]>>();
+    const scored: ScoredCandidate[] = [];
+    for (const slot of slots) {
+      const suggestions = await this.suggestions(
         ctx,
-        {
-          objectType: req.suggest.objectType,
-          ...(req.suggest.filter ? {filter: req.suggest.filter} : {}),
-          orderBy: [req.suggest.orderBy],
-        },
-        {limit: Math.min(200, exclude.size + 10)},
+        slot.def,
+        slot.target,
+        exclude,
+        lookups,
       );
-      suggestions[req.key] = page.items
-        .map(o => o.rid)
-        .filter(r => !exclude.has(r));
+      const {params, missing} = prefillParams(slot.def, suggestions);
+      if (missing.length) continue;
+      if (!preconditionsMet(slot.def, slot.target.props, params)) continue;
+      scored.push(
+        scoreCandidate(sc.schema, sc.slice, perturbations, sim, slot, params),
+      );
     }
-    const cands = buildCandidates(slots, suggestions, locale);
-    const scored = this.run(sc, perturbations, cands);
-    const withActions = scored.result.withActions ?? {};
-    const primary = primaryKpi(sc.model);
-    return {
-      candidates: cands.map(c => ({
-        ...c,
-        expectedImpact: expectedImpact(
-          primary,
-          scored.result.baseline,
-          scored.result.scenario,
-          withActions[actionKey(c)] ?? scored.result.scenario,
+    return selectCandidates(scored);
+  }
+
+  /**
+   * Candidates requested in a scenario (≤ 10, ids in input order). Missing
+   * parameters are prefilled by the same rules; given ones are kept.
+   */
+  async requested(
+    ctx: CallCtx,
+    sc: SimContext,
+    perturbations: readonly Perturbation[],
+    sim: Simulation,
+    inputs: readonly CandidateActionInput[],
+  ): Promise<SelectedCandidates> {
+    const exclude = this.excluded(sc, perturbations, sim);
+    const lookups = new Map<string, Promise<ObjectLike[]>>();
+    const scored: ScoredCandidate[] = [];
+    for (const input of inputs) {
+      const def = sc.schema.actionTypes[input.actionType];
+      if (!def) {
+        throw new AppError(
+          'VALIDATION_FAILED',
+          `Unknown action type ${input.actionType}`,
+        );
+      }
+      const target = sc.slice.nodes.find(n => n.rid === input.target);
+      if (!target) {
+        throw new AppError('NOT_FOUND', `Object ${input.target} not found`);
+      }
+      if (target.type !== def.targetType) {
+        throw new AppError(
+          'VALIDATION_FAILED',
+          `${input.actionType} does not apply to ${target.type}`,
+        );
+      }
+      const suggestions = await this.suggestions(
+        ctx,
+        def,
+        target,
+        exclude,
+        lookups,
+      );
+      const {params} = prefillParams(def, suggestions);
+      Object.assign(params, input.params ?? {});
+      scored.push(
+        scoreCandidate(
+          sc.schema,
+          sc.slice,
+          perturbations,
+          sim,
+          {def, target},
+          params,
         ),
-      })),
-      withActions,
-    };
+      );
+    }
+    return numberCandidates(scored);
+  }
+
+  /** Perturbation sources and negatively impacted objects. */
+  private excluded(
+    sc: SimContext,
+    perturbations: readonly Perturbation[],
+    sim: Simulation,
+  ): Set<string> {
+    const out = new Set<string>(perturbations.map(p => p.rid));
+    for (const n of sc.slice.nodes) {
+      if ((sim.impact.delta.get(n.rid) ?? 0) < 0) out.add(n.rid);
+    }
+    return out;
+  }
+
+  private async suggestions(
+    ctx: CallCtx,
+    def: ActionTypeDef,
+    target: ObjectLike,
+    exclude: ReadonlySet<string>,
+    lookups: Map<string, Promise<ObjectLike[]>>,
+  ): Promise<Suggestions> {
+    const out: Suggestions = {};
+    for (const p of def.parameters) {
+      if (!p.suggest) continue;
+      const pool = await this.pool(ctx, p.suggest, target.rid, lookups);
+      out[p.apiName] = pickSuggestion(
+        p.suggest,
+        pool,
+        new Set([...exclude, target.rid]),
+      );
+    }
+    return out;
+  }
+
+  /** Objects a suggestion may pick from (memoized per call). */
+  private pool(
+    ctx: CallCtx,
+    s: ParamSuggestDef,
+    target: Rid,
+    lookups: Map<string, Promise<ObjectLike[]>>,
+  ): Promise<ObjectLike[]> {
+    const shared = s.sharesLinkWithTarget;
+    const key = shared
+      ? `link|${target}|${shared.link}|${shared.direction}`
+      : `type|${s.objectType}|${JSON.stringify(s.filter ?? null)}|${JSON.stringify(s.orderBy)}`;
+    let p = lookups.get(key);
+    if (!p) {
+      p = shared
+        ? this.deps.objects
+            .getLinks(ctx, target, {
+              depth: 1,
+              linkTypes: [shared.link],
+              direction: shared.direction,
+              limit: DECISION_LIMITS.subgraphNodesMax,
+            })
+            .then(slice => slice.nodes)
+        : this.deps.objects
+            .listObjects(
+              ctx,
+              {
+                type: s.objectType,
+                ...(s.filter ? {filter: s.filter} : {}),
+                orderBy: s.orderBy,
+              },
+              {limit: SUGGEST_POOL},
+            )
+            .then(page => page.items);
+      lookups.set(key, p);
+    }
+    return p;
   }
 }

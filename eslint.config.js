@@ -39,6 +39,33 @@ export default [
     },
   },
   {
+    // 前端详细设计 6.3.1: the SPA reaches the backend only through
+    // shared/api (same-origin /api/v1) and shared/ws.
+    files: ['apps/web/src/**/*.{ts,tsx}'],
+    ignores: [
+      'apps/web/src/shared/api/**',
+      'apps/web/src/shared/ws/**',
+      'apps/web/src/test/**',
+      'apps/web/src/**/*_test.{ts,tsx}',
+    ],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {name: 'fetch', message: 'Use shared/api (same-origin /api/v1 only).'},
+        {name: 'WebSocket', message: 'Use shared/ws.'},
+        {name: 'EventSource', message: 'Use shared/ws.'},
+      ],
+      'no-restricted-properties': [
+        'error',
+        {object: 'window', property: 'fetch'},
+        {object: 'globalThis', property: 'fetch'},
+        {object: 'window', property: 'WebSocket'},
+        {object: 'globalThis', property: 'WebSocket'},
+        {object: 'navigator', property: 'sendBeacon'},
+      ],
+    },
+  },
+  {
     files: ['scripts/**/*.mjs'],
     languageOptions: {
       sourceType: 'module',

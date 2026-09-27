@@ -1,132 +1,100 @@
 /**
- * @fileoverview Object table: schema-driven columns (order, localized
- * headers), markings lock, sortable only on indexed properties, renderer
- * cells and row activation.
+ * @fileoverview Ontology-driven object table: columns from the ontology,
+ * renderer cells, sortable indexed headers, keyboard open, and
+ * virtualization above 100 rows.
  */
 
-import {screen, within} from '@testing-library/react';
+import type {ObjectDto} from '@ontodecide/object-graph/contract';
+import {render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {describe, expect, it, vi} from 'vitest';
 import {toUiModel} from '../../../entities/schema/model';
-import {compiledModel, suppliers} from '../../../test/fixtures';
-import {renderWithProviders} from '../../../test/render';
-import {resolveColumns} from '../model';
+import {makeObjects, ontologyDto, rid} from '../../../test/fixtures/business';
 import {ObjectTable} from './object_table';
 
-// A caller without the PII marking: `contactEmail` is hidden.
-const supplier = toUiModel(compiledModel, 'zh-CN', []).byName.Supplier;
+const type = toUiModel(ontologyDto, 'zh-CN').byName.Supplier;
+const suppliers = makeObjects().filter(o => o.type === 'Supplier');
 
-function renderTable(
-  overrides: Partial<Parameters<typeof ObjectTable>[0]> = {},
-) {
-  const onSortChange = vi.fn();
-  const onOpen = vi.fn();
-  renderWithProviders(
-    <ObjectTable
-      type={supplier}
-      rows={suppliers}
-      columns={resolveColumns(supplier, undefined)}
-      label="供应商列表"
-      onSortChange={onSortChange}
-      onOpen={onOpen}
-      {...overrides}
-    />,
-  );
-  return {onSortChange, onOpen};
+function many(n: number): ObjectDto[] {
+  return Array.from({length: n}, (_, i) => ({
+    ...suppliers[0],
+    rid: rid('Supplier', 1000 + i),
+    primaryKey: `S-${i}`,
+    title: `Supplier #${i}`,
+    props: {
+      ...suppliers[0].props,
+      supplierId: `S-${i}`,
+      name: `Supplier #${i}`,
+    },
+  }));
 }
 
 describe('ObjectTable', () => {
-  it('generates localized columns from the schema in schema order', async () => {
-    renderTable();
-    const table = await screen.findByRole('table', {name: '供应商列表'});
-    const headers = within(table)
-      .getAllByRole('columnheader')
-      .map(h => h.textContent);
-    expect(headers).toEqual([
-      '名称',
-      '供应商编号',
-      '国家',
-      '风险分',
-      '产能(units/day)',
-      '准时率',
-      '状态',
-      '联系邮箱',
-    ]);
+  it('renders ontology columns and typed cells', () => {
+    render(<ObjectTable type={type} rows={suppliers} onOpen={() => {}} />);
+    const headers = screen.getAllByRole('columnheader').map(h => h.textContent);
+    expect(headers.slice(0, 3)).toEqual(['名称', '供应商编号', '国家']);
+    expect(screen.getByText('苏州精密零件有限公司')).toBeInTheDocument();
+    // enum rendered as a badge, integer with unit
+    expect(screen.getAllByText('watch')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('4,000').length).toBeGreaterThan(0);
   });
 
-  it('shows a lock on properties hidden by markings and hides their values', async () => {
-    renderTable();
-    await screen.findByRole('table');
-    const header = screen
-      .getAllByRole('columnheader')
-      .find(h => h.textContent?.includes('联系邮箱'))!;
-    expect(
-      within(header).getByRole('img', {
-        name: '无访问权限（需要对应 Markings）',
-      }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText('ops@szpp.example')).not.toBeInTheDocument();
-  });
-
-  it('makes only indexed properties sortable', async () => {
-    const {onSortChange} = renderTable({sort: {prop: 'capacity', dir: 'desc'}});
-    await screen.findByRole('table');
-    const header = (name: string) =>
-      screen
-        .getAllByRole('columnheader')
-        .find(h => h.textContent?.startsWith(name))!;
-    // Indexed: name, country, riskScore, capacity, status.
-    expect(
-      within(header('风险分')).getByRole('button', {name: '按风险分排序'}),
-    ).toBeInTheDocument();
-    expect(header('风险分')).toHaveAttribute('aria-sort', 'none');
-    expect(header('产能')).toHaveAttribute('aria-sort', 'descending');
-    // Not indexed: supplierId, onTimeRate; hidden: contactEmail.
-    expect(
-      within(header('准时率')).queryByRole('button'),
-    ).not.toBeInTheDocument();
-    expect(
-      within(header('供应商编号')).queryByRole('button'),
-    ).not.toBeInTheDocument();
-    expect(
-      within(header('联系邮箱')).queryByRole('button'),
-    ).not.toBeInTheDocument();
-    expect(header('准时率')).not.toHaveAttribute('aria-sort');
-
-    await userEvent
-      .setup()
-      .click(screen.getByRole('button', {name: '按风险分排序'}));
-    expect(onSortChange).toHaveBeenCalledWith({prop: 'riskScore', dir: 'asc'});
-  });
-
-  it('renders cells through the renderer registry', async () => {
-    renderTable();
-    await screen.findByRole('table');
-    const row = screen
-      .getAllByRole('row')
-      .find(r => r.getAttribute('data-rid') === suppliers[0].rid)!;
-    const cells = within(row).getAllByRole('cell');
-    // Title column links to the Object View.
-    expect(
-      within(cells[0]).getByRole('link', {name: 'Shenzhen Precision Parts'}),
-    ).toHaveAttribute(
-      'href',
-      `/objects/rid/${encodeURIComponent(suppliers[0].rid)}`,
+  it('sorts only indexed properties and reflects aria-sort', async () => {
+    const onSort = vi.fn();
+    render(
+      <ObjectTable
+        type={type}
+        rows={suppliers}
+        orderBy={{prop: 'riskScore', dir: 'desc'}}
+        onSort={onSort}
+        onOpen={() => {}}
+      />,
     );
-    // Enum → badge; number with unit.
-    expect(within(cells[6]).getByText('active')).toHaveClass('rounded-full');
-    expect(cells[4]).toHaveTextContent('1,200units/day');
-    expect(within(cells[4]).getByText('units/day')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', {name: '按 风险分 排序'}));
+    expect(onSort).toHaveBeenCalledWith('riskScore');
+    const risk = screen
+      .getAllByRole('columnheader')
+      .find(h => h.textContent?.includes('风险分'))!;
+    expect(risk).toHaveAttribute('aria-sort', 'descending');
+    // country is not indexed → no sort button
+    expect(screen.queryByRole('button', {name: '按 国家 排序'})).toBeNull();
   });
 
-  it('opens a row with Enter', async () => {
-    const {onOpen} = renderTable();
-    await screen.findByRole('table');
-    const row = screen
-      .getAllByRole('row')
-      .find(r => r.getAttribute('data-rid') === suppliers[1].rid)!;
+  it('opens a row with click and Enter', async () => {
+    const onOpen = vi.fn();
+    render(<ObjectTable type={type} rows={suppliers} onOpen={onOpen} />);
+    const row = screen.getByText('宁波恒达机电').closest('tr')!;
+    await userEvent.click(row);
     row.focus();
-    await userEvent.setup().keyboard('{Enter}');
-    expect(onOpen).toHaveBeenCalledWith(suppliers[1]);
+    await userEvent.keyboard('{Enter}');
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    expect(onOpen.mock.calls[0][0].primaryKey).toBe('S-022');
+  });
+
+  it('renders all rows up to 100 and virtualizes above', () => {
+    // jsdom has no layout: give the scroll container a viewport.
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(640);
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1200);
+    const {container, unmount} = render(
+      <ObjectTable type={type} rows={many(100)} onOpen={() => {}} />,
+    );
+    expect(container.querySelector('[data-virtualized]')).toBeNull();
+    expect(
+      within(container.querySelector('tbody')!).getAllByRole('row'),
+    ).toHaveLength(100);
+    unmount();
+    const v = render(
+      <ObjectTable type={type} rows={many(300)} onOpen={() => {}} />,
+    );
+    expect(v.container.querySelector('[data-virtualized]')).not.toBeNull();
+    const rendered = v.container.querySelectorAll('tbody tr[tabindex]').length;
+    expect(rendered).toBeGreaterThan(0);
+    expect(rendered).toBeLessThan(100);
+    expect(v.container.querySelector('table')).toHaveAttribute(
+      'aria-rowcount',
+      '301',
+    );
+    vi.restoreAllMocks();
   });
 });

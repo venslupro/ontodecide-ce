@@ -1,17 +1,17 @@
 /**
- * @fileoverview The subset of Durable Object `SqlStorage` used by the
- * cores; structurally satisfied by `ctx.storage.sql` and by the Node
- * `MemorySqlStorage` fake.
+ * @fileoverview Minimal structural type of Durable Object SQL storage
+ * (`ctx.storage.sql`), so the store runs over the real runtime and over
+ * `MemorySqlStorage` in Node tests.
  */
 
-/** Result cursor. */
+/** Cursor returned by {@link SqlStorageLike.exec}. */
 export interface SqlCursorLike<T> extends Iterable<T> {
   toArray(): T[];
   one(): T;
   readonly rowsWritten: number;
 }
 
-/** Durable Object SQL storage. */
+/** The subset of SqlStorage used by the SituationRoom. */
 export interface SqlStorageLike {
   exec<T = Record<string, unknown>>(
     query: string,

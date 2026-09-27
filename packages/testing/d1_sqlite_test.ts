@@ -1,12 +1,26 @@
+/**
+ * @fileoverview Tests of the platform fakes: D1 over node:sqlite, QueueBus, rpcBinding, Workers AI, rate limiter.
+ */
+
 import {describe, expect, it} from 'vitest';
-import {createTestD1} from './d1_sqlite';
+import {SqliteD1, createTestD1} from './d1_sqlite';
+import {FakeRateLimiter} from './rate_limiter';
+import {FakeWorkersAi} from './workers_ai';
 import {QueueBus} from './memory_queue';
 import {rpcBinding} from './rpc_binding';
 import {AppError} from '@ontodecide/shared-kernel';
 
+function scratch(): D1Database {
+  const db = new SqliteD1();
+  db.raw.exec(
+    'CREATE TABLE idn_tenant (id TEXT PRIMARY KEY, name TEXT, created_at INTEGER)',
+  );
+  return db.asD1();
+}
+
 describe('SqliteD1', () => {
   it('applies migrations and supports prepare/bind/first/all/batch', async () => {
-    const db = createTestD1('identity');
+    const db = scratch();
     await db.batch([
       db
         .prepare(
@@ -36,7 +50,7 @@ describe('SqliteD1', () => {
   });
 
   it('rolls back a failing batch', async () => {
-    const db = createTestD1('identity');
+    const db = scratch();
     const ins =
       'INSERT INTO idn_tenant (id, name, created_at) VALUES (?, ?, ?)';
     await expect(
@@ -52,12 +66,11 @@ describe('SqliteD1', () => {
 
   it('applies every migration directory', () => {
     for (const d of [
-      'identity',
-      'ontology',
-      'integration',
-      'object',
-      'situation',
-      'decision',
+      'identity-access',
+      'ontology-manager',
+      'data-integration',
+      'object-graph',
+      'decision-engine',
     ]) {
       expect(() => createTestD1(d)).not.toThrow();
     }
@@ -88,13 +101,36 @@ describe('rpcBinding', () => {
   it('strips error properties but AppError survives via the message', async () => {
     const stub = rpcBinding({
       fail: async () => {
-        throw new AppError('OBJECT_NOT_FOUND', 'nope');
+        throw new AppError('NOT_FOUND', 'nope');
       },
     });
     const err = await stub.fail().catch(e => e);
     expect(err).not.toBeInstanceOf(AppError);
     const recovered = AppError.from(err);
-    expect(recovered.code).toBe('OBJECT_NOT_FOUND');
+    expect(recovered.code).toBe('NOT_FOUND');
     expect(recovered.status).toBe(404);
+  });
+});
+
+describe('FakeWorkersAi and FakeRateLimiter', () => {
+  it('scripts model responses and simulates outages', async () => {
+    const ai = new FakeWorkersAi().script(
+      'm',
+      {response: 'a'},
+      {response: 'b'},
+    );
+    expect(await ai.run('m', {})).toEqual({response: 'a'});
+    expect(await ai.run('m', {})).toEqual({response: 'b'});
+    expect(await ai.run('m', {})).toEqual({response: 'b'});
+    await expect(ai.run('other', {})).rejects.toThrow('unavailable');
+    expect(ai.calls).toHaveLength(4);
+  });
+
+  it('limits per key', async () => {
+    const rl = new FakeRateLimiter(2).asRateLimit();
+    expect((await rl.limit({key: 'k'})).success).toBe(true);
+    expect((await rl.limit({key: 'k'})).success).toBe(true);
+    expect((await rl.limit({key: 'k'})).success).toBe(false);
+    expect((await rl.limit({key: 'j'})).success).toBe(true);
   });
 });

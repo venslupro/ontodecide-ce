@@ -1,0 +1,218 @@
+{
+  "list": {
+    "title": "Data import",
+    "description": "CSV / XLSX / JSON files are parsed in your browser and written to the object graph in batches; the raw file is never uploaded.",
+    "new": "New import",
+    "empty": "No imports yet",
+    "emptyHint": "Import a supplier or material file to start building your object graph.",
+    "col": {
+      "file": "File",
+      "target": "Target type",
+      "status": "Status",
+      "counts": "Upserted / skipped / rejected",
+      "rows": "Rows",
+      "created": "Created"
+    },
+    "sample": "Sample scenario",
+    "openAria": "Open import job {name}",
+    "open": "View"
+  },
+  "status": {
+    "RECEIVING": "Receiving",
+    "DONE": "Done",
+    "FAILED": "Failed"
+  },
+  "wizard": {
+    "breadcrumb": "Data import / New",
+    "title": "New import",
+    "fileMeta": "{name} · {rows, plural, one {# row} other {# rows}}",
+    "stepsLabel": "Import steps",
+    "steps": {
+      "source": "Source",
+      "upload": "Upload file",
+      "mapping": "Field mapping",
+      "validate": "Validate",
+      "run": "Preview & run"
+    },
+    "back": "Back",
+    "nextTo": "Next: {step}",
+    "typeLoading": "Loading ontology…"
+  },
+  "source": {
+    "title": "Choose a source",
+    "onlyFile": "Community Edition supports file import only: files are parsed in the browser and never uploaded.",
+    "formatLabel": "File format",
+    "formats": {
+      "csv": {
+        "title": "CSV",
+        "desc": "Comma-separated, header row (UTF-8)"
+      },
+      "xlsx": {
+        "title": "Excel (XLSX)",
+        "desc": "First sheet, cell values only; no formulas or macros run"
+      },
+      "json": {
+        "title": "JSON",
+        "desc": "An array of objects, or one under items / data / records / rows"
+      }
+    },
+    "target": "Target object type",
+    "targetPlaceholder": "Choose an object type",
+    "targetHint": "Each row becomes one object of this type (merged by primary key)."
+  },
+  "upload": {
+    "title": "Upload file",
+    "drop": "Drop a file here, or",
+    "pick": "choose a file",
+    "inputLabel": "Import file",
+    "limit": "CSV / XLSX / JSON, ≤ {mb} MB",
+    "notice": "The file is parsed in your browser only — the raw file is never uploaded; only mapped rows are submitted.",
+    "parsing": "Parsing in your browser…",
+    "parsed": "Parsed {rows, plural, one {# row} other {# rows}} · {cols, plural, one {# column} other {# columns}}",
+    "truncated": "The file has more than {max, number} rows; only the first {max, number} were read.",
+    "sample": "Sample (first {count} rows)",
+    "formatSwitched": "Detected {format} from the file extension."
+  },
+  "parse": {
+    "errors": {
+      "FILE_TOO_LARGE": "The file exceeds the {mb} MB limit.",
+      "UNSUPPORTED_FORMAT": "Unsupported format — use CSV, XLSX or JSON.",
+      "EMPTY_FILE": "The file has no data rows.",
+      "INVALID_JSON": "Invalid JSON: expected an array of objects (or one under items / data / records / rows).",
+      "NO_COLUMNS": "No header columns found.",
+      "PARSE_FAILED": "The file could not be parsed."
+    }
+  },
+  "mapping": {
+    "title": "Field mapping → target type",
+    "col": {
+      "source": "Source field",
+      "sample": "Sample",
+      "target": "Target property",
+      "transform": "Transform",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "targetNone": "Do not import",
+    "pk": "{name} (primary key)",
+    "propGroup": "Properties",
+    "linkGroup": "Links",
+    "linkOption": "Link {link} → {to}",
+    "split": "Separator",
+    "splitAria": "Separator of {field}",
+    "targetAria": "Target property of {field}",
+    "transformAria": "Transform chain of {field}",
+    "chainError": "Invalid transform: {step}",
+    "status": {
+      "confirmed": "Confirmed",
+      "deterministic": "Deterministic match",
+      "ai": "AI suggestion",
+      "pending": "To review"
+    },
+    "matchedBy": {
+      "exact": "Same name",
+      "synonym": "Synonym",
+      "similarity": "Similarity",
+      "ai": "AI",
+      "manual": "Manual"
+    },
+    "confirm": "Confirm",
+    "confirmAria": "Confirm mapping of {field}",
+    "dismiss": "Dismiss",
+    "dismissAria": "Dismiss the AI suggestion for {field}",
+    "confirmAll": "Confirm all AI suggestions ({count})",
+    "aiDraft": "AI mapping draft",
+    "aiNote": "Deterministic matching (same name, synonyms, similarity) runs first; only unmatched fields go to the AI, and every AI suggestion must be confirmed.",
+    "aiRules": "Today's AI mapping drafts are used up: only deterministic matching was applied; the AI was not used.",
+    "aiApplied": "AI draft applied: {count, plural, =0 {no new AI suggestions} one {# AI suggestion needs confirmation} other {# AI suggestions need confirmation}}.",
+    "noRowsLeft": "No import rows left today; an import job cannot be created.",
+    "problems": {
+      "PRIMARY_KEY_UNMAPPED": "Map a source field to the primary key {prop}.",
+      "REQUIRED_UNMAPPED": "Required property {prop} is not mapped.",
+      "DUPLICATE_TARGET": "Property {prop} is mapped more than once.",
+      "CHAIN_INVALID": "The transform chain of {source} is invalid.",
+      "AI_UNCONFIRMED": "{count, plural, one {# AI suggestion} other {# AI suggestions}} still to confirm."
+    }
+  },
+  "validate": {
+    "title": "Validate",
+    "checks": "Each row is checked for required values, types, primary-key conflicts and limits.",
+    "summary": {
+      "passed": "{count} passed",
+      "rejected": "{count} rejected",
+      "overLimit": "{count} over limit"
+    },
+    "col": {
+      "row": "Row",
+      "column": "Column",
+      "reason": "Reason"
+    },
+    "allPassed": "All rows passed validation.",
+    "more": "{count} more rows not listed.",
+    "overLimitRows": "Rows {from}–{to}",
+    "overLimitReason": {
+      "importRows": "Over limit: {left} import rows left today",
+      "objects": "Over limit: room for {left} more objects",
+      "batchMax": "Over limit: at most {left} rows per day"
+    },
+    "backToMapping": "Back to mapping",
+    "rejectedNote": "Rejected rows are still submitted and count toward today's import rows; the server reports the same reasons."
+  },
+  "codes": {
+    "PRIMARY_KEY_MISSING": "Primary key empty",
+    "PRIMARY_KEY_CONFLICT": "Duplicate primary key",
+    "REQUIRED": "Required value missing",
+    "TYPE": "Wrong type",
+    "TRANSFORM_FAILED": "Transform failed",
+    "OVER_LIMIT": "Over limit",
+    "LIMIT_EXCEEDED": "Object or link limit reached",
+    "unknown": "Rejected ({code})"
+  },
+  "run": {
+    "preview": "Preview",
+    "previewHint": "First {count} rows after the mapping",
+    "plan": "Upload plan",
+    "planLine": "Parsed in browser → {batches, plural, one {# batch} other {# batches}} × {rows} rows (raw file not uploaded)",
+    "eta": "About {seconds} s",
+    "remaining": "Import rows left today: {left} / {limit}",
+    "overLimit": "{count, plural, one {# row is} other {# rows are}} over the limit, marked and not submitted.",
+    "nothing": "No import quota left today; nothing can be submitted.",
+    "start": "Run import",
+    "progressLabel": "Upload progress",
+    "progress": "{done} / {total} batches · {rows} rows sent",
+    "retrying": "Retry {attempt}…",
+    "cancel": "Cancel",
+    "aborted": "Upload cancelled; you can resume.",
+    "resume": "Resume upload",
+    "failed": "Upload stopped: {message}",
+    "rowTooLarge": "Row {row} exceeds the 512 KB request limit."
+  },
+  "job": {
+    "title": "Import job",
+    "breadcrumb": "Data import / {id}",
+    "back": "Back to imports",
+    "notFound": "Import job not found.",
+    "totals": {
+      "totalRows": "Planned rows",
+      "received": "Received",
+      "upserted": "Upserted",
+      "skipped": "Skipped",
+      "rejected": "Rejected"
+    },
+    "totalsLabel": "Import totals",
+    "target": "Target type",
+    "created": "Created {at}",
+    "rejects": "Rejections",
+    "rejectsHint": "Row, column and error type only — never cell values (first 200).",
+    "noRejects": "No rejected rows.",
+    "col": {
+      "row": "Row",
+      "column": "Column",
+      "code": "Error",
+      "detail": "Detail"
+    },
+    "viewObjects": "View {type} objects",
+    "mapping": "Mapping",
+    "mappingLine": "{from} → {to}"
+  }
+}
