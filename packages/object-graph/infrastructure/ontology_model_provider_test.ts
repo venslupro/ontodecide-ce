@@ -1,42 +1,40 @@
-import {describe, expect, it} from 'vitest';
-import type {CompiledModel} from '@ontodecide/ontology/contract';
-import {FixedClock} from '@ontodecide/shared-kernel';
-import {testCtx} from '@ontodecide/testing';
-import {OntologyModelProvider} from './ontology_model_provider';
+/**
+ * @fileoverview Tests of the per-request schema memo over OntologyRpc.
+ */
 
-describe('OntologyModelProvider', () => {
-  it('caches by version for writes and by TTL for reads', async () => {
-    let version = '1.0.0';
+import {describe, expect, it} from 'vitest';
+import type {CompiledSchema} from '@ontodecide/ontology/contract';
+import {testCtx} from '@ontodecide/testing';
+import {OntologySchemaProvider} from './ontology_model_provider';
+
+describe('OntologySchemaProvider', () => {
+  it('asks ontology-manager once per call context', async () => {
     let calls = 0;
-    const clock = new FixedClock();
-    const provider = new OntologyModelProvider(
-      {
-        getActiveModel: async () => {
-          calls++;
-          return {version} as CompiledModel;
-        },
+    const provider = new OntologySchemaProvider({
+      getCompiledSchema: async () => {
+        calls++;
+        return {etag: calls} as unknown as CompiledSchema;
       },
-      clock,
-    );
+    });
     const ctx = testCtx();
     await provider.get(ctx);
     await provider.get(ctx);
     expect(calls).toBe(1);
-    await provider.get(ctx, {expectedVersion: '1.0.0'});
-    expect(calls).toBe(1);
-    version = '1.1.0';
-    expect((await provider.get(ctx, {expectedVersion: '1.1.0'})).version).toBe(
-      '1.1.0',
-    );
+    await provider.get(testCtx());
     expect(calls).toBe(2);
-    // An unmatched producer version is fetched once, then accepted.
-    await provider.get(ctx, {expectedVersion: 'schema-9'});
-    await provider.get(ctx, {expectedVersion: 'schema-9'});
-    expect(calls).toBe(3);
-    clock.advance(61_000);
-    await provider.get(ctx);
-    expect(calls).toBe(4);
-    await provider.get(ctx, {refresh: true});
-    expect(calls).toBe(5);
+  });
+
+  it('does not cache failures', async () => {
+    let fail = true;
+    const provider = new OntologySchemaProvider({
+      getCompiledSchema: async () => {
+        if (fail) throw new Error('down');
+        return {} as CompiledSchema;
+      },
+    });
+    const ctx = testCtx();
+    await expect(provider.get(ctx)).rejects.toThrow('down');
+    fail = false;
+    await expect(provider.get(ctx)).resolves.toEqual({});
   });
 });

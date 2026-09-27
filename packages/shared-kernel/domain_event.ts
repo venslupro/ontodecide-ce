@@ -1,53 +1,44 @@
 /**
- * @fileoverview Domain event envelope (used for outbox rows and queue
- * messages) and attribute provenance.
+ * @fileoverview The `domain-events` message (详细设计 6.4.2) and attribute
+ * provenance.
+ *
+ * object-graph is the only producer: one committed write produces one outbox
+ * row and one aggregated message (≤ 64 KB, split by rid when larger) that
+ * carries only rids and changed property names. situation-awareness is the
+ * only consumer and reads current values by rid.
  */
 
-import {ulid} from './ids';
+import type {Rid} from './ids';
 
-/** Envelope shared by outbox rows and queue messages. */
-export interface DomainEvent<T = unknown> {
-  /** ULID; subscribers use it for idempotency. */
-  eventId: string;
-  /** Event type, e.g. `ObjectsUpserted`. */
+/** Kinds of domain events. */
+export type DomainEventKind =
+  'ObjectsUpserted' | 'ObjectPatched' | 'ActionExecuted';
+
+/** One changed object. */
+export interface ObjectChangeRef {
+  rid: Rid;
   type: string;
-  tenantId: string;
-  occurredAt: string;
-  correlationId: string;
-  /** Ontology version the payload was produced against. */
-  schemaVersion: string;
-  payload: T;
+  changed: string[];
 }
 
-/** Creates a new event envelope. */
-export function makeEvent<T>(
-  type: string,
-  tenantId: string,
-  payload: T,
-  opts: {correlationId?: string; schemaVersion?: string; now?: Date} = {},
-): DomainEvent<T> {
-  const now = opts.now ?? new Date();
-  return {
-    eventId: ulid(now.getTime()),
-    type,
-    tenantId,
-    occurredAt: now.toISOString(),
-    correlationId: opts.correlationId ?? 'none',
-    schemaVersion: opts.schemaVersion ?? '0',
-    payload,
-  };
+/** Message on the `domain-events` queue. */
+export interface DomainEventMsg {
+  /** Outbox row id; consumers deduplicate on it. */
+  eventId: string;
+  tid: string;
+  /** Unix milliseconds. */
+  occurredAt: number;
+  kind: DomainEventKind;
+  jobId?: string;
+  actionLogId?: string;
+  recommendationId?: string;
+  changes: ObjectChangeRef[];
 }
 
-/** Where an attribute value came from. */
+/** Where an attribute value came from: the import job and row. */
 export interface Provenance {
-  sourceId: string;
-  datasetTxn: string;
-  recordRef: string;
-  ingestedAt: string;
-  /** 0–1. */
-  confidence: number;
-  /** Source-supplied timestamp, used by latest-wins conflict resolution. */
-  sourceTs?: string;
-  /** Source priority, used by source-priority conflict resolution. */
-  priority?: number;
+  jobId: string;
+  row: number;
+  /** Unix milliseconds. */
+  at: number;
 }

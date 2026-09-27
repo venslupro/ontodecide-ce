@@ -1,7 +1,10 @@
 /**
- * @fileoverview Vite build for the OntoDecide CE cockpit SPA (Cloudflare
- * Pages project `ontodecide-ce`). Pages are lazily imported per route, so
- * each route becomes its own chunk; heavy libraries get stable chunks.
+ * @fileoverview Vite build for the OntoDecide CE SPA (Cloudflare Pages
+ * project `ontodecide-ce`). Pages are lazily imported per route, so each
+ * route becomes its own chunk; heavy libraries get stable chunks. In
+ * development `/api` (REST and the WebSocket stream) is proxied to the
+ * local api-gateway (`wrangler dev`, 127.0.0.1:8787) so the browser stays
+ * same-origin exactly like production.
  */
 
 import {readFileSync} from 'node:fs';
@@ -25,7 +28,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': {target: 'http://127.0.0.1:8787', changeOrigin: true, ws: true},
+      // changeOrigin stays false: the gateway checks Origin on writes, the
+      // refresh endpoint and the WebSocket upgrade against the page origin.
+      '/api': {target: 'http://127.0.0.1:8787', changeOrigin: false, ws: true},
     },
   },
   worker: {format: 'es'},

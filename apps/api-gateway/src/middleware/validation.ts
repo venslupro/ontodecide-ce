@@ -1,81 +1,57 @@
 /**
- * @fileoverview Reads the body (with a size cap) and validates body and
- * query parameters against the route's zod schemas.
+ * @fileoverview Input validation step: path parameters, query and JSON
+ * body against the contracts' zod schemas (400 VALIDATION_FAILED with
+ * field errors). Bodies must be `application/json` or
+ * `application/merge-patch+json` (415 VALIDATION_FAILED otherwise).
  */
 
 import {AppError, parseOrThrow} from '@ontodecide/shared-kernel';
-import {type Middleware, routeOf} from './chain';
+import type {GatewayState, Middleware} from './chain';
 
-/** Default body cap. */
-export const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
+const JSON_TYPES = ['application/json', 'application/merge-patch+json'];
 
-/** Reads the request body as text, enforcing a byte limit. */
-export async function readBody(
-  req: Request,
-  maxBytes: number,
-): Promise<string> {
-  if (!req.body) return '';
-  const declared = Number(req.headers.get('content-length') ?? NaN);
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new AppError('BATCH_TOO_LARGE', `Body exceeds ${maxBytes} bytes`);
+function parseBody(s: GatewayState): unknown {
+  if (!s.rawBody.trim()) return {};
+  const type = (s.request.headers.get('content-type') ?? '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  if (!JSON_TYPES.includes(type)) {
+    throw new AppError('VALIDATION_FAILED', 'Unsupported content type', {
+      status: 415,
+    });
   }
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const {done, value} = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      throw new AppError('BATCH_TOO_LARGE', `Body exceeds ${maxBytes} bytes`);
-    }
-    chunks.push(value);
+  try {
+    return JSON.parse(s.rawBody);
+  } catch {
+    throw new AppError('VALIDATION_FAILED', 'Malformed JSON body', {
+      extras: {errors: [{path: '', message: 'Malformed JSON'}]},
+    });
   }
-  const all = new Uint8Array(total);
-  let offset = 0;
-  for (const c of chunks) {
-    all.set(c, offset);
-    offset += c.byteLength;
-  }
-  return new TextDecoder().decode(all);
 }
 
-/** URLSearchParams → plain object (last value wins). */
-export function queryObject(url: URL): Record<string, string> {
+function queryObject(url: URL): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of url.searchParams) out[k] = v;
+  for (const [k, v] of url.searchParams) if (!(k in out)) out[k] = v;
   return out;
 }
 
 /** Validation step. */
 export function validation(): Middleware {
   return async (s, next) => {
-    const route = routeOf(s);
-    const hasBody = s.method !== 'GET' && s.method !== 'HEAD';
-    s.rawBody = hasBody
-      ? await readBody(s.request, route.maxBytes ?? DEFAULT_MAX_BYTES)
-      : '';
-
-    const rawQuery = queryObject(s.url);
-    s.query = route.query ? parseOrThrow(route.query, rawQuery) : rawQuery;
-
-    if (route.minRole === 'hmac') {
-      // Raw body is verified by the owning service; do not parse it here.
-      s.body = undefined;
-      return next();
-    }
-    let parsed: unknown = undefined;
-    if (s.rawBody.trim() !== '') {
-      try {
-        parsed = JSON.parse(s.rawBody);
-      } catch {
-        throw new AppError('VALIDATION_FAILED', 'Body is not valid JSON', {
-          errors: [{path: '', message: 'Invalid JSON'}],
+    const r = s.route;
+    if (!r) return next();
+    for (const [name, schema] of Object.entries(r.params ?? {})) {
+      const result = schema.safeParse(s.params[name]);
+      if (!result.success) {
+        throw new AppError('VALIDATION_FAILED', 'Invalid path parameter', {
+          extras: {errors: [{path: `path.${name}`, message: 'Invalid'}]},
         });
       }
     }
-    s.body = route.body ? parseOrThrow(route.body, parsed) : parsed;
+    const rawQuery = queryObject(s.url);
+    s.query = r.query ? parseOrThrow(r.query, rawQuery) : rawQuery;
+    s.body = r.body ? parseOrThrow(r.body, parseBody(s)) : undefined;
     return next();
   };
 }

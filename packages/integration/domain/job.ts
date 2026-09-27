@@ -1,101 +1,109 @@
 /**
- * @fileoverview Ingestion job (Dataset transaction) state machine and the
- * completion rule.
- *
- * A job is complete only when (1) the batch flagged `last` was submitted and
- * every batch `0..lastSeq` was recorded, (2) every ingest message was
- * processed and (3) every object-writes group was reported. The counters
- * are idempotent (deduplicated per batch / message / group), so the rule is
- * robust to out-of-order delivery, retries and duplicates: whoever updates
- * the last counter observes completion.
+ * @fileoverview Import job model (详细设计 6.11.2): status derivation (a job
+ * without a batch for 30 minutes reads as FAILED), counters and DTO views.
  */
 
-import {AppError} from '@ontodecide/shared-kernel';
-import type {JobStatus} from '../contract';
+import type {
+  BatchResult,
+  JobDto,
+  JobStatus,
+  MappingSpec,
+  RejectDto,
+} from '../contract';
 
-/** Allowed transitions. */
-const TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
-  Queued: ['Running', 'Succeeded', 'PartiallyFailed', 'Failed'],
-  Running: ['Succeeded', 'PartiallyFailed', 'Failed'],
-  Succeeded: [],
-  PartiallyFailed: [],
-  Failed: [],
-};
+/** A job without new batches for this long reads as FAILED. */
+export const STALE_JOB_MS = 30 * 60_000;
 
-/** Whether the status is terminal. */
-export function isTerminal(status: JobStatus): boolean {
-  return TRANSITIONS[status].length === 0;
-}
+/** Rejects stored per job (the rest are only counted). */
+export const MAX_STORED_REJECTS = 200;
 
-/** Whether `from → to` is allowed. */
-export function canTransition(from: JobStatus, to: JobStatus): boolean {
-  return TRANSITIONS[from].includes(to);
-}
-
-/** Throws INVALID_TRANSITION unless `from → to` is allowed. */
-export function assertTransition(from: JobStatus, to: JobStatus): void {
-  if (!canTransition(from, to)) {
-    throw new AppError(
-      'INVALID_TRANSITION',
-      `Job cannot go from ${from} to ${to}`,
-    );
-  }
-}
-
-/** Progress counters of a job. */
-export interface JobCounters {
+/** Persistent job state. Times are Unix milliseconds. */
+export interface JobRecord {
+  id: string;
+  kind: 'file' | 'sample';
+  fileName: string | null;
+  targetType: string;
+  mapping: MappingSpec | null;
+  status: JobStatus;
+  totalRows: number;
   received: number;
+  upserted: number;
+  skipped: number;
   rejected: number;
-  /** Seq of the batch flagged `last`, or null while more batches may come. */
-  lastSeq: number | null;
-  /** Distinct batches recorded. */
-  batches: number;
-  ingestTotal: number;
-  ingestDone: number;
-  totalGroups: number;
-  doneGroups: number;
+  createdAt: number;
+  updatedAt: number;
 }
 
-/** Whether every part of the job has been processed. */
-export function isJobComplete(c: JobCounters): boolean {
-  return (
-    c.lastSeq !== null &&
-    c.batches >= c.lastSeq + 1 &&
-    c.ingestDone >= c.ingestTotal &&
-    c.doneGroups >= c.totalGroups
-  );
+/** Status as seen by readers: stale RECEIVING jobs are FAILED. */
+export function effectiveStatus(job: JobRecord, nowMs: number): JobStatus {
+  if (job.status === 'RECEIVING' && nowMs - job.updatedAt > STALE_JOB_MS) {
+    return 'FAILED';
+  }
+  return job.status;
 }
 
-/** accepted / received (1 when nothing was received). */
-export function qualityScore(received: number, rejected: number): number {
-  if (received <= 0) return 1;
-  const accepted = Math.max(0, received - rejected);
-  return Math.round((accepted / received) * 10_000) / 10_000;
+/** Counter deltas of one batch. */
+export interface BatchDelta {
+  received: number;
+  upserted: number;
+  skipped: number;
+  rejected: number;
 }
 
-/** Terminal status from the counters. */
-export function finalStatus(
-  c: Pick<JobCounters, 'received' | 'rejected'>,
-): JobStatus {
-  if (c.rejected <= 0) return 'Succeeded';
-  if (c.rejected >= c.received) return 'Failed';
-  return 'PartiallyFailed';
+/** Applies a batch delta (and `last`) to a job snapshot. */
+export function applyDelta(
+  job: JobRecord,
+  d: BatchDelta,
+  last: boolean,
+  nowMs: number,
+): JobRecord {
+  return {
+    ...job,
+    received: job.received + d.received,
+    upserted: job.upserted + d.upserted,
+    skipped: job.skipped + d.skipped,
+    rejected: job.rejected + d.rejected,
+    status: last && job.status === 'RECEIVING' ? 'DONE' : job.status,
+    updatedAt: nowMs,
+  };
 }
 
-/** Ingest message seq for record chunk `n` of client batch `batchSeq`. */
-export function ingestSeq(batchSeq: number, n: number): number {
-  return batchSeq * 1000 + n;
+/** Counters of a job as returned with a batch result. */
+export function jobCounters(job: JobRecord, nowMs: number): BatchResult['job'] {
+  return {
+    status: effectiveStatus(job, nowMs),
+    received: job.received,
+    upserted: job.upserted,
+    skipped: job.skipped,
+    rejected: job.rejected,
+  };
 }
 
-/** Object-writes groups one ingest message may produce (byte overflow). */
-export const GROUPS_PER_MESSAGE = 64;
-
-/** Object-writes seq of group `k` produced by ingest message `seq`. */
-export function groupSeq(ingestMsgSeq: number, k: number): number {
-  return ingestMsgSeq * GROUPS_PER_MESSAGE + k;
+/** Converts a job to its DTO (rejects only for GET /imports/{id}). */
+export function toJobDto(
+  job: JobRecord,
+  nowMs: number,
+  rejects?: RejectDto[],
+): JobDto {
+  return {
+    id: job.id,
+    kind: job.kind,
+    fileName: job.fileName,
+    targetType: job.targetType,
+    mapping: job.mapping,
+    status: effectiveStatus(job, nowMs),
+    totalRows: job.totalRows,
+    received: job.received,
+    upserted: job.upserted,
+    skipped: job.skipped,
+    rejected: job.rejected,
+    createdAt: new Date(job.createdAt).toISOString(),
+    updatedAt: new Date(job.updatedAt).toISOString(),
+    ...(rejects ? {rejects} : {}),
+  };
 }
 
-/** Row number (1-based, within the job) of a batch record. */
-export function batchRowOffset(batchSeq: number, batchSize: number): number {
-  return batchSeq * batchSize + 1;
+/** Number of distinct rows among rejects. */
+export function rejectedRows(rejects: readonly RejectDto[]): number {
+  return new Set(rejects.map(r => r.row)).size;
 }

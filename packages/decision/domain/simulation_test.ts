@@ -1,172 +1,132 @@
 /**
- * @fileoverview Tests for simulation KPIs, risk levels and expected impact.
+ * @fileoverview Tests of KPI computation, risk level and scenario results.
  */
 
 import {describe, expect, it} from 'vitest';
-import type {Rid} from '@ontodecide/shared-kernel';
-import type {GraphSlice} from '@ontodecide/object-graph/contract';
-import type {SimulationKpiDef} from '@ontodecide/ontology/contract';
 import {
-  actionKey,
+  affectedList,
+  changedCount,
   computeKpis,
   expectedImpact,
-  primaryKpi,
+  FALLBACK_KPI,
   riskLevel,
+  scenarioResult,
   simulate,
+  simulateWith,
+  simulationKpis,
 } from './simulation';
 import {
-  rid,
-  subgraph,
-  supplyChainGraph,
-  supplyChainModel,
+  M1,
+  P1,
+  P2,
+  S1,
+  testSchema,
+  testSlice,
 } from './testing/supply_chain_fixture';
 
-const r = (id: string): Rid => `ri.t1.P.${id}`;
-
-const SLICE: GraphSlice = {
-  nodes: [
-    {rid: r('a'), type: 'P', title: 'a', props: {demand: 100}},
-    {rid: r('b'), type: 'P', title: 'b', props: {demand: 50}},
-    {rid: r('c'), type: 'P', title: 'c', props: {demand: 'n/a'}},
-    {rid: r('s'), type: 'S', title: 's', props: {demand: 1000}},
-  ],
-  edges: [],
-};
-
-const KPIS: SimulationKpiDef[] = [
-  {
-    apiName: 'total',
-    displayName: 'total',
-    objectType: 'P',
-    property: 'demand',
-    agg: 'sum',
-    higherIsBetter: true,
-  },
-  {
-    apiName: 'mean',
-    displayName: 'mean',
-    objectType: 'P',
-    property: 'demand',
-    agg: 'avg',
-    higherIsBetter: true,
-  },
-  {
-    apiName: 'healthy',
-    displayName: 'healthy',
-    objectType: 'P',
-    agg: 'count',
-    higherIsBetter: true,
-  },
-];
+const schema = testSchema();
 
 describe('computeKpis', () => {
-  it('computes the baseline with Δ = 0', () => {
-    expect(computeKpis(SLICE, KPIS)).toEqual({
-      total: 150,
-      mean: 75,
-      healthy: 3,
+  it('computes sum, avg and count', () => {
+    const slice = testSlice();
+    const defs = [
+      ...schema.simulationKpis,
+      {
+        apiName: 'avgDemand',
+        displayName: 'a',
+        objectType: 'Product',
+        property: 'dailyDemand',
+        agg: 'avg' as const,
+        higherIsBetter: true,
+      },
+    ];
+    expect(computeKpis(slice, defs)).toEqual({
+      fulfillableDemand: 150,
+      healthyProducts: 2,
+      avgDemand: 75,
+    });
+    const delta = new Map([
+      [P1, -0.5],
+      [P2, -0.05],
+    ]);
+    expect(computeKpis(slice, defs, delta)).toEqual({
+      fulfillableDemand: 50 + 47.5,
+      healthyProducts: 1,
+      avgDemand: 48.75,
     });
   });
 
-  it('applies prop·(1+Δ) and counts nodes with Δ > −0.1', () => {
-    const delta = new Map<Rid, number>([
-      [r('a'), -0.5],
-      [r('b'), -0.1],
-      [r('c'), -0.05],
-    ]);
-    expect(computeKpis(SLICE, KPIS, delta)).toEqual({
-      total: 95,
-      mean: 47.5,
-      healthy: 1,
-    });
+  it('falls back to a count KPI', () => {
+    const defs = simulationKpis({simulationKpis: []});
+    expect(defs[0].apiName).toBe(FALLBACK_KPI);
+    expect(computeKpis(testSlice(), defs)[FALLBACK_KPI]).toBe(8);
   });
 });
 
 describe('riskLevel', () => {
-  it.each([
-    [[0, -0.05], 'LOW'],
-    [[-0.1], 'MEDIUM'],
-    [[0.29, -0.2], 'MEDIUM'],
-    [[-0.3], 'HIGH'],
-    [[0.5], 'HIGH'],
-  ] as const)('%j → %s', (deltas, level) => {
-    expect(riskLevel(deltas)).toBe(level);
+  it('maps the largest |Δ|', () => {
+    expect(riskLevel([0.05])).toBe('LOW');
+    expect(riskLevel([0.05, -0.1])).toBe('MEDIUM');
+    expect(riskLevel([-0.3])).toBe('HIGH');
+    expect(riskLevel([])).toBe('LOW');
   });
 });
 
-describe('expectedImpact', () => {
-  it('is relative to the baseline and flips sign when lower is better', () => {
-    const k = {apiName: 'k', higherIsBetter: true};
-    expect(expectedImpact(k, {k: 200}, {k: 100}, {k: 150})).toBe(0.25);
-    expect(
-      expectedImpact(
-        {...k, higherIsBetter: false},
-        {k: 200},
-        {k: 100},
-        {k: 150},
-      ),
-    ).toBe(-0.25);
-    expect(expectedImpact(k, {k: 0}, {k: 0}, {k: 0})).toBe(0);
-  });
-});
+describe('simulate', () => {
+  const p = [{rid: S1, property: 'riskScore', change: -0.8}];
 
-describe('simulate (supply chain)', () => {
-  const model = supplyChainModel();
-  const s1 = rid('Supplier', 'S-001');
-  const slice = subgraph(supplyChainGraph(), [s1], ['supplies', 'usedIn']);
-  const perturbations = [{rid: s1, property: 'capacity', change: -0.6}];
-
-  it('uses the first simulation KPI as primary', () => {
-    expect(primaryKpi(model).apiName).toBe('fulfillableDemand');
-  });
-
-  it('computes baseline, scenario, affected and risk', () => {
-    const {result} = simulate({model, slice, perturbations, now: new Date(0)});
-    // M-100 / M-101 = 0.7 × −0.6 × 0.9 = −0.378; P-900 = 2 × (−0.378 × 0.81), P-901 = −0.378 × 0.81.
-    expect(result.baseline.fulfillableDemand).toBe(500);
-    const p900 = -0.378 * 0.81 * 2;
-    const p901 = -0.378 * 0.81;
-    expect(result.scenario.fulfillableDemand).toBeCloseTo(
-      320 * (1 + p900) + 180 * (1 + p901),
-      5,
-    );
-    expect(result.baseline.healthyProducts).toBe(2);
-    expect(result.scenario.healthyProducts).toBe(0);
-    expect(result.riskLevel).toBe('HIGH');
-    expect(result.affected[0]).toMatchObject({
-      rid: rid('Product', 'P-900'),
-      hop: 2,
-    });
-    expect(result.affected.map(a => a.type)).toContain('Material');
-    expect(result.kpis.map(k => k.apiName)).toEqual([
+  it('produces baseline, scenario, affected and risk', () => {
+    const slice = testSlice();
+    const sim = simulate(schema, slice, p);
+    expect(sim.baseline.fulfillableDemand).toBe(150);
+    expect(sim.scenario.fulfillableDemand).toBeLessThan(150);
+    const r = scenarioResult(slice, sim, undefined, new Date(0));
+    expect(r.riskLevel).toBe('HIGH');
+    expect(r.nodeCount).toBe(8);
+    expect(r.affected.map(a => a.rid)).toEqual([S1, M1, P1, P2]);
+    expect(r.withActions).toBeUndefined();
+    expect(r.kpis.map(k => k.apiName)).toEqual([
       'fulfillableDemand',
       'healthyProducts',
     ]);
   });
 
-  it('improves the primary KPI with switchSupplier and increaseSafetyStock', () => {
-    const actions = [
-      {actionType: 'switchSupplier', target: rid('Material', 'M-100')},
-      {actionType: 'increaseSafetyStock', target: rid('Product', 'P-900')},
-      {actionType: 'flagSupplier', target: s1},
-    ];
-    const {result} = simulate({
-      model,
-      slice,
-      perturbations,
-      actions,
-      now: new Date(0),
-    });
-    const primary = primaryKpi(model);
-    const impact = (i: number) =>
+  it('scores an action as the relative primary KPI improvement', () => {
+    const slice = testSlice();
+    const sim = simulate(schema, slice, p);
+    const w = simulateWith(schema, slice, p, [
+      {rid: M1, property: 'capacity', change: 0.5},
+    ]);
+    const gain = expectedImpact(
+      schema.simulationKpis[0],
+      sim.baseline,
+      sim.scenario,
+      w.kpis,
+    );
+    expect(gain).toBeGreaterThan(0);
+    expect(gain).toBeCloseTo(
+      (w.kpis.fulfillableDemand - sim.scenario.fulfillableDemand) / 150,
+      4,
+    );
+    expect(changedCount(w.impact, sim.impact)).toBe(3);
+    expect(
       expectedImpact(
-        primary,
-        result.baseline,
-        result.scenario,
-        result.withActions![actionKey(actions[i])],
+        {apiName: 'fulfillableDemand', higherIsBetter: false},
+        sim.baseline,
+        sim.scenario,
+        w.kpis,
+      ),
+    ).toBeCloseTo(-gain, 4);
+  });
+
+  it('sorts affected objects by |Δ| then hop', () => {
+    const slice = testSlice();
+    const sim = simulate(schema, slice, p);
+    const list = affectedList(slice, sim.impact);
+    for (let i = 1; i < list.length; i++) {
+      expect(Math.abs(list[i - 1].delta)).toBeGreaterThanOrEqual(
+        Math.abs(list[i].delta),
       );
-    expect(impact(0)).toBeGreaterThan(0);
-    expect(impact(1)).toBeGreaterThan(0);
-    expect(impact(2)).toBe(0);
+    }
   });
 });

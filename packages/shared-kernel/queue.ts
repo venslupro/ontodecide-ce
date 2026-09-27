@@ -30,33 +30,23 @@ export interface QueueBatch<T> {
 }
 
 /**
- * Logical queue names. Deployed queues are named {project}-{env}-<name>
- * (e.g. ontodecide-prd-ingest); `baseQueueName` maps them back.
+ * Logical queue names (详细设计 6.4.2). Deployed queues are named
+ * {project}-{env}-<name>, e.g. ontodecide-prd-domain-events.
  */
 export const QUEUES = {
-  ingest: 'ingest',
-  objectWrites: 'object-writes',
-  graphSync: 'graph-sync',
-  situationEvents: 'situation-events',
-  decisionJobs: 'decision-jobs',
+  domainEvents: 'domain-events',
+  deadLetter: 'dead-letter',
 } as const;
 
 /** Logical queue name. */
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
-const LOGICAL_QUEUES: readonly string[] = Object.values(QUEUES);
-
-/**
- * Splits a deployed queue name into its logical name (without the
- * `{project}-{env}-` prefix) and whether it is a DLQ. Unknown names are
- * returned without the `-dlq` suffix only.
- */
-export function baseQueueName(name: string): {name: string; dlq: boolean} {
-  let n = name;
-  const dlq = n.endsWith('-dlq');
-  if (dlq) n = n.slice(0, -4);
-  const logical = LOGICAL_QUEUES.find(q => n === q || n.endsWith(`-${q}`));
-  return {name: logical ?? n, dlq};
+/** Maps a deployed queue name back to its logical name. */
+export function baseQueueName(name: string): string {
+  const logical = Object.values(QUEUES).find(
+    q => name === q || name.endsWith(`-${q}`),
+  );
+  return logical ?? name;
 }
 
 /** Retry delay for attempt n (1-based): 2^n seconds, capped at 60. */

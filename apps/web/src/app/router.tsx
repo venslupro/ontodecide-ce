@@ -1,11 +1,11 @@
 /**
- * @fileoverview Code-based TanStack Router tree. Every page is lazily
- * imported (one chunk per route) and preloaded on intent. Routes declare
- * `staticData.minRole`; the layout renders "no permission" when unmet and
- * the menu hides such entries.
+ * @fileoverview Code-based TanStack Router tree (前端详细设计 表 2 / 表 8).
+ * Every page is lazily imported (one chunk per route) and preloaded on
+ * intent. Public pages (/signup, /login, /ended, /archive-deletions/:token)
+ * render without the app shell; /ended and /archive-deletions need no
+ * token. Business pages read params with `strict: false` hooks.
  */
 
-import type {Role} from '@ontodecide/shared-kernel';
 import type {QueryClient} from '@tanstack/react-query';
 import {
   createRootRouteWithContext,
@@ -16,16 +16,11 @@ import {
   redirect,
   type RouteComponent,
 } from '@tanstack/react-router';
+import {exitActAs} from '../features/admin/act_as';
 import {PageLoader} from '../shared/ui/skeleton';
+import {guardApp, guardPublicAuth} from './guards';
 import {AppLayout} from './layouts/app_layout';
 import {RouteError} from './route_error';
-import {ensureSession} from './session_guard';
-
-declare module '@tanstack/react-router' {
-  interface StaticDataRouteOption {
-    minRole?: Role;
-  }
-}
 
 /** Router context. */
 export interface RouterContext {
@@ -45,10 +40,15 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v !== '' ? v : undefined;
 }
 
-/** Search value that may have been auto-parsed as JSON (e.g. `?filter={...}`). */
+/** Search value that may have been auto-parsed as JSON (`?filter={…}`). */
 function jsonStr(v: unknown): string | undefined {
   if (v && typeof v === 'object') return JSON.stringify(v);
   return str(v);
+}
+
+function num(v: unknown): number | undefined {
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : undefined;
 }
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({
@@ -60,33 +60,64 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
   ),
 });
 
-/** Login route search params. */
-export interface LoginSearch {
-  redirect?: string;
+/** /login and /signup search params. */
+export interface AuthSearch {
+  next?: string;
   lang?: string;
 }
+
+const authSearch = (s: Record<string, unknown>): AuthSearch => ({
+  next: str(s.next),
+  lang: str(s.lang),
+});
+
+const redirectSignedIn = () => {
+  const to = guardPublicAuth();
+  if (to) throw redirect({to});
+};
+
+const signupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/signup',
+  validateSearch: authSearch,
+  beforeLoad: redirectSignedIn,
+  component: page(() => import('../pages/signup/signup_page'), 'SignupPage'),
+});
 
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/login',
-  validateSearch: (s: Record<string, unknown>): LoginSearch => ({
-    redirect: str(s.redirect),
+  validateSearch: authSearch,
+  beforeLoad: redirectSignedIn,
+  component: page(() => import('../pages/login/login_page'), 'LoginPage'),
+});
+
+const endedRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/ended',
+  validateSearch: (s: Record<string, unknown>): {lang?: string} => ({
     lang: str(s.lang),
   }),
-  component: page(() => import('../pages/login/login_page'), 'LoginPage'),
+  component: page(() => import('../pages/ended/ended_page'), 'EndedPage'),
+});
+
+const archiveDeletionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/archive-deletions/$token',
+  component: page(
+    () => import('../pages/archive-deletions/archive_deletion_page'),
+    'ArchiveDeletionPage',
+  ),
 });
 
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: 'app',
   beforeLoad: async ({location}) => {
-    const ok = await ensureSession();
-    if (!ok) {
-      throw redirect({
-        to: '/login',
-        search: {redirect: location.href, lang: undefined},
-      });
-    }
+    const d = await guardApp(location.href);
+    if (d.kind === 'login')
+      throw redirect({to: '/login', search: {next: d.next}});
+    if (d.kind === 'ended') throw redirect({to: '/ended'});
   },
   component: AppLayout,
   errorComponent: RouteError,
@@ -97,246 +128,181 @@ const indexRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/',
   beforeLoad: () => {
-    throw redirect({to: '/cockpit', search: {mode: undefined}});
+    throw redirect({to: '/cockpit'});
   },
 });
-
-/** Cockpit search params. */
-export interface CockpitSearch {
-  mode?: 'wall';
-}
 
 const cockpitRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/cockpit',
-  staticData: {minRole: 'Viewer'},
-  validateSearch: (s: Record<string, unknown>): CockpitSearch => ({
-    mode: s.mode === 'wall' ? 'wall' : undefined,
-  }),
   component: page(() => import('../pages/cockpit/cockpit_page'), 'CockpitPage'),
 });
 
-const objectsIndexRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: '/objects',
-  staticData: {minRole: 'Viewer'},
-  component: page(
-    () => import('../pages/objects/objects_index_page'),
-    'ObjectsIndexPage',
-  ),
-});
-
-/** Object list search params. */
-export interface ObjectListSearch {
+/** /objects search params. */
+export interface ObjectsSearch {
+  type?: string;
+  q?: string;
   /** JSON FilterExpr. */
   filter?: string;
   /** `prop:dir`. */
-  sort?: string;
-  /** Semantic / text search. */
-  q?: string;
-  /** Saved object set id. */
-  set?: string;
+  orderBy?: string;
 }
 
-const objectListRoute = createRoute({
+const objectsRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: '/objects/$type',
-  staticData: {minRole: 'Viewer'},
-  validateSearch: (s: Record<string, unknown>): ObjectListSearch => ({
-    filter: jsonStr(s.filter),
-    sort: str(s.sort),
+  path: '/objects',
+  validateSearch: (s: Record<string, unknown>): ObjectsSearch => ({
+    type: str(s.type),
     q: str(s.q),
-    set: str(s.set),
+    filter: jsonStr(s.filter),
+    orderBy: str(s.orderBy),
   }),
-  component: page(
-    () => import('../pages/objects/object_list_page'),
-    'ObjectListPage',
-  ),
+  component: page(() => import('../pages/objects/objects_page'), 'ObjectsPage'),
 });
 
 const objectViewRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: '/objects/rid/$rid',
-  staticData: {minRole: 'Viewer'},
+  path: '/objects/$rid',
   component: page(
     () => import('../pages/object-view/object_view_page'),
     'ObjectViewPage',
   ),
 });
 
-/** Graph search params. */
+/** /graph search params. */
 export interface GraphSearch {
   rid?: string;
-  to?: string;
-  mode?: 'around' | 'paths' | 'impact';
+  depth?: number;
+  /** Comma-separated link type api names. */
+  linkTypes?: string;
 }
 
 const graphRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/graph',
-  staticData: {minRole: 'Viewer'},
   validateSearch: (s: Record<string, unknown>): GraphSearch => ({
     rid: str(s.rid),
-    to: str(s.to),
-    mode:
-      s.mode === 'paths' || s.mode === 'impact' || s.mode === 'around'
-        ? s.mode
-        : undefined,
+    depth: num(s.depth),
+    linkTypes: Array.isArray(s.linkTypes)
+      ? s.linkTypes.join(',')
+      : str(s.linkTypes),
   }),
   component: page(() => import('../pages/graph/graph_page'), 'GraphPage'),
 });
 
+const scenarioPage = page(
+  () => import('../pages/scenarios/scenario_page'),
+  'ScenarioPage',
+);
+
 const scenariosRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/scenarios',
-  staticData: {minRole: 'Operator'},
-  component: page(
-    () => import('../pages/scenarios/scenario_list_page'),
-    'ScenarioListPage',
-  ),
+  component: scenarioPage,
 });
-
-/** Scenario search params (prefill from an alert / object). */
-export interface ScenarioSearch {
-  rid?: string;
-  alertId?: string;
-}
 
 const scenarioRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/scenarios/$id',
-  staticData: {minRole: 'Operator'},
-  validateSearch: (s: Record<string, unknown>): ScenarioSearch => ({
-    rid: str(s.rid),
-    alertId: str(s.alertId),
-  }),
-  component: page(
-    () => import('../pages/scenarios/scenario_page'),
-    'ScenarioPage',
-  ),
+  component: scenarioPage,
 });
 
-/** Recommendation list search params. */
-export interface RecListSearch {
-  status?: string;
-}
+const recPage = page(
+  () => import('../pages/recommendations/recommendations_page'),
+  'RecommendationsPage',
+);
 
 const recommendationsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/recommendations',
-  staticData: {minRole: 'Operator'},
-  validateSearch: (s: Record<string, unknown>): RecListSearch => ({
-    status: str(s.status),
-  }),
-  component: page(
-    () => import('../pages/recommendations/recommendation_list_page'),
-    'RecommendationListPage',
-  ),
+  component: recPage,
 });
 
 const recommendationRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/recommendations/$id',
-  staticData: {minRole: 'Operator'},
+  component: recPage,
+});
+
+const importsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/imports',
+  component: page(() => import('../pages/imports/imports_page'), 'ImportsPage'),
+});
+
+const importNewRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/imports/new',
   component: page(
-    () => import('../pages/recommendations/recommendation_page'),
-    'RecommendationPage',
+    () => import('../pages/imports/import_wizard_page'),
+    'ImportWizardPage',
   ),
 });
 
-const sourcesRoute = createRoute({
+const importJobRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: '/sources',
-  staticData: {minRole: 'Operator'},
+  path: '/imports/$id',
   component: page(
-    () => import('../pages/sources/source_list_page'),
-    'SourceListPage',
+    () => import('../pages/imports/import_job_page'),
+    'ImportJobPage',
   ),
-});
-
-const sourceNewRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: '/sources/new',
-  staticData: {minRole: 'Modeler'},
-  component: page(
-    () => import('../pages/sources/source_wizard_page'),
-    'SourceWizardPage',
-  ),
-});
-
-const jobRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: '/jobs/$id',
-  staticData: {minRole: 'Operator'},
-  component: page(() => import('../pages/sources/job_page'), 'JobPage'),
 });
 
 const ontologyRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/ontology',
-  staticData: {minRole: 'Modeler'},
   component: page(
-    () => import('../pages/ontology/ontology_index_page'),
-    'OntologyIndexPage',
-  ),
-});
-
-const ontologyWorkbenchRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: '/ontology/$api',
-  staticData: {minRole: 'Modeler'},
-  component: page(
-    () => import('../pages/ontology/ontology_workbench_page'),
-    'OntologyWorkbenchPage',
+    () => import('../pages/ontology/ontology_page'),
+    'OntologyPage',
   ),
 });
 
 const automationsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/automations',
-  staticData: {minRole: 'Operator'},
   component: page(
     () => import('../pages/automations/automations_page'),
     'AutomationsPage',
   ),
 });
 
-const usersRoute = createRoute({
+const accountRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: '/admin/users',
-  staticData: {minRole: 'Admin'},
-  component: page(() => import('../pages/admin/users_page'), 'UsersPage'),
+  path: '/account',
+  component: page(() => import('../pages/account/account_page'), 'AccountPage'),
 });
 
-const healthRoute = createRoute({
+const adminRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: '/admin/health',
-  staticData: {minRole: 'Admin'},
-  component: page(() => import('../pages/admin/health_page'), 'HealthPage'),
+  path: '/admin',
+  // Opening the platform page leaves the admin view (back to own data).
+  beforeLoad: ({context}) => exitActAs(context.queryClient),
+  component: page(() => import('./admin_gate'), 'AdminGate'),
 });
 
 /** The route tree. */
 export const routeTree = rootRoute.addChildren([
+  signupRoute,
   loginRoute,
+  endedRoute,
+  archiveDeletionRoute,
   appRoute.addChildren([
     indexRoute,
     cockpitRoute,
-    objectsIndexRoute,
-    objectListRoute,
+    objectsRoute,
     objectViewRoute,
     graphRoute,
     scenariosRoute,
     scenarioRoute,
     recommendationsRoute,
     recommendationRoute,
-    sourcesRoute,
-    sourceNewRoute,
-    jobRoute,
+    importsRoute,
+    importNewRoute,
+    importJobRoute,
     ontologyRoute,
-    ontologyWorkbenchRoute,
     automationsRoute,
-    usersRoute,
-    healthRoute,
+    accountRoute,
+    adminRoute,
   ]),
 ]);
 

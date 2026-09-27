@@ -1,14 +1,12 @@
 /**
- * @fileoverview Response helpers: JSON, Problem Details and header merging.
+ * @fileoverview Response helpers: JSON, ETag, Problem Details (RFC 9457)
+ * and header merging.
  */
 
-import {AppError} from '@ontodecide/shared-kernel';
-
-/** Media type of RFC 9457 error bodies. */
-export const PROBLEM_CONTENT_TYPE = 'application/problem+json';
+import {AppError, PROBLEM_MEDIA_TYPE, toEtag} from '@ontodecide/shared-kernel';
 
 /** JSON response. */
-export function jsonResponse(
+export function json(
   body: unknown,
   status = 200,
   headers: HeadersInit = {},
@@ -18,9 +16,23 @@ export function jsonResponse(
   return new Response(JSON.stringify(body), {status, headers: h});
 }
 
+/** JSON response carrying `ETag: "v{version}"`. */
+export function jsonWithEtag(
+  body: unknown,
+  version: number,
+  status = 200,
+): Response {
+  return json(body, status, {etag: toEtag(version)});
+}
+
+/** Empty response (204 by default). */
+export function empty(status = 204, headers: HeadersInit = {}): Response {
+  return new Response(null, {status, headers});
+}
+
 /**
- * Converts anything thrown into an AppError. Unexpected errors become a
- * bare INTERNAL so internal messages and stacks never reach the client.
+ * Converts anything thrown into an AppError. Errors that are not (encoded)
+ * AppErrors become a bare INTERNAL so internal messages never leak.
  */
 export function toAppError(err: unknown): {
   error: AppError;
@@ -34,47 +46,57 @@ export function toAppError(err: unknown): {
   return {error: new AppError('INTERNAL'), unexpected: true};
 }
 
-/** Problem Details response for an error. */
-export function problemResponse(
-  err: unknown,
-  requestId?: string,
-  headers: HeadersInit = {},
-): Response {
+/** Problem Details response (`application/problem+json`, with traceId). */
+export function problemResponse(err: unknown, traceId?: string): Response {
   const {error} = toAppError(err);
-  const h = new Headers(headers);
-  h.set('content-type', PROBLEM_CONTENT_TYPE);
+  const h = new Headers({'content-type': PROBLEM_MEDIA_TYPE});
   const retryAfter = error.extras.retryAfter;
-  if (error.code === 'RATE_LIMITED' && typeof retryAfter === 'number') {
-    h.set('retry-after', String(retryAfter));
-  }
-  return new Response(JSON.stringify(error.toProblem(requestId)), {
+  if (typeof retryAfter === 'number') h.set('retry-after', String(retryAfter));
+  return new Response(JSON.stringify(error.toProblem(traceId)), {
     status: error.status,
     headers: h,
   });
 }
 
+/** Whether a response must be passed through untouched (WebSocket). */
+export function isUpgrade(res: Response): boolean {
+  return (
+    res.status === 101 || !!(res as Response & {webSocket?: unknown}).webSocket
+  );
+}
+
 /**
- * Returns the response with extra headers. WebSocket upgrades (101) are
- * returned untouched; immutable responses are re-wrapped.
+ * Returns the response with extra headers. WebSocket upgrades are returned
+ * untouched; immutable responses are re-wrapped.
  */
 export function withHeaders(
   res: Response,
   headers: Record<string, string>,
-  opts: {overwrite?: boolean} = {},
 ): Response {
-  if (res.status === 101) return res;
-  const apply = (target: Response): void => {
-    for (const [k, v] of Object.entries(headers)) {
-      if (opts.overwrite === false && target.headers.has(k)) continue;
-      target.headers.set(k, v);
-    }
-  };
+  if (isUpgrade(res)) return res;
   try {
-    apply(res);
+    for (const [k, v] of Object.entries(headers)) res.headers.set(k, v);
     return res;
   } catch {
     const copy = new Response(res.body, res);
-    apply(copy);
+    for (const [k, v] of Object.entries(headers)) copy.headers.set(k, v);
+    return copy;
+  }
+}
+
+/** Appends a header value (e.g. a second Set-Cookie). */
+export function appendHeader(
+  res: Response,
+  name: string,
+  value: string,
+): Response {
+  if (isUpgrade(res)) return res;
+  try {
+    res.headers.append(name, value);
+    return res;
+  } catch {
+    const copy = new Response(res.body, res);
+    copy.headers.append(name, value);
     return copy;
   }
 }

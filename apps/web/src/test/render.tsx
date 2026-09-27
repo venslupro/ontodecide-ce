@@ -1,9 +1,14 @@
 /**
- * @fileoverview Test render helpers: providers (fresh QueryClient, session
- * with a signed-in user) and a memory router so components can use `Link`.
+ * @fileoverview Test render helpers: providers (fresh QueryClient, API
+ * hooks, a signed-in owner by default) and a memory router so components
+ * can use `Link`, `useNavigate` and `useParams/useSearch({strict: false})`.
+ *
+ * - `renderWithProviders(ui, {url, as, me})` renders one component.
+ * - `renderApp(url, {as, me})` renders the real route tree (guards, lazy
+ *   pages, layout).
+ * `as`: 'owner' (default), 'admin' or 'anonymous'.
  */
 
-import type {UserDto} from '@ontodecide/identity/contract';
 import {QueryClient, QueryClientProvider} from '@tanstack/react-query';
 import {
   createMemoryHistory,
@@ -16,21 +21,28 @@ import {
 } from '@tanstack/react-router';
 import {render, type RenderResult} from '@testing-library/react';
 import type {ReactElement, ReactNode} from 'react';
+import {wireApp} from '../app/boot';
 import {routeTree} from '../app/router';
-import {useSession} from '../entities/session/store';
-import {configureApi} from '../shared/api/client';
+import {useSession, type Me} from '../entities/session/store';
 import {i18n} from '../shared/lib/i18n';
 import {TooltipProvider} from '../shared/ui/tooltip';
 import {Toaster} from '../shared/ui/toast';
-import {adminUser} from './fixtures';
+import {adminMe, adminToken, ownerMe, ownerToken} from './fixtures/platform';
+import {platformDb} from './handlers/platform';
 
-/** Options for {@link renderWithProviders}. */
+/** Who is signed in. */
+export type SignedInAs = 'owner' | 'admin' | 'anonymous';
+
+/** Options for the render helpers. */
 export interface RenderOptions {
   /** Initial URL (default `/`). */
   url?: string;
-  /** Signed-in user; `null` renders signed out. */
-  user?: UserDto | null;
+  as?: SignedInAs;
+  /** Overrides the `/me` of the signed-in user. */
+  me?: Me;
   queryClient?: QueryClient;
+  /** Legacy option (V1.3 roles); ignored, the owner is signed in. */
+  user?: unknown;
 }
 
 /** Creates a QueryClient suited for tests (no retries, no gc delay). */
@@ -48,19 +60,26 @@ export function createTestQueryClient(): QueryClient {
   });
 }
 
-/** Signs a fixture user into the session store and wires API hooks. */
-export function signIn(user: UserDto | null = adminUser): void {
-  configureApi({
-    getToken: () => useSession.getState().accessToken,
-    onToken: g => useSession.getState().setGrant(g),
-    getLocale: () => i18n.language,
-    onAuthFailure: () => useSession.getState().signOut(),
+/**
+ * Signs a fixture user into the session store (and the MSW platform db so
+ * GET /me agrees).
+ */
+export function signIn(as: SignedInAs = 'owner', me?: Me): void {
+  const s = useSession.getState();
+  s.signOut();
+  s.setActAs(undefined);
+  if (as === 'anonymous') {
+    platformDb.refresh = 'unauthenticated';
+    return;
+  }
+  const m = me ?? (as === 'admin' ? adminMe() : ownerMe());
+  platformDb.role = as;
+  platformDb.me = m;
+  s.setGrant({
+    accessToken: as === 'admin' ? adminToken() : ownerToken(),
+    expiresIn: 900,
+    me: m,
   });
-  if (user)
-    useSession
-      .getState()
-      .setGrant({accessToken: 'token-0', expiresIn: 900, user});
-  else useSession.getState().signOut();
 }
 
 function Wrapper({qc, children}: {qc: QueryClient; children: ReactNode}) {
@@ -74,16 +93,11 @@ function Wrapper({qc, children}: {qc: QueryClient; children: ReactNode}) {
   );
 }
 
-/**
- * Renders `ui` inside providers and a memory router (catch-all route), so
- * `Link`, `useNavigate` and `useSearch({strict: false})` work. Await a
- * `findBy*` query before asserting.
- */
+/** Renders `ui` inside providers and a catch-all memory router. */
 export function renderWithProviders(
   ui: ReactElement,
   opts: RenderOptions = {},
 ): RenderResult & {queryClient: QueryClient; router: AnyRouter} {
-  signIn(opts.user === undefined ? adminUser : opts.user);
   const qc = opts.queryClient ?? createTestQueryClient();
   const root = createRootRoute({component: Outlet});
   const any = createRoute({
@@ -100,6 +114,8 @@ export function renderWithProviders(
     routeTree: root.addChildren([index, any]),
     history: createMemoryHistory({initialEntries: [opts.url ?? '/']}),
   }) as unknown as AnyRouter;
+  wireApp(qc, router as never);
+  signIn(opts.as ?? 'owner', opts.me);
   const result = render(
     <Wrapper qc={qc}>
       <RouterProvider router={router} />
@@ -108,22 +124,28 @@ export function renderWithProviders(
   return {...result, queryClient: qc, router};
 }
 
-/**
- * Renders the real application route tree at `url` (layout, guards, lazy
- * pages). Useful for page-level tests.
- */
-export function renderApp(url: string, opts: Omit<RenderOptions, 'url'> = {}) {
-  signIn(opts.user === undefined ? adminUser : opts.user);
+/** Renders the real application route tree at `url`. */
+export function renderApp(
+  url: string,
+  opts: Omit<RenderOptions, 'url'> = {},
+): RenderResult & {queryClient: QueryClient; router: AnyRouter} {
   const qc = opts.queryClient ?? createTestQueryClient();
   const router = createRouter({
     routeTree,
     context: {queryClient: qc},
     history: createMemoryHistory({initialEntries: [url]}),
-  });
+  }) as unknown as AnyRouter;
+  wireApp(qc, router as never);
+  signIn(opts.as ?? 'owner', opts.me);
   const result = render(
     <Wrapper qc={qc}>
       <RouterProvider router={router} />
     </Wrapper>,
   );
   return {...result, queryClient: qc, router};
+}
+
+/** Current language helper for tests. */
+export function lang(): string {
+  return i18n.language;
 }

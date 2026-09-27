@@ -194,7 +194,7 @@ export function assertLogic(expr: JsonLogic): void {
     const keys = Object.keys(e);
     if (keys.length === 1 && !OPS.has(keys[0])) {
       throw new AppError(
-        'ONTOLOGY_INVALID',
+        'VALIDATION_FAILED',
         `Unsupported operator: ${keys[0]}`,
       );
     }

@@ -1,8 +1,7 @@
 /**
- * @fileoverview Minimal segment router. A segment is a parameter only when
- * it starts with `:`; literal segments may contain colons (Google-style
- * custom methods such as `/recommendations:generate` or
- * `/users/:id/password:reset`).
+ * @fileoverview Minimal method + path router over OpenAPI-style patterns
+ * (`/objects/{rid}/links`). Literal segments win over parameters, so
+ * `/objects/stats` is matched before `/objects/{rid}`.
  */
 
 /** Compiled path segment. */
@@ -17,7 +16,6 @@ interface Entry<T> {
 /** Result of {@link Router.match}. */
 export type MatchResult<T> =
   | {kind: 'found'; value: T; params: Record<string, string>}
-  | {kind: 'method_not_allowed'; allow: string[]}
   | {kind: 'not_found'};
 
 /** Splits a path into non-empty segments. */
@@ -25,13 +23,12 @@ export function splitPath(path: string): string[] {
   return path.split('/').filter(s => s.length > 0);
 }
 
-/** Compiles a route pattern. */
+/** Compiles a pattern; `{name}` segments are parameters. */
 export function compilePattern(pattern: string): Segment[] {
-  return splitPath(pattern).map(s =>
-    s.startsWith(':')
-      ? {kind: 'param', name: s.slice(1)}
-      : {kind: 'literal', value: s},
-  );
+  return splitPath(pattern).map(s => {
+    const m = /^\{([A-Za-z][A-Za-z0-9_]*)\}$/.exec(s);
+    return m ? {kind: 'param', name: m[1]} : {kind: 'literal', value: s};
+  });
 }
 
 function matchSegments(
@@ -45,22 +42,20 @@ function matchSegments(
     const part = parts[i];
     if (seg.kind === 'literal') {
       if (seg.value !== part) return null;
-    } else {
-      let decoded: string;
-      try {
-        decoded = decodeURIComponent(part);
-      } catch {
-        return null;
-      }
-      params[seg.name] = decoded;
+      continue;
+    }
+    try {
+      params[seg.name] = decodeURIComponent(part);
+    } catch {
+      return null;
     }
   }
   return params;
 }
 
-/** Counts literal segments, so more specific patterns win ties. */
-function specificity(segments: Segment[]): number {
-  return segments.filter(s => s.kind === 'literal').length;
+/** Sort key: literal positions first, left to right. */
+function rank(segments: Segment[]): string {
+  return segments.map(s => (s.kind === 'literal' ? '0' : '1')).join('');
 }
 
 /** Method + path router. */
@@ -74,9 +69,8 @@ export class Router<T> {
       segments: compilePattern(pattern),
       value,
     });
-    // Most specific first, stable for equal specificity.
-    this.entries.sort(
-      (a, b) => specificity(b.segments) - specificity(a.segments),
+    this.entries.sort((a, b) =>
+      rank(a.segments).localeCompare(rank(b.segments)),
     );
     return this;
   }
@@ -85,16 +79,11 @@ export class Router<T> {
   match(method: string, path: string): MatchResult<T> {
     const parts = splitPath(path);
     const m = method.toUpperCase();
-    const allow = new Set<string>();
     for (const e of this.entries) {
+      if (e.method !== m && !(m === 'HEAD' && e.method === 'GET')) continue;
       const params = matchSegments(e.segments, parts);
-      if (!params) continue;
-      if (e.method === m || (m === 'HEAD' && e.method === 'GET')) {
-        return {kind: 'found', value: e.value, params};
-      }
-      allow.add(e.method);
+      if (params) return {kind: 'found', value: e.value, params};
     }
-    if (allow.size > 0) return {kind: 'method_not_allowed', allow: [...allow]};
     return {kind: 'not_found'};
   }
 }

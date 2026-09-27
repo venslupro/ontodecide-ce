@@ -1,15 +1,20 @@
-// api-gateway: the only entry reachable from the Pages Functions proxy.
-// ${...} placeholders are rendered by scripts/gen_wrangler.mjs from
-// `terraform output -json`; never hand-write resource ids.
+// api-gateway: the only public entry (Workers Route ${APP_HOST}/api/*, or
+// the Pages Functions proxy while no domain is configured). Binds the
+// business entry points of the six services (never TenantLifecycle).
+// `routes` is kept only when a domain is configured (gen_wrangler.mjs).
+// DO migration v2 deletes the V1.3 EdgeGuard class; no DO bindings remain.
 {
   "name": "${PREFIX}-api-gateway",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
-  "kv_namespaces": [{"binding": "CONFIG", "id": "${KV_GATEWAY_CONFIG_ID}"}],
-  "durable_objects": {"bindings": [{"name": "EDGE_GUARD", "class_name": "EdgeGuard"}]},
-  "migrations": [{"tag": "v1", "new_sqlite_classes": ["EdgeGuard"]}],
+  "preview_urls": false,
+  "routes": [{"pattern": "${APP_HOST}/api/*", "zone_name": "${ZONE_NAME}"}],
+  "migrations": [
+    {"tag": "v1", "new_sqlite_classes": ["EdgeGuard"]},
+    {"tag": "v2", "deleted_classes": ["EdgeGuard"]}
+  ],
   "services": [
     {"binding": "IDENTITY", "service": "${PREFIX}-identity-access", "entrypoint": "IdentityRpc"},
     {"binding": "ONTOLOGY", "service": "${PREFIX}-ontology-manager", "entrypoint": "OntologyRpc"},
@@ -18,10 +23,19 @@
     {"binding": "SITUATION", "service": "${PREFIX}-situation-awareness", "entrypoint": "SituationRpc"},
     {"binding": "DECISION", "service": "${PREFIX}-decision-engine", "entrypoint": "DecisionRpc"}
   ],
+  "ratelimits": [
+    {"name": "RL_USER_READ", "namespace_id": "1001", "simple": {"limit": 120, "period": 60}},
+    {"name": "RL_USER_WRITE", "namespace_id": "1002", "simple": {"limit": 30, "period": 60}},
+    {"name": "RL_EMAIL", "namespace_id": "1003", "simple": {"limit": 5, "period": 60}},
+    {"name": "RL_IP_AUTH", "namespace_id": "1004", "simple": {"limit": 10, "period": 60}}
+  ],
   "vars": {
+    "APP_ORIGIN": "${APP_ORIGIN}",
+    "JWT_PUBLIC_KEYS": "${JWT_PUBLIC_KEYS}",
+    "MAX_BODY_BYTES": "524288",
+    "ACT_AS_CACHE_S": "60",
     "ENVIRONMENT": "${ENVIRONMENT}",
-    "APP_VERSION": "${APP_VERSION}",
-    "COOKIE_SECURE": "${COOKIE_SECURE}"
+    "APP_VERSION": "${APP_VERSION}"
   },
-  "observability": {"enabled": true}
+  "observability": {"enabled": true, "head_sampling_rate": 0.5}
 }

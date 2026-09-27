@@ -1,0 +1,121 @@
+{
+  "title": "Automations",
+  "description": "Raise alerts when conditions are met. Threshold rules run when objects change; scheduled rules check at an interval (at most 3 per workspace, at least every hour).",
+  "scheduledCount": "Scheduled {used}/{max}",
+  "actions": {
+    "create": "New rule",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete"
+  },
+  "empty": {
+    "title": "No automations yet",
+    "hint": "Create a rule to raise alerts automatically when a condition is met."
+  },
+  "col": {
+    "name": "Name",
+    "trigger": "Trigger",
+    "objectType": "Object type",
+    "condition": "Condition",
+    "severity": "Severity",
+    "cooldown": "Cooldown",
+    "lastFired": "Last fired",
+    "nextRun": "Next run",
+    "enabled": "Enabled",
+    "actions": "Actions"
+  },
+  "never": "Never",
+  "pending": "Pending",
+  "onChange": "On change",
+  "toggleLabel": "Enable “{name}”",
+  "editLabel": "Edit “{name}”",
+  "deleteLabel": "Delete “{name}”",
+  "toast": {
+    "enabled": "Rule enabled",
+    "disabled": "Rule disabled",
+    "toggleFailed": "Could not switch the rule",
+    "deleted": "Deleted “{name}”",
+    "created": "Rule created",
+    "updated": "Rule saved"
+  },
+  "delete": {
+    "title": "Delete rule?",
+    "confirm": "Delete “{name}”? Alerts it raised are kept."
+  },
+  "dialog": {
+    "createTitle": "New automation",
+    "editTitle": "Edit automation",
+    "description": "Choose an object type and a condition; matching objects raise an alert."
+  },
+  "block": {
+    "scheduleLimit": "A workspace can have at most {max} scheduled rules",
+    "minInterval": "The interval must be at least {min} hour",
+    "maxInterval": "The interval can be at most {maxHours} hours",
+    "intervalInteger": "The interval must be whole hours"
+  },
+  "form": {
+    "nameZh": "Name (Chinese)",
+    "nameEn": "Name (English)",
+    "nameEnHint": "Falls back to the Chinese name",
+    "trigger": "Trigger",
+    "everyHours": "Interval (hours)",
+    "everyHoursHint": "Scheduled rules {used}/{max}",
+    "objectType": "Object type",
+    "chooseType": "Choose an object type",
+    "condition": "Condition",
+    "chooseTypeFirst": "Choose an object type first",
+    "severity": "Severity",
+    "cooldown": "Cooldown (seconds)",
+    "cooldownHint": "Minimum time between two alerts for the same object, 0 to {max}",
+    "enabled": "Enabled",
+    "effect": "Effect",
+    "error": {
+      "nameRequired": "Enter a Chinese name",
+      "typeRequired": "Choose an object type",
+      "conditionRequired": "At least one complete condition is required",
+      "cooldownRange": "Enter a whole number from 0 to {max}",
+      "server": "Rejected by server validation: {detail}"
+    }
+  },
+  "trigger": {
+    "threshold": "Threshold (on change)",
+    "schedule": "Scheduled check"
+  },
+  "severity": {
+    "LOW": "Low",
+    "MEDIUM": "Medium",
+    "HIGH": "High",
+    "CRITICAL": "Critical"
+  },
+  "effect": {
+    "alert": "Raise alert",
+    "note": "Recommendations are not generated automatically: create them from the alert or the scenario page."
+  },
+  "summary": {
+    "noCondition": "No condition",
+    "and": "and",
+    "or": "or",
+    "not": "not",
+    "every": "{count, plural, one {Every hour} other {Every # hours}}",
+    "threshold": "Threshold",
+    "cooldownNone": "None",
+    "cooldownHours": "{count, plural, one {# hour} other {# hours}}",
+    "cooldownMinutes": "{count, plural, one {# minute} other {# minutes}}",
+    "cooldownSeconds": "{count, plural, one {# second} other {# seconds}}"
+  },
+  "ops": {
+    "eq": "=",
+    "neq": "≠",
+    "gt": ">",
+    "gte": "≥",
+    "lt": "<",
+    "lte": "≤",
+    "in": "in",
+    "contains": "contains",
+    "exists": "has a value"
+  },
+  "bool": {
+    "true": "Yes",
+    "false": "No"
+  }
+}

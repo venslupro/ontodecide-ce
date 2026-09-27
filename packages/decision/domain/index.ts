@@ -1,16 +1,12 @@
 /**
- * @fileoverview Decision domain: impact propagation, simulation KPIs,
- * candidate actions, the recommendation state machine, advice validation
- * with the rule-based fallback, redaction and outcome evaluation. Pure TS.
+ * @fileoverview Decision domain: pure propagation, simulation, candidate
+ * generation, AI output validation and recommendation rules (no I/O).
  */
 
-export * from './advice';
+export * from './ai_ranking';
 export * from './candidates';
-export * from './mapping';
-export * from './outcome';
-export * from './prompts';
+export * from './focus';
+export * from './neurons';
 export * from './propagation';
-export * from './recommendation_state';
-export * from './redaction';
-export * from './similarity';
+export * from './recommendation';
 export * from './simulation';

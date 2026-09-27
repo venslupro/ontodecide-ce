@@ -1,10 +1,9 @@
 /**
- * @fileoverview Situation infrastructure: D1 repositories and the
- * SituationRoom / UsageGuard cores wrapped by Durable Objects.
+ * @fileoverview Situation infrastructure: the SituationRoom SQLite store,
+ * the room factory and in-memory runtime adapters.
  */
 
-export type {SituationRoomApi, UsageGuardApi} from '../application';
-export * from './d1_repositories';
+export * from './memory_runtime';
 export * from './situation_room_core';
+export * from './sql_room_store';
 export * from './sql_storage';
-export * from './usage_guard_core';

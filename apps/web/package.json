@@ -1,6 +1,6 @@
 {
   "name": "@ontodecide/web",
-  "version": "1.3.0",
+  "version": "2.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "deploy": "wrangler pages deploy dist --project-name ontodecide-ce"
+    "deploy": "wrangler pages deploy dist --project-name ontodecide-ce",
+    "lint": "eslint src e2e functions",
+    "test:platform": "vitest run src/app src/shared src/entities/session src/entities/quota src/entities/workspace src/features/identity src/features/admin src/pages/signup src/pages/login src/pages/ended src/pages/archive-deletions src/pages/account src/pages/admin src/locales"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

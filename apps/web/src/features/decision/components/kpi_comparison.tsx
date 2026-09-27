@@ -1,7 +1,7 @@
 /**
- * @fileoverview Three-way KPI comparison (baseline / scenario / scenario +
- * action): grouped bar chart and KPI table. All values come straight from the
- * simulator; the UI only derives relative deltas.
+ * @fileoverview Three-way comparison 基线 / 情景 / 情景 + 动作: bar chart and
+ * KPI table with units and good/bad colouring by `higherIsBetter`. All
+ * values come straight from the deterministic simulator (never an LLM).
  */
 
 import type {
@@ -11,24 +11,70 @@ import type {
 } from '@ontodecide/decision/contract';
 import {resolveText} from '@ontodecide/shared-kernel';
 import type {EChartsCoreOption} from 'echarts/core';
-import {Minus, TrendingDown, TrendingUp} from 'lucide-react';
+import {ArrowDown, ArrowUp, Cpu, Minus} from 'lucide-react';
 import {useCallback, useMemo} from 'react';
 import {useTranslation} from 'react-i18next';
 import {axisStyle, EChart} from '../../../shared/charts/chart';
-import {type ChartTokens, seriesColors} from '../../../shared/charts/theme';
+import type {ChartTokens} from '../../../shared/charts/theme';
 import {cn} from '../../../shared/lib/cn';
 import {fmt} from '../../../shared/lib/format';
 import {Table, TBody, Td, Th, THead, Tr} from '../../../shared/ui/table';
-import {kpiTrend, relDelta} from '../model';
+import {kpiRows, kpiTrend} from '../model';
 
-/** Grouped bar chart of the KPIs, normalized to % of baseline (tooltip shows raw values). */
+/** Formats a KPI value with its unit (`91.4%`, `37`, `4,800 ¥`). */
+export function formatKpi(
+  v: number | undefined,
+  meta: Pick<KpiMeta, 'unit'>,
+): string {
+  if (v === undefined || !Number.isFinite(v)) return '—';
+  const n = fmt.number(v, {maximumFractionDigits: 2});
+  if (!meta.unit) return n;
+  return meta.unit === '%' ? `${n}%` : `${n} ${meta.unit}`;
+}
+
+function Value({
+  meta,
+  from,
+  value,
+}: {
+  meta: KpiMeta;
+  from?: number;
+  value?: number;
+}) {
+  const {t} = useTranslation('scenarios');
+  const trend = from === undefined ? 'flat' : kpiTrend(meta, from, value);
+  const up = value !== undefined && from !== undefined && value > from;
+  const Icon = trend === 'flat' ? Minus : up ? ArrowUp : ArrowDown;
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center justify-end gap-1 num',
+        trend === 'good'
+          ? 'text-good'
+          : trend === 'bad'
+            ? 'text-orange'
+            : 'text-text',
+      )}
+    >
+      {from !== undefined && trend !== 'flat' && (
+        <Icon className="size-3.5" aria-hidden />
+      )}
+      <span>{formatKpi(value, meta)}</span>
+      {from !== undefined && trend !== 'flat' && (
+        <span className="sr-only">{t(`compare.trend.${trend}`)}</span>
+      )}
+    </span>
+  );
+}
+
+/** Grouped bar chart (values as % of baseline; tooltip shows raw values). */
 export function KpiChart({
   result,
-  withAction,
-  height = 240,
+  withActions,
+  height = 220,
 }: {
-  result: Pick<ScenarioResult, 'kpis' | 'baseline' | 'scenario'>;
-  withAction?: KpiSet;
+  result: ScenarioResult;
+  withActions?: KpiSet;
   height?: number;
 }) {
   const {t, i18n} = useTranslation('scenarios');
@@ -39,24 +85,23 @@ export function KpiChart({
       ),
     [result.kpis, i18n.language],
   );
-  const seriesNames = useMemo(
-    () => [t('kpi.baseline'), t('kpi.scenario'), t('kpi.withAction')],
-    [t],
-  );
-
   const option = useCallback(
     (tk: ChartTokens): EChartsCoreOption => {
+      const sets = [result.baseline, result.scenario, withActions];
+      const labels = [
+        t('compare.baseline'),
+        t('compare.scenario'),
+        t('compare.withActions'),
+      ];
+      const colors = [tk.muted, tk.orange, tk.cyan];
+      const used = withActions ? [0, 1, 2] : [0, 1];
       const pct = (set: KpiSet | undefined, k: KpiMeta) => {
         const b = result.baseline[k.apiName];
         const v = set?.[k.apiName];
         if (v === undefined || !b) return null;
         return Math.round((v / b) * 1000) / 10;
       };
-      const raw = [result.baseline, result.scenario, withAction];
-      const colors = seriesColors(tk);
-      const sets = withAction ? raw : raw.slice(0, 2);
       return {
-        color: colors,
         legend: {
           top: 0,
           right: 0,
@@ -68,20 +113,22 @@ export function KpiChart({
           trigger: 'axis',
           axisPointer: {type: 'shadow'},
           formatter: (
-            params: {
+            ps: {
               seriesIndex: number;
               dataIndex: number;
               marker: string;
               seriesName: string;
             }[],
           ) => {
-            const i = params[0]?.dataIndex ?? 0;
+            const i = ps[0]?.dataIndex ?? 0;
             const k = result.kpis[i];
-            const lines = params.map(p => {
-              const v = raw[p.seriesIndex]?.[k.apiName];
-              return `${p.marker}${p.seriesName}: ${fmt.number(v)}${k.unit ? ` ${k.unit}` : ''}`;
-            });
-            return [names[i], ...lines].join('<br/>');
+            return [
+              names[i],
+              ...ps.map(
+                p =>
+                  `${p.marker}${p.seriesName}: ${formatKpi(sets[used[p.seriesIndex]]?.[k.apiName], k)}`,
+              ),
+            ].join('<br/>');
           },
         },
         grid: {left: 8, right: 12, top: 32, bottom: 8, containLabel: true},
@@ -96,112 +143,75 @@ export function KpiChart({
           ...axisStyle(tk),
           axisLabel: {...axisStyle(tk).axisLabel, formatter: '{value}%'},
         },
-        series: sets.map((set, si) => ({
-          name: seriesNames[si],
+        series: used.map(si => ({
+          name: labels[si],
           type: 'bar',
           barMaxWidth: 26,
           barGap: '20%',
           itemStyle: {borderRadius: [4, 4, 0, 0], color: colors[si]},
-          data: result.kpis.map(k => pct(set, k)),
+          data: result.kpis.map(k => pct(sets[si], k)),
         })),
       };
     },
-    [result, withAction, names, seriesNames],
+    [result, withActions, names, t],
   );
-
   return (
     <EChart
       option={option}
       height={height}
-      ariaLabel={t('kpi.chartAria', {
-        kpis: names.join('、'),
-        count: withAction ? 3 : 2,
-      })}
+      ariaLabel={t('compare.chartAria', {kpis: names.join(', ')})}
     />
   );
 }
 
-function Delta({meta, delta}: {meta: KpiMeta; delta: number | null}) {
-  const {t} = useTranslation('scenarios');
-  const trend = kpiTrend(meta, delta);
-  if (delta === null) return <span className="text-dim">—</span>;
-  const Icon = trend === 'flat' ? Minus : delta > 0 ? TrendingUp : TrendingDown;
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 whitespace-nowrap num',
-        trend === 'good'
-          ? 'text-good'
-          : trend === 'bad'
-            ? 'text-crit'
-            : 'text-muted',
-      )}
-    >
-      <Icon className="size-3.5" aria-hidden />
-      <span>{fmt.signedPercent(delta)}</span>
-      <span className="text-[11px]">
-        {delta > 0 ? '▲' : delta < 0 ? '▼' : ''} {t(`kpi.trend.${trend}`)}
-      </span>
-    </span>
-  );
-}
-
-/** KPI table: baseline, scenario (Δ vs baseline), scenario + action (Δ vs scenario). */
+/** KPI table: KPI, 基线, 情景 (vs baseline), +动作 (vs scenario). */
 export function KpiTable({
   result,
-  withAction,
-  caption,
+  withActions,
 }: {
-  result: Pick<ScenarioResult, 'kpis' | 'baseline' | 'scenario'>;
-  withAction?: KpiSet;
-  caption?: string;
+  result: ScenarioResult;
+  withActions?: KpiSet;
 }) {
   const {t, i18n} = useTranslation('scenarios');
   return (
-    <Table aria-label={caption ?? t('kpi.tableAria')}>
+    <Table aria-label={t('compare.tableAria')}>
       <THead>
         <Tr>
-          <Th>{t('kpi.name')}</Th>
-          <Th>{t('kpi.unit')}</Th>
-          <Th className="text-right">{t('kpi.baseline')}</Th>
-          <Th className="text-right">{t('kpi.scenario')}</Th>
-          <Th>{t('kpi.deltaBaseline')}</Th>
-          {withAction && (
-            <>
-              <Th className="text-right">{t('kpi.withAction')}</Th>
-              <Th>{t('kpi.deltaScenario')}</Th>
-            </>
-          )}
+          <Th>{t('compare.kpi')}</Th>
+          <Th className="text-right">{t('compare.baseline')}</Th>
+          <Th className="text-right">{t('compare.scenario')}</Th>
+          <Th className="text-right">{t('compare.withActionsShort')}</Th>
         </Tr>
       </THead>
       <TBody>
-        {result.kpis.map(k => {
-          const b = result.baseline[k.apiName];
-          const s = result.scenario[k.apiName];
-          const a = withAction?.[k.apiName];
-          return (
-            <Tr key={k.apiName}>
-              <Td className="font-medium">
-                {resolveText(k.displayName, i18n.language, k.apiName)}
-              </Td>
-              <Td className="text-muted">{k.unit ?? '—'}</Td>
-              <Td className="text-right num">{fmt.number(b)}</Td>
-              <Td className="text-right num">{fmt.number(s)}</Td>
-              <Td>
-                <Delta meta={k} delta={relDelta(b, s)} />
-              </Td>
-              {withAction && (
-                <>
-                  <Td className="text-right num">{fmt.number(a)}</Td>
-                  <Td>
-                    <Delta meta={k} delta={relDelta(s, a)} />
-                  </Td>
-                </>
-              )}
-            </Tr>
-          );
-        })}
+        {kpiRows(result, withActions).map(r => (
+          <Tr key={r.meta.apiName} data-testid="kpi-row">
+            <Td className="font-medium">
+              {resolveText(r.meta.displayName, i18n.language, r.meta.apiName)}
+            </Td>
+            <Td className="text-right">
+              <Value meta={r.meta} value={r.baseline} />
+            </Td>
+            <Td className="text-right">
+              <Value meta={r.meta} from={r.baseline} value={r.scenario} />
+            </Td>
+            <Td className="text-right">
+              <Value meta={r.meta} from={r.scenario} value={r.withActions} />
+            </Td>
+          </Tr>
+        ))}
       </TBody>
     </Table>
+  );
+}
+
+/** The 「数值由确定性推演器计算，不经过 LLM」 note. */
+export function DeterministicNote() {
+  const {t} = useTranslation('scenarios');
+  return (
+    <p className="flex items-center gap-1.5 text-xs text-dim">
+      <Cpu className="size-3.5" aria-hidden />
+      {t('compare.note')}
+    </p>
   );
 }

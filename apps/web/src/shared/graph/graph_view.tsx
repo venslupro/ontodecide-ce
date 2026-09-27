@@ -60,7 +60,7 @@ export function GraphView({
   ariaLabel,
   className,
 }: GraphViewProps) {
-  const {t} = useTranslation('common');
+  const {t} = useTranslation('objects');
   const el = useRef<HTMLDivElement>(null);
   const cy = useRef<Core | null>(null);
   const tokens = useChartTokens();

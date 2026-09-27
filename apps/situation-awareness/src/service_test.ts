@@ -1,173 +1,157 @@
 /**
- * @fileoverview Wiring test of the situation-awareness service module: RPC,
- * queue, cron and the WebSocket stream forwarding.
+ * @fileoverview situation-awareness service tests: the composed service
+ * over FakeDoNamespace rooms (RPC, domain-events queue, lifecycle, stream
+ * fetch guards) and the Durable Object runtime adapters.
  */
 
-import type {
-  ObjectGraphRpc,
-  SituationEventMsg,
-} from '@ontodecide/object-graph/contract';
-import {
-  AppError,
-  CTX_HEADER,
-  FixedClock,
-  type Rid,
-  encodeCtx,
-  silentLogger,
-} from '@ontodecide/shared-kernel';
-import type {DecisionJobMsg} from '@ontodecide/situation/contract';
-import {
-  SituationRoomCore,
-  UsageGuardCore,
-} from '@ontodecide/situation/infrastructure';
 import {describe, expect, it} from 'vitest';
+import {FixedClock, silentLogger} from '@ontodecide/shared-kernel';
+import type {SituationRoomCore} from '@ontodecide/situation/application';
+import {
+  InMemoryRoomStorage,
+  MemorySocketHub,
+} from '@ontodecide/situation/infrastructure';
 import {
   FakeDoNamespace,
   MemorySqlStorage,
   QueueBus,
-  createTestD1,
+  TEST_TID,
   rpcBinding,
   testCtx,
 } from '@ontodecide/testing';
+import {
+  FakeObjects,
+  FakeOntology,
+  event,
+} from '../../../packages/situation/infrastructure/room_test_fixtures';
+import {DoRoomStorage, DoSocketHub, wrapSocket} from './durable_objects';
 import type {Env} from './env';
-import {createService} from './service';
+import {createRoomCore, createService} from './service';
 
-const S1 = 'ri.t1.Supplier.S1' as Rid;
+const S1 = 'ri.Supplier.01K6A0000000000000000000S1';
 
 function setup() {
+  const objects = new FakeObjects();
+  const ontology = new FakeOntology();
   const clock = new FixedClock('2026-09-24T10:00:00Z');
-  const bus = new QueueBus();
-  const rooms = new FakeDoNamespace(
-    () => new SituationRoomCore(new MemorySqlStorage(), undefined, clock),
-  );
-  const forwarded: {tenant: string; url: string}[] = [];
-  // Request objects cannot be structured-cloned, so `fetch` is served here.
-  const roomNs = {
-    idFromName: (n: string) => rooms.idFromName(n),
-    get: (id: DurableObjectId) =>
-      new Proxy(rooms.get(id), {
-        get(target, prop) {
-          if (prop === 'fetch') {
-            return async (req: Request) => {
-              forwarded.push({tenant: String(id), url: req.url});
-              return new Response('room', {status: 200});
-            };
-          }
-          return (target as unknown as Record<string | symbol, unknown>)[prop];
-        },
-      }),
-  } as unknown as DurableObjectNamespace;
-  const usage = new FakeDoNamespace(
-    () => new UsageGuardCore(new MemorySqlStorage(), {clock}),
-  );
-  const objects = {
-    aggregate: async () => 1,
-    evaluateObjectSet: async () => ({items: [], nextCursor: null}),
-    applyAction: async () => {
-      throw new Error('unused');
-    },
-  };
-  const env: Env = {
-    SITUATION_DB: createTestD1('situation'),
-    SITUATION_ROOM: roomNs,
-    USAGE_GUARD: usage.asNamespace(),
-    OBJECTS: rpcBinding(objects) as unknown as ObjectGraphRpc,
-    DECISION_JOBS_QUEUE: bus.sender<DecisionJobMsg>('decision-jobs'),
-    INGEST_QUEUE: bus.sender('ingest'),
-    OBJECT_WRITES_QUEUE: bus.sender('object-writes'),
-    GRAPH_SYNC_QUEUE: bus.sender('graph-sync'),
-    SITUATION_EVENTS_QUEUE: bus.sender('situation-events'),
-  };
+  const hubs = new Map<string, MemorySocketHub>();
+  const env = {} as Env;
+  const ns = new FakeDoNamespace<SituationRoomCore>(name => {
+    const sql = new MemorySqlStorage();
+    const hub = new MemorySocketHub();
+    hubs.set(name, hub);
+    return createRoomCore(
+      env,
+      {sql, storage: new InMemoryRoomStorage(sql), sockets: hub},
+      {clock, logger: silentLogger},
+    );
+  });
+  Object.assign(env, {
+    SITUATION_ROOM: ns.asNamespace(),
+    OBJECTS: rpcBinding(objects) as unknown as Env['OBJECTS'],
+    ONTOLOGY: rpcBinding(ontology) as unknown as Env['ONTOLOGY'],
+    APP_ORIGIN: 'https://app.example.com',
+    ENVIRONMENT: 'test',
+  } satisfies Env);
   const svc = createService(env, {clock, logger: silentLogger});
-  return {svc, bus, rooms, forwarded, clock};
+  return {svc, objects, ontology, ns, hubs, clock};
 }
 
 describe('situation-awareness service', () => {
-  it('forwards the stream to the tenant room with x-od-ctx', async () => {
-    const {svc, forwarded} = setup();
-    const url = 'https://sit/api/v1/situation/stream?lastSeq=3';
-    const res = await svc.fetch!(
-      new Request(url, {
-        headers: {[CTX_HEADER]: encodeCtx(testCtx({role: 'Viewer'}))},
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(forwarded).toEqual([{tenant: 't1', url}]);
+  it('serves the cockpit and consumes domain-events end to end', async () => {
+    const {svc, objects} = setup();
+    objects.put(S1, {risk: 10});
+    const ctx = testCtx();
+    const first = await svc.rpc.overview(ctx, {range: '24h'});
+    expect(first.initialized).toBe(true);
+    expect(first.alerts).toHaveLength(0);
 
-    const missing = await svc.fetch!(new Request(url));
-    expect(missing.status).toBe(401);
-    expect(await missing.json()).toMatchObject({code: 'AUTH_INVALID'});
-    const other = await svc.fetch!(new Request('https://sit/other'));
-    expect(other.status).toBe(404);
+    objects.put(S1, {risk: 95});
+    const bus = new QueueBus();
+    await bus
+      .sender('ontodecide-prd-domain-events')
+      .send(event([[S1, ['risk']]]));
+    await bus.drain({
+      'ontodecide-prd-domain-events': {
+        handler: b => svc.queue(b),
+        deadLetterQueue: 'ontodecide-prd-dead-letter',
+      },
+    });
+    expect(bus.size('ontodecide-prd-dead-letter')).toBe(0);
+    const after = await svc.rpc.overview(ctx, {range: '24h'});
+    expect(after.alerts).toHaveLength(1);
+    const acked = await svc.rpc.acknowledgeAlert(ctx, after.alerts[0].id);
+    expect(acked.status).toBe('ACKED');
+
+    const {ticket} = await svc.rpc.issueStreamTicket(ctx);
+    expect(ticket.startsWith(`${TEST_TID}.`)).toBe(true);
   });
 
-  it('wires queue, rpc and cron end to end', async () => {
-    const {svc, bus, rooms} = setup();
-    const rpc = rpcBinding(svc.rpc);
-    const ctx = testCtx();
-    await rpc.installPackContent(ctx, {
-      automations: [
-        {
-          name: 'Supplier risk high',
-          trigger: {kind: 'threshold', objectType: 'Supplier'},
-          condition: {op: 'gte', prop: 'riskScore', value: 70},
-          effects: [
-            {kind: 'alert'},
-            {
-              kind: 'recommend',
-              perturbation: {property: 'capacity', change: -0.6},
-            },
-          ],
-          severity: 'HIGH',
-        },
-      ],
-      kpis: [
-        {
-          name: 'Suppliers',
-          objectSet: {objectType: 'Supplier'},
-          aggregate: {fn: 'count'},
-        },
-      ],
-    });
-    const msg: SituationEventMsg = {
-      eventId: 'e1',
-      tenantId: 't1',
-      kind: 'ObjectsUpserted',
-      occurredAt: '2026-09-24T10:00:00.000Z',
-      correlationId: 'c1',
-      changes: [
-        {
-          rid: S1,
-          type: 'Supplier',
-          title: 'Acme',
-          changed: ['riskScore'],
-          after: {riskScore: 82},
-        },
-      ],
-    };
-    await bus.sender('situation-events').send(msg);
-    await bus.drain({
-      'situation-events': {handler: b => svc.queue!(b)},
-    });
-    expect(await rpc.listAlerts(ctx)).toHaveLength(1);
-    expect(bus.size('decision-jobs')).toBe(1);
+  it('exposes the lifecycle entry point', async () => {
+    const {svc, objects, hubs} = setup();
+    objects.put(S1, {risk: 95});
+    await svc.rpc.overview(testCtx(), {range: '24h'});
+    const page = await svc.lifecycle.exportTenant(TEST_TID, null);
+    expect(page).toMatchObject({file: 'situation.json', nextCursor: null});
+    const s = hubs.get(TEST_TID)!.accept({sub: 'u', actingAs: false, n: 1});
+    await svc.lifecycle.closeStreams(TEST_TID, 4401);
+    expect(s.closed?.code).toBe(4401);
+    expect((await svc.lifecycle.purgeTenant(TEST_TID, 500)).done).toBe(true);
+    expect(await svc.lifecycle.countTenant(TEST_TID)).toBe(0);
+  });
 
-    const snap = await rooms.instance('t1').snapshot();
-    expect(snap.data).toMatchObject({
-      kpis: [{value: 1}],
-      alerts: [{rid: S1, severity: 'HIGH'}],
-    });
+  it('guards the stream endpoint (Origin, upgrade, ticket)', async () => {
+    const {svc, ns} = setup();
+    const url = `https://app.example.com/api/v1/situation/stream?ticket=${TEST_TID}.abcdefghijklmnopqrstuvwx`;
+    const upgrade = {Upgrade: 'websocket'};
+    const evil = await svc.fetch(
+      new Request(url, {headers: {...upgrade, Origin: 'https://evil.example'}}),
+    );
+    expect(evil.status).toBe(403);
+    expect((await svc.fetch(new Request(url))).status).toBe(426);
+    const bad = await svc.fetch(
+      new Request('https://app.example.com/api/v1/situation/stream?ticket=x', {
+        headers: {...upgrade, Origin: 'https://app.example.com'},
+      }),
+    );
+    expect(bad.status).toBe(401);
+    expect(ns.instances.size).toBe(0);
+  });
+});
 
-    await svc.scheduled!('0 * * * *', new Date('2026-09-24T11:00:00Z'));
-    try {
-      await rpc.saveKpi(testCtx({role: 'Viewer'}), {
-        name: 'x',
-        objectSet: {objectType: 'Supplier'},
-        aggregate: {fn: 'count'},
-      });
-      throw new Error('expected FORBIDDEN');
-    } catch (e) {
-      expect(AppError.from(e).code).toBe('FORBIDDEN');
-    }
+describe('Durable Object adapters', () => {
+  it('wraps hibernatable sockets and storage', async () => {
+    const calls: string[] = [];
+    const fakeWs = (sub: string, n: number) =>
+      ({
+        deserializeAttachment: () => ({sub, actingAs: false, n}),
+        send: (t: string) => calls.push(`send:${sub}:${t}`),
+        close: (c: number) => calls.push(`close:${sub}:${c}`),
+      }) as unknown as WebSocket;
+    const sockets = [fakeWs('a', 1), fakeWs('b', 2)];
+    const state = {
+      getWebSockets: (tag?: string) =>
+        tag ? sockets.filter(s => wrapSocket(s).meta.sub === tag) : sockets,
+    } as unknown as DurableObjectState;
+    const hub = new DoSocketHub(state);
+    expect(hub.list().map(s => s.meta.n)).toEqual([1, 2]);
+    const [b] = hub.list('b');
+    b.send('x');
+    b.close(4401, 'bye');
+    expect(calls).toEqual(['send:b:x', 'close:b:4401']);
+
+    let alarm: number | null = null;
+    const storage = new DoRoomStorage({
+      deleteAll: async () => calls.push('deleteAll'),
+      getAlarm: async () => alarm,
+      setAlarm: async (t: number) => void (alarm = t),
+      deleteAlarm: async () => void (alarm = null),
+    } as unknown as DurableObjectStorage);
+    await storage.setAlarm(5);
+    expect(await storage.getAlarm()).toBe(5);
+    await storage.deleteAlarm();
+    expect(await storage.getAlarm()).toBeNull();
+    await storage.deleteAll();
+    expect(calls).toContain('deleteAll');
   });
 });

@@ -1,92 +1,4 @@
 {
-  "brand": {
-    "tagline": "Decision cockpit"
-  },
-  "nav": {
-    "label": "Main navigation",
-    "groups": {
-      "monitor": "Monitor",
-      "decide": "Decide",
-      "data": "Data & ontology",
-      "admin": "Admin"
-    },
-    "cockpit": "Overview",
-    "objects": "Objects",
-    "graph": "Graph explorer",
-    "scenarios": "Scenarios",
-    "recommendations": "Recommendations",
-    "automations": "Automations",
-    "sources": "Data sources",
-    "ontology": "Ontology",
-    "users": "Users & access",
-    "health": "System health"
-  },
-  "topbar": {
-    "language": "Interface language",
-    "theme": "Switch theme (current: {theme})",
-    "notifications": "Notifications, {count, plural, one {# unread} other {# unread}}",
-    "notificationsTitle": "Notifications",
-    "noNotifications": "No notifications",
-    "pendingRec": "Pending recommendation",
-    "userMenu": "User menu",
-    "about": "About",
-    "logout": "Sign out",
-    "version": "Version",
-    "expandNav": "Expand navigation",
-    "collapseNav": "Collapse navigation"
-  },
-  "theme": {
-    "dark": "Dark",
-    "light": "Light",
-    "system": "System"
-  },
-  "search": {
-    "label": "Global search",
-    "placeholder": "Search object name or RID…",
-    "openRid": "Open"
-  },
-  "quota": {
-    "label": "Highest free-tier usage {pct}",
-    "title": "Free-tier usage today",
-    "critical": "almost exhausted",
-    "warning": "high",
-    "writePaused": "Today's free quota is almost used up; writes may be paused. Reads and approvals still work.",
-    "resources": {
-      "workers_requests": "Workers requests",
-      "d1_rowsWritten": "D1 rows written",
-      "d1_rowsRead": "D1 rows read",
-      "queues_ops": "Queue operations",
-      "kv_writes": "KV writes",
-      "ai_neurons": "AI neurons",
-      "do_requests": "Durable Object requests"
-    }
-  },
-  "banner": {
-    "offline": "You are offline. Writes are disabled and data will refresh when the connection returns.",
-    "realtimeDown": "Realtime disconnected — polling every 30 s while reconnecting in the background.",
-    "quota": "Today's free quota is almost used up; writes may be rejected."
-  },
-  "realtime": {
-    "idle": "Not connected",
-    "connecting": "Connecting",
-    "open": "Live",
-    "reconnecting": "Reconnecting",
-    "polling": "Polling",
-    "paused": "Paused",
-    "closed": "Disconnected"
-  },
-  "a11y": {
-    "skipToContent": "Skip to main content"
-  },
-  "roles": {
-    "Viewer": "Viewer",
-    "Operator": "Operator",
-    "Modeler": "Modeler",
-    "Admin": "Admin"
-  },
-  "permission": {
-    "required": "This page requires the \"{role}\" role or higher. Ask an administrator for access."
-  },
   "actions": {
     "close": "Close",
     "retry": "Retry",
@@ -120,7 +32,8 @@
     "run": "Run",
     "enable": "Enable",
     "disable": "Disable",
-    "loadMore": "Load more"
+    "loadMore": "Load more",
+    "signOut": "Sign out"
   },
   "state": {
     "loading": "Loading…",
@@ -130,40 +43,6 @@
     "saved": "Saved",
     "updatedAt": "Updated {time}",
     "total": "{count, number} total"
-  },
-  "errors": {
-    "generic": "Something went wrong. Please try again.",
-    "errorId": "Error ID",
-    "renderFailed": "This page crashed",
-    "pageNotFound": "Page not found",
-    "NETWORK": "Network error — check your connection",
-    "ABORTED": "Request cancelled",
-    "HTTP_ERROR": "The server returned an error",
-    "VALIDATION_FAILED": "Invalid input — please check and try again",
-    "PERTURBATION_INVALID": "Invalid perturbation",
-    "OBJECT_SET_INVALID": "Invalid object set definition",
-    "AUTH_INVALID": "Wrong email or password",
-    "AUTH_EXPIRED": "Your session expired. Please sign in again.",
-    "SIGNATURE_INVALID": "Signature verification failed",
-    "FORBIDDEN": "You don't have permission",
-    "NOT_FOUND": "Not found",
-    "OBJECT_NOT_FOUND": "The object does not exist or was deleted",
-    "SOURCE_NOT_FOUND": "Data source not found",
-    "CONFLICT": "Conflict — refresh and try again",
-    "APPROVAL_REQUIRED": "This action requires approval. Go to Recommendations.",
-    "INVALID_TRANSITION": "Not allowed in the current state",
-    "REPLAY": "Duplicate request ignored",
-    "VERSION_CONFLICT": "Someone else changed this object. Refresh and retry.",
-    "BATCH_TOO_LARGE": "Batch too large",
-    "PRECONDITION_FAILED": "Preconditions not met",
-    "ONTOLOGY_BREAKING_CHANGE": "Breaking changes — confirm the new version",
-    "ONTOLOGY_INVALID": "Invalid ontology definition",
-    "GRAPH_TOO_LARGE": "Graph too large — narrow the scope",
-    "AUTH_LOCKED": "Account temporarily locked. Try again later.",
-    "RATE_LIMITED": "Too many requests. Retry in {seconds} s.",
-    "INTERNAL": "Internal server error",
-    "UPSTREAM_FAILED": "An upstream service is unavailable",
-    "QUOTA_EXCEEDED": "Today's free quota is almost used up; writes are unavailable"
   },
   "severity": {
     "LOW": "Low",
@@ -178,8 +57,8 @@
   },
   "recStatus": {
     "Draft": "Generating",
-    "Proposed": "Proposed",
-    "Approved": "Approved",
+    "Proposed": "Pending confirmation",
+    "Approved": "Confirmed",
     "Rejected": "Rejected",
     "Expired": "Expired",
     "Executed": "Executed",
@@ -207,9 +86,6 @@
     "true": "Yes",
     "false": "No"
   },
-  "markings": {
-    "hidden": "No access (requires markings)"
-  },
   "picker": {
     "placeholder": "Search objects…",
     "typeToSearch": "Type a name or RID",
@@ -221,22 +97,6 @@
   "time": {
     "range24h": "24 h",
     "range7d": "7 d"
-  },
-  "login": {
-    "badge": "Ontology-driven · Realtime · Explainable",
-    "heroTitle1": "From data to decisions,",
-    "heroTitle2": "the whole picture on one screen",
-    "heroSubtitle": "OntoDecide links your data through a business ontology to sense risk in real time, simulate impact and recommend traceable actions.",
-    "feature1": "Ontology-driven object & relationship graph",
-    "feature2": "Scenario simulation with AI recommendations",
-    "feature3": "Audited approvals with a traceable evidence chain",
-    "title": "Sign in",
-    "subtitle": "Sign in to the operations cockpit with your work email",
-    "email": "Email",
-    "emailInvalid": "Enter a valid email address",
-    "password": "Password",
-    "passwordRequired": "Enter your password",
-    "submit": "Sign in"
   },
   "filter": {
     "condition": "Condition {n}",
@@ -266,5 +126,116 @@
       "contains": "contains",
       "exists": "has value"
     }
+  },
+  "brand": {
+    "edition": "Community · Trial",
+    "editionAdmin": "Community · Admin",
+    "editionShort": "Community Edition"
+  },
+  "nav": {
+    "label": "Main navigation",
+    "group": {
+      "operate": "Operate",
+      "build": "Build",
+      "mine": "Mine",
+      "platform": "Platform"
+    },
+    "cockpit": "Overview",
+    "objects": "Objects",
+    "graph": "Graph",
+    "scenarios": "Scenarios",
+    "recommendations": "Recommendations",
+    "imports": "Data import",
+    "ontology": "Ontology",
+    "automations": "Automations",
+    "account": "Account & data",
+    "admin": "Platform admin"
+  },
+  "search": {
+    "label": "Global search",
+    "placeholder": "Search objects, RIDs, alerts...",
+    "openRid": "Open"
+  },
+  "realtime": {
+    "idle": "Not connected",
+    "connecting": "Connecting",
+    "open": "Live",
+    "reconnecting": "Reconnecting",
+    "polling": "Live connection lost",
+    "paused": "Paused (page hidden)",
+    "ended": "Ended",
+    "closed": "Disconnected"
+  },
+  "banner": {
+    "offline": "You are offline. Writes are disabled; data reloads when the connection is back.",
+    "realtimeDown": "Live connection lost; polling every 30 s while reconnecting in the background.",
+    "adminSession": "Your admin session ends in {left}; you will need to sign in again."
+  },
+  "lang": {
+    "label": "Interface language"
+  },
+  "role": {
+    "owner": "Owner",
+    "admin": "Platform admin",
+    "ownerFull": "Owner",
+    "adminFull": "Platform admin"
+  },
+  "account": {
+    "menu": "Account menu"
+  },
+  "trial": {
+    "left": "Trial remaining",
+    "progress": "Trial time used",
+    "linkNote": "Download link is e-mailed at expiry"
+  },
+  "adminCard": {
+    "title": "Never expires · cannot be deleted",
+    "note": "Created at deployment, system-unique"
+  },
+  "expiry": {
+    "title": "Your trial ends at {time} ({tz}), {left} left",
+    "body": "Your data is then packed as a ZIP and the download link is e-mailed to you; it is deleted after 7 days. The e-mail is sent only once, so export now.",
+    "export": "Export now"
+  },
+  "quota": {
+    "objects": "Objects",
+    "links": "Links",
+    "importRowsToday": "Rows imported today",
+    "aiRecsToday": "AI recommendations today",
+    "mappingDraftsToday": "AI mapping drafts today",
+    "sessions": "Active sessions",
+    "usedUp": "used up today",
+    "resetNote": "Resets daily at 00:00 UTC · next {time} ({tz})"
+  },
+  "forbidden": {
+    "body": "This page is only available to the platform admin.",
+    "back": "Back to overview"
+  },
+  "a11y": {
+    "skipToContent": "Skip to main content"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "errorId": "Error ID",
+    "pageNotFound": "Page not found",
+    "UNAUTHENTICATED": "Please sign in again",
+    "TRIAL_EXPIRED": "Your trial has ended; the download link was sent to your e-mail",
+    "SIGNUP_CLOSED": "Today's sign-ups are full, please try again tomorrow",
+    "QUOTA_EXCEEDED": "Today's {what} is used up; resets at {resetAt}",
+    "RATE_LIMITED": "Too many requests, retry in {seconds} s",
+    "CODE_INVALID": "Incorrect code, {left} attempts left",
+    "PRECONDITION_FAILED": "This was changed in another window",
+    "CONFLICT": "The current state does not allow this action",
+    "NOT_FOUND": "Not found",
+    "VALIDATION_FAILED": "Please check the highlighted fields",
+    "FORBIDDEN": "You are not allowed to do this",
+    "INTERNAL": "Server error, please try again later",
+    "UNAVAILABLE": "Service unavailable, please try again later",
+    "NETWORK": "You are offline",
+    "ABORTED": "Request cancelled",
+    "HTTP_ERROR": "The server returned an error",
+    "SERVER": "Temporary server error, please try again later",
+    "PAYLOAD_TOO_LARGE": "Content too large (request body limit is 512 KB)",
+    "RENDER": "Something went wrong on this page"
   }
 }

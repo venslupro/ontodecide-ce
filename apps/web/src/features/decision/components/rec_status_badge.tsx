@@ -1,14 +1,13 @@
 /**
- * @fileoverview Recommendation status and model badges.
+ * @fileoverview Recommendation status badge (icon + text + color).
  */
 
 import type {RecStatus} from '@ontodecide/decision/contract';
-import {Cpu} from 'lucide-react';
 import {useTranslation} from 'react-i18next';
-import {AiBadge, Badge, StatusBadge} from '../../../shared/ui/badge';
+import {StatusBadge} from '../../../shared/ui/badge';
 import {recStatusLevel} from '../model';
 
-/** Localized status badge (icon + text + color). */
+/** Status badge: 待确认 / 已确认 / 已执行 / 已驳回 / 已过期 / 执行失败. */
 export function RecStatusBadge({
   status,
   className,
@@ -16,30 +15,10 @@ export function RecStatusBadge({
   status: RecStatus;
   className?: string;
 }) {
-  const {t} = useTranslation('common');
+  const {t} = useTranslation('recommendations');
   return (
     <StatusBadge level={recStatusLevel(status)} className={className}>
-      {t(`recStatus.${status}`, {defaultValue: status})}
+      {t(`status.${status}`)}
     </StatusBadge>
   );
-}
-
-/** `AiBadge` for LLM output, or a neutral "rules" badge for the rule-based fallback. */
-export function RecSourceBadge({
-  model,
-  className,
-}: {
-  model: string;
-  className?: string;
-}) {
-  const {t} = useTranslation('recommendations');
-  if (model === 'rules') {
-    return (
-      <Badge tone="blue" className={className} title={t('rulesHint')}>
-        <Cpu aria-hidden />
-        {t('rulesBadge')}
-      </Badge>
-    );
-  }
-  return <AiBadge className={className} />;
 }

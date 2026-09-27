@@ -1,84 +1,174 @@
 /**
- * @fileoverview Tests for KPI series helpers and the default layout.
+ * @fileoverview Tests of KPI math: contributions, full computation and
+ * incremental updates (including min / max recompute signalling).
  */
 
-import {DAY_MS, HOUR_MS, MINUTE_MS} from '@ontodecide/shared-kernel';
 import {describe, expect, it} from 'vitest';
-import {cockpitLayoutSchema} from '../contract';
-import {bucket5m, previousValue, sparkline, trend} from './kpi';
-import {defaultLayout} from './layout';
+import {
+  type KpiDefinition,
+  type KpiState,
+  METRIC_BUCKET_MS,
+  applyKpiDelta,
+  bucketStart,
+  computeKpi,
+  kpiContribution,
+  nextBucket,
+} from './kpi';
 
-const NOW = Date.parse('2026-09-24T10:02:30Z');
+const def = (
+  fn: KpiDefinition['aggregate']['fn'],
+  extra: Partial<KpiDefinition> = {},
+): KpiDefinition => ({
+  id: `k-${fn}`,
+  name: fn,
+  objectType: 'Supplier',
+  aggregate: fn === 'count' ? {fn} : {fn, prop: 'risk'},
+  unit: null,
+  target: null,
+  higherIsBetter: false,
+  ...extra,
+});
 
-describe('bucket5m', () => {
-  it('floors to 5 minutes', () => {
-    expect(new Date(bucket5m(NOW)).toISOString()).toBe(
+const obj = (props: Record<string, unknown>, type = 'Supplier') => ({
+  rid: 'ri.Supplier.1',
+  type,
+  title: 't',
+  props,
+});
+
+/** Applies a sequence of (before, after) changes incrementally. */
+function run(
+  d: KpiDefinition,
+  initial: number[],
+  changes: [number | null, number | null][],
+): {state: KpiState; recomputes: number} {
+  const values = [...initial];
+  let state = computeKpi(d, values);
+  let recomputes = 0;
+  for (const [b, a] of changes) {
+    if (b !== null) values.splice(values.indexOf(b), 1);
+    if (a !== null) values.push(a);
+    const next = applyKpiDelta(d, state, b, a);
+    if (next === null) {
+      recomputes++;
+      state = computeKpi(d, values);
+    } else {
+      state = next;
+    }
+    expect(state.value).toEqual(computeKpi(d, values).value);
+  }
+  return {state, recomputes};
+}
+
+describe('kpiContribution', () => {
+  it('counts matching objects of the KPI type only', () => {
+    const d = def('count', {filter: {op: 'gte', prop: 'risk', value: 50}});
+    expect(kpiContribution(d, obj({risk: 60}))).toBe(1);
+    expect(kpiContribution(d, obj({risk: 10}))).toBeNull();
+    expect(kpiContribution(d, obj({risk: 60}, 'Part'))).toBeNull();
+    expect(kpiContribution(d, null)).toBeNull();
+  });
+
+  it('ignores non-numeric values for numeric aggregates', () => {
+    expect(kpiContribution(def('sum'), obj({risk: '7'}))).toBeNull();
+    expect(kpiContribution(def('sum'), obj({}))).toBeNull();
+    expect(kpiContribution(def('sum'), obj({risk: 7.5}))).toBe(7.5);
+  });
+});
+
+describe('computeKpi', () => {
+  it('computes every aggregate', () => {
+    const v = [3, 9, 6];
+    expect(computeKpi(def('count'), [1, 1, 1]).value).toBe(3);
+    expect(computeKpi(def('sum'), v).value).toBe(18);
+    expect(computeKpi(def('avg'), v).value).toBe(6);
+    expect(computeKpi(def('min'), v).value).toBe(3);
+    expect(computeKpi(def('max'), v).value).toBe(9);
+  });
+
+  it('handles empty inputs', () => {
+    expect(computeKpi(def('count'), []).value).toBe(0);
+    expect(computeKpi(def('sum'), []).value).toBe(0);
+    expect(computeKpi(def('avg'), []).value).toBeNull();
+    expect(computeKpi(def('max'), []).value).toBeNull();
+  });
+});
+
+describe('applyKpiDelta', () => {
+  it('keeps sum and avg exact across inserts, updates and removals', () => {
+    for (const fn of ['sum', 'avg', 'count'] as const) {
+      const {recomputes} = run(
+        def(fn),
+        [10, 20],
+        [
+          [null, 30],
+          [10, 15],
+          [20, null],
+          [null, 0.1],
+          [0.1, 0.2],
+        ],
+      );
+      expect(recomputes).toBe(0);
+    }
+  });
+
+  it('avoids floating-point drift', () => {
+    const d = def('sum');
+    let s = computeKpi(d, []);
+    s = applyKpiDelta(d, s, null, 0.1)!;
+    s = applyKpiDelta(d, s, null, 0.2)!;
+    expect(s.value).toBe(0.3);
+  });
+
+  it('asks for a recompute only when the extremum leaves', () => {
+    const {recomputes} = run(
+      def('max'),
+      [10, 50, 30],
+      [
+        [10, 20], // not the max
+        [null, 60], // new max
+        [60, 70], // max grows: incremental
+        [70, 40], // max shrinks: recompute
+        [30, null], // non-max removal
+        [50, null], // max removed: recompute
+      ],
+    );
+    expect(recomputes).toBe(2);
+    const min = run(
+      def('min'),
+      [5, 8],
+      [
+        [5, 1],
+        [1, 9],
+      ],
+    );
+    expect(min.recomputes).toBe(1);
+    expect(min.state.value).toBe(8);
+  });
+
+  it('is a no-op when the contribution does not change', () => {
+    const d = def('sum');
+    const s = computeKpi(d, [1]);
+    expect(applyKpiDelta(d, s, 1, 1)).toBe(s);
+  });
+
+  it('empties min / max when the last object leaves', () => {
+    const d = def('min');
+    expect(applyKpiDelta(d, computeKpi(d, [4]), 4, null)).toEqual({
+      cnt: 0,
+      total: 0,
+      value: null,
+    });
+  });
+});
+
+describe('metric buckets', () => {
+  it('snaps to 15-minute boundaries', () => {
+    const t = Date.parse('2026-09-24T10:07:30Z');
+    expect(new Date(bucketStart(t)).toISOString()).toBe(
       '2026-09-24T10:00:00.000Z',
     );
-  });
-});
-
-describe('previousValue', () => {
-  it('picks the point closest to 24 h ago', () => {
-    const points = [
-      {ts: NOW - DAY_MS - 30 * MINUTE_MS, value: 1},
-      {ts: NOW - DAY_MS + 5 * MINUTE_MS, value: 2},
-      {ts: NOW - HOUR_MS, value: 3},
-    ];
-    expect(previousValue(points, NOW)).toBe(2);
-  });
-
-  it('returns null when nothing is within ±1 h', () => {
-    expect(previousValue([{ts: NOW - HOUR_MS, value: 3}], NOW)).toBeNull();
-    expect(previousValue([], NOW)).toBeNull();
-  });
-});
-
-describe('sparkline', () => {
-  it('keeps the last value per hour, oldest first, at most 24', () => {
-    const points = [];
-    for (let i = 0; i < 48 * 12; i++) {
-      points.push({ts: NOW - i * 5 * MINUTE_MS, value: i});
-    }
-    const spark = sparkline(points, NOW);
-    expect(spark.length).toBeLessThanOrEqual(25);
-    expect(spark.length).toBeGreaterThanOrEqual(24);
-    expect(spark[spark.length - 1]).toBe(0);
-    expect(spark[0]).toBeGreaterThan(spark[1]);
-  });
-
-  it('skips hours without data', () => {
-    expect(sparkline([{ts: NOW - 2 * HOUR_MS, value: 7}], NOW)).toEqual([7]);
-  });
-});
-
-describe('trend', () => {
-  const points = [
-    {ts: NOW - 8 * DAY_MS, value: 0},
-    {ts: NOW - 2 * DAY_MS, value: 1},
-    {ts: NOW - 2 * DAY_MS + 5 * MINUTE_MS, value: 2},
-    {ts: NOW - 10 * MINUTE_MS, value: 3},
-    {ts: NOW - 5 * MINUTE_MS, value: 4},
-  ];
-
-  it('24h returns raw points in range', () => {
-    expect(trend(points, '24h', NOW).map(p => p.value)).toEqual([3, 4]);
-  });
-
-  it('7d downsamples hourly', () => {
-    expect(trend(points, '7d', NOW).map(p => p.value)).toEqual([2, 4]);
-  });
-});
-
-describe('defaultLayout', () => {
-  it('is a valid 12-column layout', () => {
-    for (const ids of [[], ['k1'], ['k1', 'k2', 'k3', 'k4', 'k5']]) {
-      const layout = defaultLayout(ids);
-      expect(cockpitLayoutSchema.safeParse(layout).success).toBe(true);
-      for (const w of layout.widgets) expect(w.x + w.w).toBeLessThanOrEqual(12);
-    }
-    expect(
-      defaultLayout(['k1', 'k2']).widgets.filter(w => w.kind === 'kpi'),
-    ).toHaveLength(2);
+    expect(nextBucket(t) - bucketStart(t)).toBe(METRIC_BUCKET_MS);
+    expect(nextBucket(bucketStart(t))).toBe(bucketStart(t) + METRIC_BUCKET_MS);
   });
 });

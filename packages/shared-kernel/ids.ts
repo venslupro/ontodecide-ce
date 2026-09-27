@@ -1,5 +1,8 @@
 /**
  * @fileoverview Identifier helpers: ULIDs and resource identifiers (RIDs).
+ *
+ * RIDs follow `ri.<objectType>.<ulid>` (修订说明书 12.2). They carry no
+ * tenant id and no personal data; isolation comes from `tenant_id` columns.
  */
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -20,21 +23,16 @@ export function ulid(now: number = Date.now()): string {
   return time + rand;
 }
 
-/** Resource identifier: `ri.<tenant>.<objectType>.<ulid>`. */
-export type Rid = `ri.${string}.${string}.${string}`;
+/** Resource identifier `ri.<objectType>.<ulid>`. */
+export type Rid = `ri.${string}.${string}`;
 
 /** Builds a new RID for an object of the given type. */
-export function newRid(
-  tenantId: string,
-  objectType: string,
-  now?: number,
-): Rid {
-  return `ri.${tenantId}.${objectType}.${ulid(now)}`;
+export function newRid(objectType: string, now?: number): Rid {
+  return `ri.${objectType}.${ulid(now)}`;
 }
 
 /** Parsed parts of a RID. */
 export interface RidParts {
-  tenantId: string;
   objectType: string;
   id: string;
 }
@@ -42,13 +40,18 @@ export interface RidParts {
 /** Parses a RID, returning null when malformed. */
 export function parseRid(value: string): RidParts | null {
   const parts = value.split('.');
-  if (parts.length !== 4 || parts[0] !== 'ri') return null;
-  const [, tenantId, objectType, id] = parts;
-  if (!tenantId || !objectType || !id) return null;
-  return {tenantId, objectType, id};
+  if (parts.length !== 3 || parts[0] !== 'ri') return null;
+  const [, objectType, id] = parts;
+  if (!objectType || !id) return null;
+  return {objectType, id};
 }
 
 /** Whether a string is a well-formed RID. */
 export function isRid(value: unknown): value is Rid {
   return typeof value === 'string' && parseRid(value) !== null;
+}
+
+/** Whether a string looks like a ULID (tenant and user ids). */
+export function isUlid(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
 }

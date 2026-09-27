@@ -1,259 +1,318 @@
-# OntoDecide CE — Architecture & Implementation Guide (V1.3)
+# OntoDecide CE — Architecture & Implementation Guide (V2.4)
 
-This guide turns the three design documents (总体设计说明书 / 详细设计说明书 /
-前端详细设计说明书, V1.3) into concrete repository conventions. When the
-code and this guide disagree, fix one of them in the same change.
+This guide turns the design documents (社区版设计修订说明书 V2.4.2, 总体设计 /
+详细设计 / 前端详细设计说明书 V2.4) into repository conventions. When the design
+documents disagree, the revision document (修订说明书) wins. When the code and
+this guide disagree, fix one of them in the same change.
 
-## 1. Deployment units
+## 1. What the Community Edition is
 
-| Unit | Kind | Package | D1 | Notes |
+* Anyone signs up with an e-mail code (no passwords) and gets **one trial
+  workspace for 72 hours**; the user is its only **Owner**.
+* One **bootstrap Admin** (system-unique, never expires, cannot be deleted or
+  demoted, highest privilege) signs in with an e-mail code **plus a passkey**.
+  It can see any data and act on any Owner; every admin action is audited in
+  an append-only hash chain.
+* When a trial ends (expiry, early termination or admin deletion) the data is
+  exported to one ZIP in B2, a 7-day presigned download link is e-mailed, and
+  the business data and account (including the e-mail) are deleted at once.
+  The ZIP is deleted after 7 days.
+* Everything runs on free tiers (Cloudflare Free, Backblaze B2, Resend with
+  Brevo fallback, Workers AI). The only paid item is the domain.
+
+## 2. Deployment units
+
+| Unit | Kind | Package | Storage | Entry points |
 | --- | --- | --- | --- | --- |
-| `ontodecide-ce` | Pages | `apps/web` | — | SPA + `functions/api/[[path]].ts` proxy → `GATEWAY` |
-| `api-gateway` | Worker | `apps/api-gateway` | — | Middleware chain, route table, BFF, EdgeGuard DO |
-| `identity-access` | Worker | `apps/identity-access` + `packages/identity` | identity | Accounts, roles, markings, JWT |
-| `ontology-manager` | Worker | `apps/ontology-manager` + `packages/ontology` | ontology | Schemas, publish, compile, packs |
-| `data-integration` | Worker | `apps/data-integration` + `packages/integration` | integration | Sources, jobs, mapping, quality |
-| `object-graph` | Worker | `apps/object-graph` + `packages/object-graph` | object | Objects, links, actions, lineage, Neo4j |
-| `situation-awareness` | Worker | `apps/situation-awareness` + `packages/situation` | situation | KPIs, automations, alerts, DOs, DLQ |
-| `decision-engine` | Worker | `apps/decision-engine` + `packages/decision` | decision | Simulation, recommendations, LLM |
+| `ontodecide-ce` | Pages (static) | `apps/web` | — | — |
+| `api-gateway` | Worker | `apps/api-gateway` | — | default `fetch` |
+| `identity-access` | Worker | `apps/identity-access` + `packages/identity` | D1 `identity-access-db`, B2 archive bucket | `IdentityRpc` |
+| `ontology-manager` | Worker | `apps/ontology-manager` + `packages/ontology` | D1 `ontology-manager-db` | `OntologyRpc`, `TenantLifecycle` |
+| `data-integration` | Worker | `apps/data-integration` + `packages/integration` | D1 `data-integration-db` | `IntegrationRpc`, `TenantLifecycle` |
+| `object-graph` | Worker | `apps/object-graph` + `packages/object-graph` | D1 `object-graph-db` | `ObjectGraphRpc`, `TenantLifecycle` |
+| `situation-awareness` | Worker | `apps/situation-awareness` + `packages/situation` | Durable Object `SituationRoom` (SQLite) | `SituationRpc` (+ `fetch` for WebSocket), `TenantLifecycle` |
+| `decision-engine` | Worker | `apps/decision-engine` + `packages/decision` | D1 `decision-engine-db` | `DecisionRpc`, `TenantLifecycle` |
 
-Workers are listed by their `<service>` part: every deployed resource (Workers,
-D1, KV, queues, B2, Neo4j, Vectorize) is named
-`{project}-{env}-{service|module}`, e.g. `ontodecide-prd-api-gateway`,
-`ontodecide-prd-graphdb`. Exceptions: the Pages project `ontodecide-ce` (its
-URL is always https://ontodecide-ce.pages.dev) and the Terraform state bucket
-`ontodecide-ce-tfstate`. Terraform builds names from `local.prefix`
-(`var.project`, `var.environment`); templates use `${PREFIX}`, rendered by
-`scripts/gen_wrangler.mjs`, which checks it against Terraform's `name_prefix`.
+Naming: every deployed resource is `{project}-{env}-{service|module}`
+(`${PREFIX}` in templates, e.g. `ontodecide-prd-api-gateway`,
+`ontodecide-prd-object-graph-db`, `ontodecide-prd-domain-events`,
+`ontodecide-prd-archive`). Exceptions: the Pages project `ontodecide-ce` and
+the Terraform state bucket `ontodecide-ce-tfstate`. There is one deployed
+environment (production, from `main`); `local` exists only for `wrangler dev`.
 
-Every Worker has `workers_dev: false`. Service bindings form a DAG, so
-deployment runs leaf → root:
+Resources (修订说明书 7.2): 7 Workers, 1 Pages project, 5 D1, 1 Durable Object
+class, 2 Queues (`domain-events`, `dead-letter`), 2 Cron triggers, 0 KV,
+0 Vectorize, 0 Neo4j, 1 Turnstile widget, 1 B2 bucket managed here (`archive`)
+plus the hand-made tfstate bucket, 1 Zone (when a domain is configured).
 
-```
-ontology-manager → data-integration → object-graph → situation-awareness
-  → decision-engine → identity-access → api-gateway → Pages (ontodecide-ce)
-```
+Who creates what: **Terraform** creates resources (D1, Queues, B2 bucket and
+keys, Turnstile, DNS / redirects / WAF rule on the zone). **Wrangler** creates
+and deploys Workers and the Pages project and owns code, bindings, vars,
+routes, crons and Durable Object migrations (`apps/*/wrangler.jsonc.tpl`,
+rendered by `scripts/gen_wrangler.mjs` from `terraform output -json`).
 
-| Worker | Binds |
+### 2.1 Domain and routing
+
+* `APP_DOMAIN` (GitHub variable, e.g. `example.com`; Terraform `var.domain`).
+  The app is served at `https://app.${APP_DOMAIN}`: Pages custom domain for
+  the SPA, and a Workers Route `app.${APP_DOMAIN}/api/*` on api-gateway (the
+  only Worker with a route). Same origin: no CORS, `__Host-` cookie,
+  CSP `connect-src 'self'`.
+* Fallback (修订说明书 4.2, used while `APP_DOMAIN` is empty): the Pages
+  Function `apps/web/functions/api/[[path]].ts` forwards `/api/*` to the
+  gateway through a service binding and the app lives at
+  `https://ontodecide-ce.pages.dev`. With a domain configured the deploy job
+  publishes the SPA without `functions/` (pure static).
+* Every Worker has `workers_dev: false` and `preview_urls: false`.
+
+### 2.2 Service bindings (DAG, no cycles)
+
+| Worker | Binds (binding → service / entrypoint) |
 | --- | --- |
-| data-integration | ONTOLOGY |
-| object-graph | ONTOLOGY, INTEGRATION |
-| situation-awareness | OBJECTS |
-| decision-engine | OBJECTS, SITUATION, ONTOLOGY |
-| api-gateway | all six |
+| ontology-manager | — |
+| object-graph | `ONTOLOGY` → ontology-manager / OntologyRpc |
+| situation-awareness | `OBJECTS` → object-graph / ObjectGraphRpc, `ONTOLOGY` → ontology-manager / OntologyRpc |
+| decision-engine | `OBJECTS`, `SITUATION` → situation-awareness / SituationRpc, `ONTOLOGY` |
+| data-integration | `ONTOLOGY`, `OBJECTS` |
+| identity-access | `LC_ONTOLOGY`, `LC_INTEGRATION`, `LC_OBJECTS`, `LC_SITUATION`, `LC_DECISION` → each service / **TenantLifecycle** (no business RPC) |
+| api-gateway | `IDENTITY`, `ONTOLOGY`, `INTEGRATION`, `OBJECTS`, `SITUATION`, `DECISION` → business entry points (never TenantLifecycle) |
 
-There is one deployed environment, production, applied and deployed only from `main`.
+Deploy order: ontology-manager → object-graph → situation-awareness →
+decision-engine; data-integration after object-graph; identity-access after
+the five; api-gateway after all six; Pages last.
 
-Queues:
+### 2.3 Worker environment (binding names are part of the contract)
 
-Queues are listed by logical name (deployed as `ontodecide-prd-<queue>`;
-`baseQueueName` strips the prefix):
-
-| Queue | Producer | Consumer | batch / retries |
+| Worker | Bindings | Vars | Secrets |
 | --- | --- | --- | --- |
-| ingest | data-integration | data-integration | 4 / 3 |
-| object-writes | data-integration | object-graph | 4 / 3 |
-| graph-sync | object-graph | object-graph | 10 / 5 |
-| situation-events | object-graph | situation-awareness | 10 / 3 |
-| decision-jobs | situation-awareness, decision-engine | decision-engine | 5 / 3 |
-| `*-dlq` (5) | runtime | situation-awareness (stored in `sit_dead_letter`, replayable) | 10 / 1 |
+| ontology-manager | `ONTOLOGY_DB` (D1) | `ENVIRONMENT`, `APP_VERSION` | — |
+| object-graph | `OBJECT_DB`, `ONTOLOGY`, `DOMAIN_EVENTS` (queue producer) | `MAX_OBJECTS`=300, `MAX_LINKS`=900 | — |
+| situation-awareness | `SITUATION_ROOM` (DO), `OBJECTS`, `ONTOLOGY`; consumer of `domain-events` | `APP_ORIGIN` | — |
+| decision-engine | `DECISION_DB`, `OBJECTS`, `SITUATION`, `ONTOLOGY`, `AI` | `AI_MODEL`, `AI_FALLBACK_MODEL`, `REC_AI_USER_DAILY_LIMIT`=3, `NEURONS_DAILY_BUDGET`=6500, `NEURONS_RESERVE_FACTOR`=1.3, `REC_EXPIRE_HOURS`=24 | — |
+| data-integration | `INTEGRATION_DB`, `ONTOLOGY`, `OBJECTS`, `AI` | `AI_MODEL`, `NEURONS_DAILY_BUDGET`=1500, `IMPORT_ROWS_DAILY`=2000, `SEED_ROWS_DAILY`=20000, `MAPPING_AI_DAILY`=2 | — |
+| identity-access | `IDENTITY_DB`, `LC_*` | `APP_ORIGIN`, `MAIL_FROM`, `EMAIL_MODE` (`live`\|`log`), `TRIAL_HOURS`=72, `ARCHIVE_DAYS`=7, `ARCHIVE_DELAY_MIN`=16, `PURGE_BACKLOG_LIMIT`=10, `PURGE_ROWS_DAILY`=30000, `MAX_SESSIONS`=3, `ADMIN_SESSION_HOURS`=8, `RESEND_DAILY_CAP`=90, `RESEND_MONTHLY_CAP`=2900, `BREVO_DAILY_CAP`=280, `B2_ARCHIVE_BUCKET`, `B2_ENDPOINT`, `B2_REGION`, `ARCHIVE_LINK_TTL_S`=604800, `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME`, `CF_ACCOUNT_ID`, `ENVIRONMENT`, `APP_VERSION` | `JWT_SIGNING_KEY` (Ed25519 private JWK with kid), `EMAIL_PEPPER`, `EMAIL_ENC_KEY`, `RESEND_API_KEY`, `BREVO_API_KEY`, `TURNSTILE_SECRET`, `B2_WRITE_KEY_ID`, `B2_WRITE_APP_KEY`, `B2_SIGN_KEY_ID`, `B2_SIGN_APP_KEY`, `CF_ANALYTICS_TOKEN` (optional), `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_SETUP_CODE` |
+| api-gateway | the six services, `RL_USER_READ` (120/60 s), `RL_USER_WRITE` (30/60 s), `RL_EMAIL` (5/60 s), `RL_IP_AUTH` (10/60 s) | `APP_ORIGIN`, `JWT_PUBLIC_KEYS` (JWK set, rendered from the signing key(s)), `MAX_BODY_BYTES`=524288, `ACT_AS_CACHE_S`=60, `ENVIRONMENT`, `APP_VERSION` | — |
 
-Deviations from the design text, and why:
+Crons (2 in total): identity-access `*/2 * * * *` (reminders, expiry, one
+archive step for one workspace, one final delete, housekeeping; hourly
+analytics check), object-graph `*/15 * * * *` (outbox redelivery).
+Scheduled automations use the SituationRoom DO alarm, not cron.
 
-* **data-integration does not bind DECISION.** `POST /sources/:id/mapping:suggest` is orchestrated by the
-  gateway (ONTOLOGY model → DECISION.suggestMapping), as the frontend design specifies. This removes the
-  object-graph → integration → decision → object-graph binding cycle.
-* **decision-engine binds ONTOLOGY** to read action types for candidate generation.
-* **Approval is a signed voucher** (`APPROVAL_SECRET`, HMAC). Decision signs, object-graph verifies, so there is no
-  synchronous call back from object-graph to decision.
-* **OntologyPublished** is orchestrated by the gateway after publish: `OBJECTS.onOntologyPublished`
-  (reindex), plus `INTEGRATION.pauseSourcesForTypes` on breaking changes.
-* **Dead letters** are consumed centrally by situation-awareness, which owns the "system health" page.
-* **Approval executes the rank-1 action(s)** of a recommendation; lower-ranked actions are alternatives shown for
-  comparison (the approve dialog lists only what will run).
-* **Usage metering**: the gateway (requests) and decision-engine (AI neurons) call `SITUATION.recordUsage`.
-  object-graph attaches D1 write counts to `situation-events` messages.
+Queues: `domain-events` — producer object-graph (outbox, one aggregated
+message ≤ 64 KB per commit), consumer situation-awareness (batch 10,
+3 retries, dead letter `dead-letter`); `dead-letter` has no consumer.
 
-## 2. Repository layout (Google TypeScript style)
+Durable Object migrations: `situation-awareness` keeps tag `v1`
+(`SituationRoom`, `UsageGuard`) and adds `v2` deleting `UsageGuard`;
+`api-gateway` keeps `v1` (`EdgeGuard`) and adds `v2` deleting `EdgeGuard`
+(V1.3 deployments had those classes). SituationRoom drops its V1.3 tables on
+first start (schema version key).
+
+## 3. Repository layout (Google TypeScript style)
 
 ```
 apps/<worker>/
   wrangler.jsonc.tpl     rendered to wrangler.jsonc by scripts/gen_wrangler.mjs (gitignored)
-  src/env.ts             bindings (given)
+  src/env.ts             bindings (section 2.3)
   src/container.ts       composition root: createContainer(env, overrides?)
   src/service.ts         createService(env, overrides?): ServiceModule<XxxRpc>
-  src/index.ts           WorkerEntrypoint class(es) + default export; the ONLY file importing cloudflare:workers
+  src/index.ts           WorkerEntrypoint classes + default export; the ONLY file importing cloudflare:workers
 packages/<context>/
-  contract/              RPC interfaces, DTOs, queue messages, zod input schemas (other packages import only this)
-  domain/                aggregates, value objects, domain services — pure TS, no I/O, no Cloudflare types
-  application/           use-case handlers (one class per use case) + port interfaces
-  infrastructure/        D1 repositories, KV cache, queue publishers, B2 / Neo4j / LLM adapters
-  interface/             RPC handler object implementing the contract; queue and cron dispatch
-packages/shared-kernel/  CallCtx, Rid, DomainEvent, AppError/Problem, FilterExpr, JSONLogic, crypto, JWT, …
-packages/testing/        Node fakes: D1 over node:sqlite, DO SqlStorage, KV, QueueBus (retries + DLQ), rpcBinding
-migrations/<db>/         D1 migrations, one directory per database (file names are globally unique)
+  contract/              RPC interfaces, DTOs, zod input schemas (other packages import only this)
+  domain/                aggregates, value objects, domain services — pure TS, no I/O
+  application/           use-case handlers (one class/function per use case) + port interfaces
+  infrastructure/        D1 repositories (extend TenantRepository), queue, Workers AI, B2, e-mail adapters
+  interface/             RPC handler object implementing the contract; TenantLifecycle; queue / cron dispatch
+packages/shared-kernel/  CallCtx, Rid, errors (RFC 9457), Ed25519 JWT, filters, paging, limits, lifecycle types
+packages/shared-kernel/d1  server-only: TenantRepository / SystemRepository, capped counters, tombstones
+packages/testing/        Node fakes: D1 over node:sqlite, DO SqlStorage, QueueBus, rpcBinding, FakeWorkersAi, FakeRateLimiter
+migrations/<service>/    D1 migrations per database: identity-access, ontology-manager, data-integration, object-graph, decision-engine
+apps/api-gateway/openapi.yaml   OpenAPI 3.2.0 — the only public API contract
 infra/                   Terraform (resources only)
-scripts/                 gen_wrangler.mjs, bootstrap.sh, dev.sh, smoke.mjs, reset.sh
-tests/e2e/               in-process full-loop test wiring all services through the gateway
-samples/supply-chain/    demo CSVs for the built-in pack
+scripts/                 gen_wrangler.mjs, gen_secrets.mjs, dev.sh, smoke.mjs, check_sql.mjs, …
+tests/e2e/               in-process full-loop tests wiring every service through the gateway
 ```
 
-Style rules (enforced by `gts` = ESLint + Prettier, `pnpm lint`):
+Style rules (`gts` = ESLint + Prettier; `pnpm lint`):
 
-* File names use `lower_snake_case.ts`. Tests sit next to the code as `foo_test.ts`.
-* Named exports only. The one exception is the `export default` handler object that Workers require in `src/index.ts`.
-* Each file starts with a `/** @fileoverview … */` comment. Exported symbols get JSDoc.
-* Types and classes use `UpperCamelCase`, values use `lowerCamelCase`, constants use `CONSTANT_CASE`. No `I` prefix on interfaces.
-* Dependencies point one way: `interface → application → domain`, `infrastructure → application/domain`.
-  Cross-context imports go through `@ontodecide/<ctx>/contract` only (checked by dependency-cruiser).
-* Throw `AppError(code, detail?)` from `@ontodecide/shared-kernel`. It survives RPC (see `AppError.from`).
-* Every repository query filters by `ctx.tenantId`. A query with no tenant is a bug.
-* Time comes from an injected `Clock` and ids from `ulid()` / `newRid()`, so logic stays testable.
+* File names `lower_snake_case.ts`; tests next to code as `foo_test.ts`.
+* Named exports only (except the `export default` handler in `src/index.ts`).
+* Every file starts with `/** @fileoverview … */`; exported symbols get JSDoc.
+* `UpperCamelCase` types/classes, `lowerCamelCase` values, `CONSTANT_CASE`
+  constants, no `I` prefix.
+* Dependencies point inward: `interface → application → domain`,
+  `infrastructure → application/domain`. Cross-context imports only through
+  `@ontodecide/<ctx>/contract` (dependency-cruiser).
+* Throw `AppError(code, detail?, {status?, extras?})`; it survives RPC.
+* Repositories extend `TenantRepository` and use `stmt()` (binds `?1` =
+  `ctx.tid`); only `SystemRepository` (cron, queue, lifecycle) may run
+  unscoped SQL. `scripts/check_sql.mjs` (part of `pnpm lint`) rejects
+  `.prepare(` in `packages/*/infrastructure` outside those bases.
+* Time from an injected `Clock`, ids from `ulid()` / `newRid()`.
+* No personal data in logs, metrics or queue messages (only tid / sub ULIDs).
 
-## 3. Service module pattern
+## 4. Service module pattern
 
 ```ts
 // apps/<worker>/src/service.ts
-export interface Overrides { clock?: Clock; logger?: Logger; /* context-specific fakes */ }
+export interface Overrides { clock?: Clock; logger?: Logger; /* fakes */ }
 export function createService(env: Env, overrides: Overrides = {}): ServiceModule<XxxRpc> {
   const c = createContainer(env, overrides);
-  return {rpc: c.rpc, queue: b => c.queueHandler(b), scheduled: (cron, now) => c.cron(cron, now)};
+  return {rpc: c.rpc, lifecycle: c.lifecycle, queue: b => c.queue(b), scheduled: (cron, now) => c.cron(cron, now)};
 }
 
 // apps/<worker>/src/index.ts
 import {WorkerEntrypoint} from 'cloudflare:workers';
-let cache: {env: Env; svc: ServiceModule<XxxRpc>} | undefined;
-const svc = (env: Env) => (cache?.env === env ? cache.svc : (cache = {env, svc: createService(env)}).svc);
 export class XxxRpc extends WorkerEntrypoint<Env> {
   getThing(...a: Parameters<Contract['getThing']>) { return svc(this.env).rpc.getThing(...a); }
-  // one explicit method per contract method (RPC requires prototype methods)
 }
-export default {
-  fetch: () => new Response('Not found', {status: 404}),
-  queue: (batch, env) => svc(env).queue!(batch),
-  scheduled: (evt, env, ctx) => ctx.waitUntil(svc(env).scheduled!(evt.cron, new Date(evt.scheduledTime))),
-} satisfies ExportedHandler<Env>;
+export class TenantLifecycle extends WorkerEntrypoint<Env> {
+  exportTenant(tid: string, cursor: string | null) { return svc(this.env).lifecycle!.exportTenant(tid, cursor); }
+  purgeTenant(tid: string, maxRows: number) { return svc(this.env).lifecycle!.purgeTenant(tid, maxRows); }
+  countTenant(tid: string) { return svc(this.env).lifecycle!.countTenant(tid); }
+}
+export default {fetch: () => new Response('Not found', {status: 404}), /* queue, scheduled */} satisfies ExportedHandler<Env>;
 ```
 
-`tests/e2e/harness.ts` builds every service with `createService(fakeEnv, overrides)`. Its fake env contains:
-`createTestD1('<db>')`, a shared `QueueBus`, `MemoryKV`, `FakeDoNamespace`, and `rpcBinding(otherService.rpc)`
-for service bindings. Everything except `src/index.ts` and Durable Object wrapper classes must therefore import
-cleanly in Node.
+`tests/e2e/harness.ts` builds every service with `createService(fakeEnv,
+overrides)` and wires bindings with `rpcBinding(svc.rpc)` /
+`rpcBinding(svc.lifecycle)`. Everything except `src/index.ts` and Durable
+Object wrapper classes must import cleanly in Node. Durable Objects keep
+their logic in a plain core class taking `SqlStorageLike`; the
+`DurableObject` subclass only delegates.
 
-Durable Objects keep their logic in a plain "core" class that takes a `SqlStorageLike` (and a broadcaster for
-WebSockets). The `DurableObject` subclass lives next to `index.ts` and only delegates.
+## 5. Public REST API (`/api/v1`, api-gateway)
 
-## 4. Public REST API (`/api/v1`, served by api-gateway)
+Conventions (修订说明书 10.1): OpenAPI 3.2.0 in `apps/api-gateway/openapi.yaml`
+(operationIds match `routes.ts`; a test checks both directions). JSON bodies
+are the contract DTOs without envelopes. Errors are RFC 9457
+`application/problem+json` with `code` and `traceId`. Paging `?cursor=&limit=`
+(≤ 100) → `nextCursor`. Modifiable resources return `ETag: "v{n}"`;
+PUT / PATCH / DELETE require `If-Match` (412 on mismatch). Action executions,
+recommendation decisions and every `/admin/*` write require
+`Idempotency-Key` (16–64 chars). High-risk admin writes require
+`X-Step-Up` (token from a passkey user verification, ≤ 5 min).
+`Accept-Language` only affects e-mails and server-generated text.
 
-Conventions:
+Scopes: `public`; `refresh` (cookie `__Host-od_rt` + Origin); `workspace`
+(owner token for its own workspace, or admin token for the admin workspace /
+the `X-Act-As-Tenant` target); `admin` (role admin with `amr` ⊇ passkey; no
+Act-as). Rate classes: `read`/`write` (RL_USER_* by sub), `email` (RL_EMAIL by
+e-mail), `ip` (RL_IP_AUTH by IP).
 
-* JSON bodies are the DTOs from the contracts, with no envelope.
-* Errors are RFC 9457 `application/problem+json`, with `code` and `requestId`.
-* Writes accept an `Idempotency-Key` header. Paging uses an opaque `cursor` and `limit` ≤ 200.
-* Auth header is `Authorization: Bearer <access JWT>`. The refresh token lives in the HttpOnly cookie `od_refresh`
-  (`Path=/api/v1/auth; SameSite=Strict; Secure`).
-* Roles, lowest first: `Viewer < Operator < Modeler < Admin`.
-* The gateway forwards `Accept-Language` as `ctx.locale`.
+Gateway chain (详细设计 6.11.7): requestId → security headers → body ≤ 512 KB
+(413 VALIDATION_FAILED) → route match (404) → Origin check for writes and
+refresh (403) → Ed25519 verify (401 UNAUTHENTICATED; owner with `texp ≤ now`
+or `st ≠ ACTIVE` → 401 TRIAL_EXPIRED) → admin tokens: `IDENTITY.
+verifyAdminSession(sid)` on every request → role / scope → `X-Act-As-Tenant`
+(admin only, target must exist and be `kind = trial`, writes need ACTIVE;
+status cached ≤ 60 s; owner → 403) → rate limit → zod input validation →
+required headers → Act-as writes: `IDENTITY.audit(tenant.write)` first
+(failure → 503) → RPC → Problem Details.
 
-| Method & path | Min role | Target |
+| Method & path | Scope · rate | Target |
 | --- | --- | --- |
-| POST /auth/login | public | IDENTITY.login → `{accessToken, expiresIn, user}` + Set-Cookie |
-| POST /auth/refresh | cookie | IDENTITY.refresh (rotates cookie) |
-| POST /auth/logout | cookie | IDENTITY.logout, clears cookie → 204 |
-| GET /me · PATCH /me · POST /me/password | Viewer | IDENTITY.me / updateMe / changePassword |
-| GET /users · POST /users | Admin | listUsers / createUser |
-| PATCH /users/:id · DELETE /users/:id | Admin | updateUser / deleteUser |
-| POST /users/:id/markings | Admin | grantMarking(body.markings) |
-| POST /users/:id/password:reset | Admin | resetPassword |
-| GET /ontology/schemas | Viewer | listSchemas |
-| GET /ontology/schemas/:api?version= | Viewer | getSchema |
-| GET /ontology/model | Viewer | getActiveModel |
-| PUT /ontology/schemas/:api/draft | Modeler | saveDraft |
-| POST /ontology/schemas/:api/diff | Modeler | diff |
-| POST /ontology/schemas/:api/publish | Modeler | BFF: publish → OBJECTS.onOntologyPublished → (breaking) INTEGRATION.pauseSourcesForTypes |
-| GET /ontology/schemas/:api/export | Modeler | exportPack |
-| GET /ontology/packs | Viewer | listPacks |
-| POST /ontology/packs:import | Modeler | BFF: importPack → SITUATION.installPackContent |
-| GET /sources · GET /sources/:id | Viewer | listSources / getSource |
-| POST /sources · PATCH /sources/:id · DELETE /sources/:id | Modeler | create / update / delete |
-| POST /sources/:id/uploads:presign | Operator | presignUpload |
-| POST /sources/:id/batches | Operator | submitBatch → **202** (idempotent, rate group `ingest`) |
-| POST /sources/:id/mapping:suggest | Modeler | BFF: ONTOLOGY.getActiveModel → DECISION.suggestMapping (rate group `ai`) |
-| GET /jobs?sourceId= · GET /jobs/:id | Viewer | listJobs / getJob |
-| GET /jobs/:id/rejected · POST /jobs/:id/replay | Operator | listRejected / replayRejected |
-| GET /data-health | Viewer | dataHealth |
-| POST /ingest/webhook/:sourceId | HMAC | INTEGRATION.acceptWebhook → **202** (60/min per source) |
-| GET /objects/:type?filter=<json>&orderBy=<prop:dir>&cursor=&limit= | Viewer | listObjects |
-| GET /objects/rid/:rid?expand=links&depth=1\|2 | Viewer | getObject (null → 404 OBJECT_NOT_FOUND) |
-| GET /objects/rid/:rid/lineage · GET /objects/rid/:rid/actions | Viewer | lineage / listActionLog |
-| GET /object-sets · POST /object-sets | Viewer / Operator | listObjectSets / saveObjectSet |
-| POST /object-sets/:id/evaluate · POST /object-sets:evaluate | Viewer | evaluateSavedObjectSet / evaluateObjectSet |
-| GET /search?q=&type= | Viewer | search |
-| GET /graph/impact?rid=&maxHops=&limit= · GET /graph/paths?from=&to= | Viewer | impactSubgraph / paths |
-| GET /merge-suggestions · POST /merge-suggestions/:id/resolve | Modeler | entity resolution |
-| POST /actions/:actionType/apply (`If-Match`) | Operator | OBJECTS.applyAction (idempotent) |
-| GET /situation/overview | Viewer | BFF: SITUATION.overview + INTEGRATION.dataHealth → `{...overview, dataHealth}` |
-| GET /situation/stream (WebSocket, `?access_token=&lastSeq=`) | Viewer | SITUATION.fetch (ctx in `x-od-ctx`) |
-| GET /kpis · POST /kpis · DELETE /kpis/:id · GET /kpis/:id/trend?range=24h\|7d | Viewer / Modeler | KPIs |
-| GET /automations · POST /automations · PUT /automations/:id · DELETE /automations/:id | Viewer / Operator | automations |
-| POST /automations:dry-run | Operator | dryRunAutomation |
-| GET /alerts?status=&severity=&rid= · PATCH /alerts/:id | Viewer / Operator | listAlerts / updateAlert |
-| GET /cockpit/layout · PUT /cockpit/layout | Viewer / Modeler | getLayout / saveLayout |
-| GET /usage | Viewer | SITUATION.getUsage (quota bar) |
-| GET /admin/usage · GET /admin/dlq?queue= · POST /admin/dlq/:queue/replay | Admin | UsageGuard / dead letters |
-| POST /admin/graph:rebuild | Admin | OBJECTS.rebuildProjection |
-| GET /scenarios · POST /scenarios · GET /scenarios/:id | Operator | scenarios |
-| POST /scenarios/:id/run · POST /scenarios:run | Operator | runScenario |
-| POST /scenarios:candidates | Operator | listCandidateActions |
-| POST /recommendations:generate | Operator | generateRecommendation → **202** `{jobId}` (rate group `ai`) |
-| GET /recommendations?status=&focus= · GET /recommendations/:id | Viewer | list / get |
-| POST /recommendations/:id/approve · /reject · /feedback | Operator | approve (idempotent) / reject `{reason}` / feedback |
-| GET /llm/quota | Viewer | DECISION.llmQuota |
-| GET /config | public | KV feature flags `{features: {...}, version}` |
-| POST /telemetry | public (≤ 16 KB) | written to Workers Logs → 204 |
-| GET /openapi.json · GET /health | public | OpenAPI 3.1 generated from route table + zod |
+| POST /auth/codes | public · email+ip | IDENTITY.sendCode → 202 |
+| POST /auth/sessions | public · ip | IDENTITY.createSession → 201 `{accessToken, expiresIn, me}` + cookie, or 200 `{passkeyRequired: true, preAuth, setupRequired}` |
+| POST /auth/sessions/refresh | refresh · ip | IDENTITY.refresh → 200 `{accessToken, expiresIn}` + rotated cookie |
+| DELETE /auth/sessions/current | workspace · write | IDENTITY.logout → 204, cookie cleared |
+| POST /auth/passkeys/options | public (login, preAuth) / admin (step_up) · ip | IDENTITY.passkeyOptions |
+| POST /auth/passkeys/assertion | same · ip | IDENTITY.passkeyAssertion → 201 session + cookie (login) or 200 `{stepUpToken, expiresIn}` |
+| POST /auth/passkeys/setup-options | public · ip | IDENTITY.passkeySetupOptions (first passkey; preAuth + setup code) |
+| POST /auth/passkeys/setup | public · ip | IDENTITY.passkeySetup → 201 `{passkey, total, accessToken, expiresIn, me}` + cookie |
+| POST /auth/recovery | public · ip | IDENTITY.recoveryLogin → 201 session + cookie |
+| GET /me | workspace · read | BFF: IDENTITY.getMe + usage of IDENTITY, INTEGRATION, DECISION + OBJECTS.stats → `MeDto & {quotas}` |
+| PATCH /me | workspace · write | IDENTITY.patchMe |
+| POST /me/codes | workspace · write | IDENTITY.sendMeCode → 202 |
+| POST /me/trial/termination | workspace · write | IDENTITY.terminateTrial → 202 |
+| GET /me/export | workspace · read | IDENTITY.exportChunk loop → `application/jsonl` stream |
+| POST /workspace/sample-data | workspace · write | INTEGRATION.loadSample → 202 JobDto |
+| GET /archive-deletions/{token} | public · ip | IDENTITY.getArchiveDeletion |
+| POST /archive-deletions/{token} | public · ip | IDENTITY.deleteArchiveByToken → 204 |
+| GET /ontology | workspace · read | ONTOLOGY.getOntology (ETag) |
+| GET /{kind} · POST /{kind} | workspace · read / write | ONTOLOGY.listDefinitions / putDefinition (If-Match = schema ETag; id = body.apiName) — `kind` ∈ object-types, link-types, action-types |
+| GET /{kind}/{id} · PUT /{kind}/{id} · DELETE /{kind}/{id} | workspace · read / write | ONTOLOGY.getDefinition / putDefinition / deleteDefinition (If-Match) |
+| GET /imports · POST /imports | workspace · read / write | INTEGRATION.listImports / createImport → 201 |
+| GET /imports/{id} | workspace · read | INTEGRATION.getImport |
+| PUT /imports/{id}/mapping | workspace · write | INTEGRATION.putMapping |
+| POST /imports/{id}/batches | workspace · write | INTEGRATION.submitBatch → 200 |
+| POST /imports/{id}/mapping-draft | workspace · write | INTEGRATION.mappingDraft |
+| GET /objects?type=&q=&filter=&orderBy=prop:dir&cursor=&limit= | workspace · read | OBJECTS.listObjects |
+| GET /objects/stats | workspace · read | OBJECTS.stats |
+| GET /objects/{rid} | workspace · read | OBJECTS.getObject (ETag; null → 404) |
+| PATCH /objects/{rid} | workspace · write · If-Match | OBJECTS.patchObject (`application/merge-patch+json`) |
+| GET /objects/{rid}/links?depth=&linkTypes=&direction=&limit= | workspace · read | OBJECTS.getLinks |
+| GET /objects/{rid}/actions | workspace · read | OBJECTS.listActionLog |
+| POST /action-types/{id}/executions | workspace · write · Idempotency-Key, If-Match | OBJECTS.applyAction |
+| GET /situation/overview?range=24h\|7d | workspace · read | BFF: SITUATION.overview + DECISION.listRecommendations(Proposed, 5) + quotas |
+| GET /alerts · POST /alerts/{id}/acknowledgement | workspace · read / write | SITUATION.listAlerts / acknowledgeAlert |
+| GET /automations · POST /automations | workspace · read / write | SITUATION.listAutomations / createAutomation → 201 |
+| GET · PUT · DELETE /automations/{id} | workspace · read / write (If-Match) | SITUATION.getAutomation / putAutomation / deleteAutomation |
+| POST /situation/stream-tickets | workspace · write | SITUATION.issueStreamTicket → 201 |
+| GET /situation/stream?ticket= | Origin check | WebSocket → `SITUATION.fetch(request)` (ticket = `{tid}.{random}`) |
+| POST /scenarios · GET /scenarios/{id} | workspace · write / read | DECISION.runScenario → 201 / getScenario |
+| GET /recommendations?status= · GET /recommendations/{id} | workspace · read | DECISION.listRecommendations / getRecommendation |
+| POST /recommendations | workspace · write | DECISION.generateRecommendation → 201 |
+| POST /recommendations/{id}/decision | workspace · write · Idempotency-Key | DECISION.decide |
+| GET /admin/overview | admin · read | IDENTITY.adminOverview |
+| GET /admin/users · GET /admin/users/{uid} | admin · read | adminListUsers / adminGetUser |
+| PATCH /admin/users/{uid} | admin · write · Idempotency-Key, X-Step-Up | adminPatchUser |
+| DELETE /admin/users/{uid}/sessions | admin · write · Idempotency-Key | adminRevokeSessions |
+| DELETE /admin/users/{uid}?archive=true\|false | admin · write · Idempotency-Key, X-Step-Up | adminDeleteUser `{reason}` → 202 |
+| GET /admin/archives | admin · read | adminListArchives |
+| POST /admin/archives/{tid}/download-link | admin · write · Idempotency-Key | adminArchiveLink (15 min) |
+| DELETE /admin/archives/{tid} | admin · write · Idempotency-Key, X-Step-Up | adminDeleteArchive → 204 |
+| GET /admin/settings · PATCH /admin/settings | admin · read / write (If-Match, Idempotency-Key, X-Step-Up) | adminGetSettings / adminPatchSettings |
+| GET /admin/blocked-domains · PUT /admin/blocked-domains | admin · read / write (Idempotency-Key) | adminGetBlockedDomains / adminPutBlockedDomains |
+| GET /admin/audit-log | admin · read | adminAuditLog (`chainOk`) |
+| GET /admin/passkeys · POST /admin/passkeys/options | admin · read / write | adminListPasskeys / adminPasskeyOptions |
+| POST /admin/passkeys · DELETE /admin/passkeys/{id} | admin · write · X-Step-Up | adminAddPasskey → 201 / adminDeletePasskey → 204 |
+| GET /health · GET /openapi.yaml | public | liveness · the contract |
 
-Webhook signatures use `X-OD-Timestamp` (unix seconds) and `X-OD-Signature`, where the signature is
-hex(HMAC-SHA256(secret, `${timestamp}.${rawBody}`)) and the replay window is 300 s.
+Additions to the design's list (all within its conventions): `GET /ontology`,
+`PUT /imports/{id}/mapping`, `GET /objects/stats`, `GET /objects/{rid}/actions`,
+`GET /recommendations/{id}`, `GET /imports`, `/auth/passkeys/setup-options`,
+`/auth/passkeys/setup` (first passkey before a session exists) and the
+`X-Step-Up` header carrying the passkey user-verification proof.
 
-WebSocket frames:
+WebSocket frames: server → client `WsMsg {seq, type: snapshot|kpi|alert|
+recommendation|trial, data, occurredAt}`; heartbeats are protocol ping/pong
+auto-responses (no app heartbeat). Client may send `{"type":"resume",
+"lastSeq":n}`: gap ≤ 200 is replayed, otherwise a fresh snapshot. A trial end
+closes sockets with code 4401.
 
-* Server → client frames are `WsMsg {seq, type: snapshot|kpi|alert|recommendation|usage, data, occurredAt}`.
-* Client → server frames are `{"type":"ping"}` every 30 s and `{"type":"resume","lastSeq":n}`.
-* If the gap is ≤ 200 the server replays the missed frames; otherwise it sends a fresh `snapshot`.
+## 6. Core flows (what `tests/e2e` exercises)
 
-## 5. The core loop (what `tests/e2e` exercises)
+1. **Sign-up**: `POST /auth/codes` (Turnstile, admission pre-check) → code
+   e-mail → `POST /auth/sessions` creates user + trial workspace in one D1
+   batch (atomic signup quota), issues tokens.
+2. **Sample data**: `POST /workspace/sample-data` → data-integration writes
+   80 objects / 160 links through `OBJECTS.upsertBatch` (one statement per
+   table + one outbox row) → `domain-events` → SituationRoom updates KPIs,
+   raises alerts (≤ 1 OPEN per automation × rid), pushes over WebSocket.
+3. **File import**: `POST /imports` → mapping (deterministic + AI draft) →
+   `POST /imports/{id}/batches` × n (≤ 100 rows, sync, idempotent by seq).
+4. **Decision**: `POST /scenarios` (deterministic propagation, γ = 0.9,
+   depth ≤ 2) → `POST /recommendations` (deterministic candidates with fixed
+   params; qwen3 ranks ids + rationale, gpt-oss-20b fallback, rules when the
+   quota is used up) → `POST /recommendations/{id}/decision` → executes
+   ranking[0] via `OBJECTS.applyAction` as `svc:decision-engine`.
+5. **Admin**: code + passkey login (setup code for the first passkey, then a
+   second passkey and 10 recovery codes); Act-as-Tenant with audit.
+6. **Trial end** (修订说明书 9): EXPIRED → wait 16 min → one cron step per
+   call: export pages to B2 staging → ZIP (STORE) → presigned 7-day link →
+   archive e-mail → purge each service (≤ 500 rows/step, local tombstone) →
+   delete account → after 7 days (or "delete now") delete the ZIP.
 
-1. Admin logs in. The bootstrap admin is created on first login against an empty DB.
-2. `POST /ontology/packs:import {packId:'supply-chain'}` publishes the schema and installs automations and KPIs.
-3. Three sources are created: suppliers, materials, products (see `samples/supply-chain`). The browser parses the
-   files and calls `POST /sources/:id/batches`. data-integration splits each batch into ≤ 50-record `ingest`
-   messages. Its consumer maps, validates and entity-resolves, then emits `object-writes`. object-graph
-   upserts (props_hash skip-write, outbox, stub objects for link targets that don't exist yet), calls
-   `INTEGRATION.reportWriteResult`, and dispatches the outbox to `graph-sync` + `situation-events`.
-4. situation-awareness consumes `situation-events` and recomputes KPIs via `OBJECTS.aggregate`. A supplier
-   with `riskScore ≥ 70` opens a HIGH alert (unique while OPEN, then cooldown), which pushes to the
-   SituationRoom and produces a `decision-jobs` message.
-5. decision-engine consumes it and loads the impact subgraph (≤ 3 hops). It propagates the perturbation
-   (γ = 0.9, prune below 0.5%), builds candidate actions (e.g. `switchSupplier` with `newSupplier` = the
-   lowest-risk active supplier), and simulates `withActions`. It recalls similar cases, then ranks with the
-   LLM chain (Workers AI → Gemini → Groq → rules), validating the output with zod plus an action whitelist.
-   The result is saved as `Proposed` and pushed via `SITUATION.pushRecommendation`.
-6. An Operator calls `POST /recommendations/:id/approve`. Decision signs a voucher and calls
-   `OBJECTS.applyAction`, which checks role, voucher, If-Match and preconditions, applies the effects, writes the
-   audit log and outbox, and attempts writeback (a failure sets `WRITEBACK_PENDING`, retried by cron).
-   The status becomes `Executed`.
-7. decision-engine's daily cron evaluates recommendations executed ≥ 24 h ago. It marks them `Evaluated`
-   with `outcome` and stores the case for RAG. It also expires stale `Proposed` recommendations.
-
-## 6. Commands
+## 7. Commands
 
 ```
 pnpm install
 pnpm typecheck        # backend (tsc) + web
-pnpm lint             # gts + dependency-cruiser
+pnpm lint             # gts + dependency-cruiser + check_sql
 pnpm test             # vitest: backend (node) + web (jsdom)
 pnpm gen:wrangler -- --env local   # render wrangler.jsonc for local dev
-pnpm dev              # wrangler dev (all 7 workers, local D1/KV/DO/Queues) + vite
-pnpm smoke            # HTTP smoke test of the full loop against pnpm dev
+pnpm dev              # wrangler dev (7 workers; local D1/DO/Queues) + vite
+pnpm smoke            # HTTP smoke test against pnpm dev (or SMOKE_BASE_URL)
+node scripts/gen_secrets.mjs       # generate JWT / pepper / setup-code secrets
 ```

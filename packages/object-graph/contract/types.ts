@@ -1,14 +1,14 @@
 /**
- * @fileoverview Object graph DTOs and queue messages.
+ * @fileoverview Object graph DTOs (详细设计 6.2, 6.11.3). object-graph is the
+ * authority for objects and links and the only producer of domain events.
  */
 
 import type {
   FilterExpr,
-  ObjectSetDef,
+  OrderBy,
   PageResult,
   Provenance,
   Rid,
-  UsageResource,
 } from '@ontodecide/shared-kernel';
 
 /** Minimal object reference. */
@@ -23,40 +23,46 @@ export interface LinkDto {
   type: string;
   src: Rid;
   dst: Rid;
-  weight?: number | null;
+  weight: number | null;
   /** Relative to the object the link was loaded for. */
   direction: 'out' | 'in';
 }
 
-/** Object with properties filtered by the caller's markings. */
+/** An object. HTTP responses carry `version` as ETag `"v{version}"`. */
 export interface ObjectDto {
   rid: Rid;
   type: string;
   primaryKey: string;
   title: string;
   props: Record<string, unknown>;
+  /** Per property: the import job and row it came from. */
   provenance: Record<string, Provenance>;
   version: number;
-  schemaVersion: string;
   updatedAt: string;
-  /** Properties hidden because the caller lacks their markings. */
-  hiddenProps?: string[];
-  links?: LinkDto[];
-  /** Objects reachable through `links` (depth ≤ 2). */
-  neighbors?: ObjectSummary[];
+  /** Properties whose stored value no longer matches the ontology type. */
+  invalidProps?: string[];
 }
 
 /** Page of objects. */
 export type ObjectPage = PageResult<ObjectDto>;
 
-/** Graph node used by traversals and the simulator. */
+/** Object list query. Only indexed properties are pushed down to D1. */
+export interface ObjectQuery {
+  type?: string;
+  /** Free text on title / primary key / RID. */
+  q?: string;
+  filter?: FilterExpr;
+  orderBy?: OrderBy;
+}
+
+/** Graph node used by link views and the simulator. */
 export interface GraphNode {
   rid: Rid;
   type: string;
   title: string;
   props: Record<string, unknown>;
   /** Hop distance from the query roots. */
-  hop?: number;
+  hop: number;
 }
 
 /** Graph edge. */
@@ -64,50 +70,83 @@ export interface GraphEdge {
   type: string;
   src: Rid;
   dst: Rid;
-  weight?: number | null;
+  weight: number | null;
 }
 
 /** A subgraph. */
 export interface GraphSlice {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** True when `limit` cut the result. */
+  truncated: boolean;
 }
 
-/** Impact subgraph query (outgoing traversal). */
+/** Links of an object (GET /objects/{rid}/links). */
+export interface LinksQuery {
+  depth: 1 | 2;
+  /** Empty = every link type. */
+  linkTypes?: string[];
+  direction?: 'out' | 'in' | 'both';
+  /** ≤ 300. */
+  limit?: number;
+}
+
+/** Outgoing impact traversal used by the simulator (recursive CTE). */
 export interface ImpactQuery {
   rids: Rid[];
-  /** Empty or omitted = every link type. */
-  linkTypes?: string[];
-  maxHops: 1 | 2 | 3;
-  /** ≤ 500. */
+  /** Link types with propagation configured. */
+  linkTypes: string[];
+  depth: 1 | 2;
+  /** ≤ 300. */
   limit: number;
 }
 
-/** Approval voucher signed by decision-engine; verified by object-graph. */
-export interface ApprovalVoucher {
-  recommendationId: string;
-  tenantId: string;
-  actionType: string;
-  target: Rid;
-  expiresAt: string;
-  signature: string;
+/** Object and link counts of a workspace. */
+export interface GraphStats {
+  objects: number;
+  links: number;
+  byType: Record<string, number>;
 }
+
+/** One object write coming from an import batch (already mapped). */
+export interface UpsertCmd {
+  type: string;
+  primaryKey: string;
+  props: Record<string, unknown>;
+  /** Source row number (for provenance and rejects). */
+  row: number;
+  /** Links from this object, resolved by target primary key. */
+  links?: {type: string; toType: string; toKey: string; weight?: number}[];
+}
+
+/** Result of one upsertBatch call. */
+export interface WriteResult {
+  upserted: number;
+  /** Unchanged rows (props_hash equal): not written. */
+  skipped: number;
+  linksWritten: number;
+  rejected: {row: number; code: WriteRejectCode; detail?: string}[];
+}
+
+/** Why a row (or a link of it) was rejected by object-graph. */
+export type WriteRejectCode =
+  'OBJECT_LIMIT' | 'LINK_LIMIT' | 'REF_MISSING' | 'UNKNOWN_TYPE' | 'VALIDATION';
+
+/** RFC 7396 merge patch of object properties. */
+export type MergePatch = Record<string, unknown>;
 
 /** Command to execute an action. */
 export interface ApplyActionCmd {
   actionType: string;
   target: Rid;
   params: Record<string, unknown>;
-  recommendationId?: string;
-  approval?: ApprovalVoucher;
-  /** Expected object version (If-Match). */
+  /** Expected object version (If-Match); required for human callers. */
   ifMatch?: number;
+  idempotencyKey: string;
+  recommendationId?: string;
 }
 
-/** Writeback state of an executed action. */
-export type WritebackStatus = 'NONE' | 'SENT' | 'WRITEBACK_PENDING';
-
-/** Outcome of an action. */
+/** Outcome of an action (also returned for an idempotent replay). */
 export interface ActionResult {
   actionLogId: string;
   actionType: string;
@@ -115,11 +154,11 @@ export interface ActionResult {
   version: number;
   before: Record<string, unknown>;
   after: Record<string, unknown>;
-  writebackStatus: WritebackStatus;
   executedAt: string;
+  replayed: boolean;
 }
 
-/** Audit entry for an executed action. */
+/** Audit entry for an executed action (exported as audit.jsonl). */
 export interface ActionLogDto {
   id: string;
   actionType: string;
@@ -127,112 +166,17 @@ export interface ActionLogDto {
   params: Record<string, unknown>;
   before: Record<string, unknown>;
   after: Record<string, unknown>;
+  /** `owner`, `admin` (Act-as) or `svc:decision-engine`. */
   actor: string;
+  actorUserId?: string;
   recommendationId?: string;
-  writebackStatus: WritebackStatus;
   executedAt: string;
 }
 
-/** Property lineage: current provenance and overwritten history (≤ 5). */
-export interface LineageDto {
-  rid: Rid;
-  props: Record<
-    string,
-    {
-      value: unknown;
-      current: Provenance | null;
-      history: (Provenance & {value: unknown})[];
-    }
-  >;
-}
-
-/** Saved Object Set. */
-export interface ObjectSetDto {
-  id: string;
-  name: string;
-  definition: ObjectSetDef;
-  createdBy: string;
-  updatedAt: string;
-}
-
-/** Fuzzy entity-resolution merge suggestion. */
-export interface MergeSuggestionDto {
-  id: string;
-  ridA: Rid;
-  ridB: Rid;
-  titleA: string;
-  titleB: string;
-  score: number;
-  status: 'OPEN' | 'ACCEPTED' | 'REJECTED';
-  createdAt: string;
-}
-
-/** Aggregation over an Object Set (KPI computation). */
-export interface AggregateQuery {
-  objectSet: ObjectSetDef;
-  fn: 'count' | 'sum' | 'avg' | 'min' | 'max';
-  prop?: string;
-}
-
-/** List query for one object type. */
-export interface ListObjectsQuery {
-  filter?: FilterExpr;
-  orderBy?: {prop: string; dir: 'asc' | 'desc'}[];
-  cursor?: string;
-  limit?: number;
-}
-
-/** Message on the `graph-sync` queue (self-consumed by object-graph). */
-export interface GraphSyncMsg {
-  tenantId: string;
-  upserts: {
-    rid: Rid;
-    type: string;
-    title: string;
-    idx: Record<string, unknown>;
-  }[];
-  links: {
-    type: string;
-    src: Rid;
-    dst: Rid;
-    weight?: number | null;
-    op: 'merge' | 'delete';
-  }[];
-}
-
-/** One changed object in a situation event. */
-export interface ObjectChange {
-  rid: Rid;
-  type: string;
-  title: string;
-  changed: string[];
-  after: Record<string, unknown>;
-}
-
-/** Message on the `situation-events` queue (one per write batch). */
-export interface SituationEventMsg {
-  eventId: string;
-  tenantId: string;
-  kind: 'ObjectsUpserted' | 'ActionExecuted' | 'JobFinished';
-  occurredAt: string;
-  correlationId: string;
-  changes: ObjectChange[];
-  /** For ActionExecuted. */
-  action?: {actionLogId: string; actionType: string; recommendationId?: string};
-  /** For JobFinished. */
-  job?: {jobId: string};
-  /** Free-tier usage caused by the write (recorded by UsageGuard). */
-  usage?: {resource: UsageResource; n: number}[];
-}
-
-/** Traversal limits. */
+/** Traversal and write limits. */
 export const GRAPH_LIMITS = {
-  d1MaxHops: 2,
-  neo4jMaxHops: 3,
+  maxDepth: 2,
   subgraphNodesDefault: 200,
-  subgraphNodesMax: 500,
-  neo4jTimeoutMs: 2000,
-  provenanceHistoryMax: 5,
-  fuzzyCandidatesMax: 200,
-  fuzzyThreshold: 0.92,
+  subgraphNodesMax: 300,
+  batchMax: 100,
 } as const;

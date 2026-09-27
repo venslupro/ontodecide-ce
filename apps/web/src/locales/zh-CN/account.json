@@ -1,0 +1,68 @@
+{
+  "title": "账户与数据",
+  "breadcrumb": "工作区 {tid} · 仅你一人（所有者）",
+  "breadcrumbAdmin": "管理员工作区 {tid} · 平台管理员",
+  "lifecycle": {
+    "title": "试用生命周期",
+    "tzNote": "时间按你的时区显示",
+    "signup": "注册",
+    "reminder": "到期提醒",
+    "expiry": "试用到期",
+    "link": "归档下载期",
+    "purge": "彻底删除",
+    "linkDays": "{days} 天"
+  },
+  "admin": {
+    "badge": "平台管理员 · 不过期 · 不可删除",
+    "note": "部署时自动创建，系统唯一；所有管理操作写入审计日志。"
+  },
+  "account": {
+    "title": "账户",
+    "email": "邮箱",
+    "role": "角色",
+    "roleOwner": "所有者（每个工作区唯一）",
+    "roleAdmin": "平台管理员（系统唯一）",
+    "method": "登录方式",
+    "methodOwner": "邮箱验证码 · 无密码",
+    "methodAdmin": "邮箱验证码 + Passkey",
+    "sessions": "活跃会话",
+    "language": "界面语言",
+    "timeZone": "时区"
+  },
+  "archive": {
+    "title": "到期后将归档的数据",
+    "oneZip": "一个 ZIP",
+    "tag": "归档",
+    "notArchived": "会话、计数器、缓存不归档",
+    "onceNote": "归档邮件只发送一次，建议现在先导出一份。",
+    "file": {
+      "ontology": "本体定义",
+      "objects": "对象与属性",
+      "links": "关系",
+      "imports": "导入作业与字段映射",
+      "situation": "告警与自动化规则",
+      "decisions": "情景、建议与确认记录",
+      "audit": "动作审计日志"
+    }
+  },
+  "export": {
+    "button": "立即导出一份",
+    "done": "导出完成",
+    "failed": "导出失败",
+    "adminNote": "导出管理员工作区的当前数据（JSON Lines）"
+  },
+  "danger": {
+    "title": "提前结束试用并删除",
+    "body": "立即停止试用。数据打包为 ZIP 并把下载链接发送到你的邮箱（7 天有效），随后账户与邮箱立即删除。此操作需要邮箱验证码确认。",
+    "button": "结束试用",
+    "dialogTitle": "确认提前结束试用",
+    "dialogBody": "此操作不可撤销。",
+    "point1": "工作区数据打包为 ZIP，下载链接发送到你的邮箱（仅一次，7 天有效）",
+    "point2": "账户、邮箱与会话随即删除，无法再登录",
+    "point3": "我们会向你的邮箱发送验证码以确认本次操作",
+    "sendCode": "发送验证码",
+    "codeSent": "验证码已发送到你的邮箱，请在 10 分钟内输入。",
+    "codeLabel": "6 位验证码",
+    "confirm": "确认结束试用"
+  }
+}

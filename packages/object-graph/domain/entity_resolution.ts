@@ -1,115 +1,309 @@
 /**
- * @fileoverview Fuzzy entity resolution on object titles: NFKC
- * normalization and Jaro-Winkler similarity. Exact `(type, primaryKey)` and
- * alias matching happen in the application layer (they need I/O).
+ * @fileoverview Deterministic entity resolution and write planning for
+ * upsertBatch (详细设计 6.3.3, 6.11.3). (type, primary key) identifies an
+ * object; properties merge latest-wins; links resolve their target by
+ * (toType, toKey) among existing objects and the batch itself. The planner
+ * enforces the per-workspace object and link limits and is pure: the
+ * repository turns the plan into single-statement writes.
  */
 
-import type {Rid} from '@ontodecide/shared-kernel';
-import {GRAPH_LIMITS} from '../contract/types';
+import type {ObjectChangeRef, Rid} from '@ontodecide/shared-kernel';
+import {validateProps} from '@ontodecide/ontology/contract';
+import type {CompiledSchema} from '@ontodecide/ontology/contract';
+import type {UpsertCmd, WriteResult} from '../contract/types';
+import {isEmptyValue, mergeLatestWins} from './conflict_resolution';
+import type {PropState} from './conflict_resolution';
+import {titleOf} from './stored_object';
+import type {StoredObject} from './stored_object';
 
-/** NFKC-normalizes, strips punctuation/symbols, collapses spaces, lowercases. */
-export function normalizeTitle(title: string): string {
-  return title
-    .normalize('NFKC')
-    .replace(/[\p{P}\p{S}]/gu, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+/** Workspace limits enforced on writes. */
+export interface GraphCaps {
+  maxObjects: number;
+  maxLinks: number;
 }
 
-/** First character of the normalized title (candidate bucket), or ''. */
-export function fuzzyBucket(title: string): string {
-  const n = normalizeTitle(title);
-  return n ? [...n][0] : '';
+/** Current workspace totals. */
+export interface GraphCounts {
+  objects: number;
+  links: number;
 }
 
-/** Jaro similarity in [0, 1]. */
-export function jaro(a: string, b: string): number {
-  if (a === b) return 1;
-  const s1 = [...a];
-  const s2 = [...b];
-  if (s1.length === 0 || s2.length === 0) return 0;
-  const window = Math.max(
-    0,
-    Math.floor(Math.max(s1.length, s2.length) / 2) - 1,
-  );
-  const m1 = new Array<boolean>(s1.length).fill(false);
-  const m2 = new Array<boolean>(s2.length).fill(false);
-  let matches = 0;
-  for (let i = 0; i < s1.length; i++) {
-    const lo = Math.max(0, i - window);
-    const hi = Math.min(s2.length - 1, i + window);
-    for (let j = lo; j <= hi; j++) {
-      if (m2[j] || s1[i] !== s2[j]) continue;
-      m1[i] = true;
-      m2[j] = true;
-      matches++;
-      break;
-    }
-  }
-  if (matches === 0) return 0;
-  let k = 0;
-  let transpositions = 0;
-  for (let i = 0; i < s1.length; i++) {
-    if (!m1[i]) continue;
-    while (!m2[k]) k++;
-    if (s1[i] !== s2[k]) transpositions++;
-    k++;
-  }
-  const t = transpositions / 2;
-  return (
-    (matches / s1.length + matches / s2.length + (matches - t) / matches) / 3
-  );
-}
-
-/** Jaro-Winkler similarity in [0, 1] (prefix scale 0.1, prefix ≤ 4). */
-export function jaroWinkler(a: string, b: string, prefixScale = 0.1): number {
-  const j = jaro(a, b);
-  const s1 = [...a];
-  const s2 = [...b];
-  let prefix = 0;
-  const max = Math.min(4, s1.length, s2.length);
-  while (prefix < max && s1[prefix] === s2[prefix]) prefix++;
-  return j + prefix * prefixScale * (1 - j);
-}
-
-/** A candidate for fuzzy matching. */
-export interface FuzzyCandidate {
+/** An object the batch writes (new, or with changed properties). */
+export interface PlannedObject {
   rid: Rid;
+  type: string;
+  primaryKey: string;
   title: string;
+  state: PropState;
+  /** True when the object does not exist yet. */
+  isNew: boolean;
+  /** 1-based position among new objects (for the SQL limit guard). */
+  newOrdinal: number | null;
+  /** Changed property names (union over the batch). */
+  changed: string[];
+  /** Source rows that changed this object. */
+  rows: number[];
 }
 
-/** A fuzzy match above the threshold. */
-export interface FuzzyMatch {
+/** A link the batch writes (new, or with a changed weight). */
+export interface PlannedLink {
+  src: Rid;
+  type: string;
+  dst: Rid;
+  weight: number | null;
+  isNew: boolean;
+  /** 1-based position among new links (for the SQL limit guard). */
+  newOrdinal: number | null;
+  row: number;
+}
+
+/** Everything upsertBatch writes, plus the per-row outcome. */
+export interface UpsertPlan {
+  objects: PlannedObject[];
+  links: PlannedLink[];
+  upserted: number;
+  skipped: number;
+  rejected: WriteResult['rejected'];
+}
+
+/** Inputs of {@link planUpsert}. */
+export interface PlanInput {
+  schema: CompiledSchema;
+  cmds: UpsertCmd[];
+  /** Existing objects matching any (type, key) of the batch or its links. */
+  existing: StoredObject[];
+  /** Existing links from the batch's existing objects (weight by key). */
+  existingLinks: Map<string, number | null>;
+  counts: GraphCounts;
+  caps: GraphCaps;
+  jobId: string;
+  nowMs: number;
+  newRid: (type: string) => Rid;
+}
+
+/** Map key of an object identity. */
+export function objectKey(type: string, primaryKey: string): string {
+  return `${type}\u001f${primaryKey}`;
+}
+
+/** Map key of a link. */
+export function linkKey(src: string, type: string, dst: string): string {
+  return `${src}\u001f${type}\u001f${dst}`;
+}
+
+interface Working {
   rid: Rid;
-  score: number;
+  type: string;
+  primaryKey: string;
+  state: PropState;
+  isNew: boolean;
+  planned: PlannedObject | null;
 }
 
-/**
- * Finds the best candidate whose normalized title shares the first
- * character and reaches the threshold. Returns null when there are more
- * than 200 candidates (fuzzy matching is skipped) or nothing matches.
- */
-export function bestFuzzyMatch(
-  title: string,
-  candidates: readonly FuzzyCandidate[],
-  opts: {threshold?: number; maxCandidates?: number; exclude?: string} = {},
-): FuzzyMatch | null {
-  const threshold = opts.threshold ?? GRAPH_LIMITS.fuzzyThreshold;
-  const maxCandidates = opts.maxCandidates ?? GRAPH_LIMITS.fuzzyCandidatesMax;
-  if (candidates.length > maxCandidates) return null;
-  const n = normalizeTitle(title);
-  if (!n) return null;
-  const bucket = [...n][0];
-  let best: FuzzyMatch | null = null;
-  for (const c of candidates) {
-    if (c.rid === opts.exclude) continue;
-    const cn = normalizeTitle(c.title);
-    if (!cn || [...cn][0] !== bucket) continue;
-    const score = jaroWinkler(n, cn);
-    if (score >= threshold && (!best || score > best.score)) {
-      best = {rid: c.rid, score: Math.round(score * 10_000) / 10_000};
+/** Plans one upsert batch. */
+export function planUpsert(input: PlanInput): UpsertPlan {
+  const {schema, caps, counts} = input;
+  const byKey = new Map<string, Working>();
+  for (const o of input.existing) {
+    byKey.set(objectKey(o.type, o.primaryKey), {
+      rid: o.rid,
+      type: o.type,
+      primaryKey: o.primaryKey,
+      state: {props: o.props, provenance: o.provenance},
+      isNew: false,
+      planned: null,
+    });
+  }
+  const plan: UpsertPlan = {
+    objects: [],
+    links: [],
+    upserted: 0,
+    skipped: 0,
+    rejected: [],
+  };
+  const accepted: {cmd: UpsertCmd; w: Working}[] = [];
+  let newObjects = 0;
+
+  for (const cmd of input.cmds) {
+    const type = schema.objectTypes[cmd.type];
+    if (!type) {
+      plan.rejected.push({row: cmd.row, code: 'UNKNOWN_TYPE'});
+      continue;
+    }
+    const pk = String(cmd.primaryKey ?? '').trim();
+    if (!pk) {
+      plan.rejected.push({
+        row: cmd.row,
+        code: 'VALIDATION',
+        detail: `${type.primaryKey}:REQUIRED`,
+      });
+      continue;
+    }
+    const incoming: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(cmd.props ?? {})) {
+      if (!isEmptyValue(v)) incoming[k] = v;
+    }
+    if (type.propsByName[type.primaryKey] && !(type.primaryKey in incoming)) {
+      incoming[type.primaryKey] = pk;
+    }
+    const v = validateProps(type, incoming, {partial: true});
+    if (v.errors.length) {
+      plan.rejected.push({
+        row: cmd.row,
+        code: 'VALIDATION',
+        detail: v.errors.map(e => `${e.prop}:${e.code}`).join(','),
+      });
+      continue;
+    }
+    const key = objectKey(cmd.type, pk);
+    let w = byKey.get(key);
+    const merged = mergeLatestWins(w?.state ?? null, v.props, {
+      jobId: input.jobId,
+      row: cmd.row,
+      at: input.nowMs,
+    });
+    if (!w) {
+      const missing = type.properties
+        .filter(p => p.required && isEmptyValue(merged.state.props[p.apiName]))
+        .map(p => `${p.apiName}:REQUIRED`);
+      if (missing.length) {
+        plan.rejected.push({
+          row: cmd.row,
+          code: 'VALIDATION',
+          detail: missing.join(','),
+        });
+        continue;
+      }
+      if (counts.objects + newObjects + 1 > caps.maxObjects) {
+        plan.rejected.push({row: cmd.row, code: 'OBJECT_LIMIT'});
+        continue;
+      }
+      newObjects++;
+      w = {
+        rid: input.newRid(cmd.type),
+        type: cmd.type,
+        primaryKey: pk,
+        state: {props: {}, provenance: {}},
+        isNew: true,
+        planned: null,
+      };
+      byKey.set(key, w);
+    }
+    accepted.push({cmd, w});
+    if (!merged.changed.length && (!w.isNew || w.planned)) {
+      plan.skipped++;
+      continue;
+    }
+    w.state = merged.state;
+    plan.upserted++;
+    if (!w.planned) {
+      w.planned = {
+        rid: w.rid,
+        type: w.type,
+        primaryKey: w.primaryKey,
+        title: '',
+        state: w.state,
+        isNew: w.isNew,
+        newOrdinal: w.isNew ? newObjects : null,
+        changed: [],
+        rows: [],
+      };
+      plan.objects.push(w.planned);
+    }
+    w.planned.state = w.state;
+    w.planned.title = titleOf(type, w.state.props, w.primaryKey);
+    w.planned.rows.push(cmd.row);
+    for (const c of merged.changed) {
+      if (!w.planned.changed.includes(c)) w.planned.changed.push(c);
     }
   }
-  return best;
+
+  const planned = new Map<string, PlannedLink>();
+  let newLinks = 0;
+  for (const {cmd, w} of accepted) {
+    for (const l of cmd.links ?? []) {
+      const def = schema.linkTypes[l.type];
+      if (!def || def.from !== cmd.type || def.to !== l.toType) {
+        plan.rejected.push({
+          row: cmd.row,
+          code: 'VALIDATION',
+          detail: `link:${l.type}`,
+        });
+        continue;
+      }
+      const target = byKey.get(objectKey(l.toType, String(l.toKey ?? '')));
+      if (!target) {
+        plan.rejected.push({
+          row: cmd.row,
+          code: 'REF_MISSING',
+          detail: `${l.type}->${l.toType}`,
+        });
+        continue;
+      }
+      const weight =
+        typeof l.weight === 'number' && Number.isFinite(l.weight)
+          ? l.weight
+          : null;
+      const key = linkKey(w.rid, l.type, target.rid);
+      const prior = planned.get(key);
+      if (prior) {
+        prior.weight = weight;
+        continue;
+      }
+      if (input.existingLinks.has(key)) {
+        if (input.existingLinks.get(key) === weight) continue;
+        const pl: PlannedLink = {
+          src: w.rid,
+          type: l.type,
+          dst: target.rid,
+          weight,
+          isNew: false,
+          newOrdinal: null,
+          row: cmd.row,
+        };
+        planned.set(key, pl);
+        plan.links.push(pl);
+        continue;
+      }
+      if (counts.links + newLinks + 1 > caps.maxLinks) {
+        plan.rejected.push({
+          row: cmd.row,
+          code: 'LINK_LIMIT',
+          detail: l.type,
+        });
+        continue;
+      }
+      newLinks++;
+      const pl: PlannedLink = {
+        src: w.rid,
+        type: l.type,
+        dst: target.rid,
+        weight,
+        isNew: true,
+        newOrdinal: newLinks,
+        row: cmd.row,
+      };
+      planned.set(key, pl);
+      plan.links.push(pl);
+    }
+  }
+  plan.rejected.sort((a, b) => a.row - b.row);
+  return plan;
+}
+
+/** Domain-event changes of a plan: changed objects, then link-only sources. */
+export function planChanges(plan: UpsertPlan): ObjectChangeRef[] {
+  const out: ObjectChangeRef[] = plan.objects.map(o => ({
+    rid: o.rid,
+    type: o.type,
+    changed: [...o.changed],
+  }));
+  const seen = new Set(out.map(c => c.rid));
+  for (const l of plan.links) {
+    if (seen.has(l.src)) continue;
+    seen.add(l.src);
+    const type = l.src.split('.')[1] ?? '';
+    out.push({rid: l.src, type, changed: []});
+  }
+  return out;
 }

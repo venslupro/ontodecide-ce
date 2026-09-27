@@ -1,12 +1,17 @@
 /**
  * @fileoverview Transform functions and the transform-chain parser used by
- * field mappings (`trim|toNumber|clamp(0,100)`). The registry is open for
+ * field mappings (`trim|toNumber|clamp(0,100)`, ≤ 5 steps). Available:
+ * trim, lower, upper, toNumber, toInteger, toBoolean, parseDate, clamp(a,b),
+ * round(n), default(x), lookup(k=v;k2=v2;*=fallback), iso3166 and split(sep).
+ * The registry is open for
  * extension (`registerTransform`) and closed for modification: built-ins
  * cannot be replaced.
  */
 
 import {AppError} from '@ontodecide/shared-kernel';
-import {INGEST_LIMITS} from '../contract';
+
+/** Maximum steps of a transform chain (详细设计 6.11.2). */
+export const TRANSFORM_CHAIN_MAX = 5;
 
 /** A compiled transform step. Throws {@link TransformError} on bad input. */
 export type TransformFn = (value: unknown) => unknown;
@@ -355,11 +360,12 @@ builtIn('lookup', args => {
   const table = new Map<string, unknown>();
   for (const pair of (args ?? '').split(';')) {
     if (pair.trim() === '') continue;
-    const idx = pair.indexOf(':');
+    const eq = pair.indexOf('=');
+    const idx = eq > 0 ? eq : pair.indexOf(':');
     if (idx <= 0) {
       throw new AppError(
         'VALIDATION_FAILED',
-        'lookup(a:x;b:y) expects key:value pairs',
+        'lookup(a=x;b=y) expects key=value pairs',
       );
     }
     table.set(pair.slice(0, idx).trim(), parseLiteral(pair.slice(idx + 1)));
@@ -367,7 +373,7 @@ builtIn('lookup', args => {
   if (table.size === 0) {
     throw new AppError(
       'VALIDATION_FAILED',
-      'lookup(a:x;b:y) expects key:value pairs',
+      'lookup(a=x;b=y) expects key=value pairs',
     );
   }
   return v => {
@@ -441,10 +447,10 @@ export function compileChain(expr: string | undefined): TransformChain {
   const cached = CACHE.get(expr);
   if (cached) return cached;
   const raw = splitTopLevel(expr, '|').map(s => s.trim());
-  if (raw.length > INGEST_LIMITS.transformChainMax) {
+  if (raw.length > TRANSFORM_CHAIN_MAX) {
     throw new AppError(
       'VALIDATION_FAILED',
-      `Transform chain exceeds ${INGEST_LIMITS.transformChainMax} steps`,
+      `Transform chain exceeds ${TRANSFORM_CHAIN_MAX} steps`,
     );
   }
   const fns: TransformFn[] = [];

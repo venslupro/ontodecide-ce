@@ -1,92 +1,4 @@
 {
-  "brand": {
-    "tagline": "智能决策驾驶舱"
-  },
-  "nav": {
-    "label": "主导航",
-    "groups": {
-      "monitor": "态势",
-      "decide": "决策",
-      "data": "数据与本体",
-      "admin": "管理"
-    },
-    "cockpit": "态势总览",
-    "objects": "对象浏览",
-    "graph": "关系探索",
-    "scenarios": "情景推演",
-    "recommendations": "建议中心",
-    "automations": "自动化规则",
-    "sources": "数据接入",
-    "ontology": "本体工作台",
-    "users": "用户与权限",
-    "health": "系统健康"
-  },
-  "topbar": {
-    "language": "界面语言",
-    "theme": "切换主题（当前：{theme}）",
-    "notifications": "通知中心，{count, plural, other {# 条未读}}",
-    "notificationsTitle": "通知",
-    "noNotifications": "暂无通知",
-    "pendingRec": "待审批建议",
-    "userMenu": "用户菜单",
-    "about": "关于",
-    "logout": "退出登录",
-    "version": "版本",
-    "expandNav": "展开导航",
-    "collapseNav": "收起导航"
-  },
-  "theme": {
-    "dark": "深色",
-    "light": "浅色",
-    "system": "跟随系统"
-  },
-  "search": {
-    "label": "全局搜索",
-    "placeholder": "搜索对象名称或 RID…",
-    "openRid": "打开"
-  },
-  "quota": {
-    "label": "免费额度最高占用 {pct}",
-    "title": "今日免费额度占用",
-    "critical": "即将用尽",
-    "warning": "偏高",
-    "writePaused": "今日免费额度即将用尽，写操作可能被暂停；读取与审批不受影响。",
-    "resources": {
-      "workers_requests": "Workers 请求",
-      "d1_rowsWritten": "D1 写入行",
-      "d1_rowsRead": "D1 读取行",
-      "queues_ops": "队列操作",
-      "kv_writes": "KV 写入",
-      "ai_neurons": "AI Neurons",
-      "do_requests": "Durable Object 请求"
-    }
-  },
-  "banner": {
-    "offline": "网络已断开，写操作已禁用；恢复后将自动重新拉取。",
-    "realtimeDown": "实时连接中断，已切换为每 30 秒轮询；正在后台重连。",
-    "quota": "今日免费额度即将用尽，写操作可能被拒绝。"
-  },
-  "realtime": {
-    "idle": "未连接",
-    "connecting": "连接中",
-    "open": "实时",
-    "reconnecting": "重连中",
-    "polling": "轮询中",
-    "paused": "已暂停",
-    "closed": "已断开"
-  },
-  "a11y": {
-    "skipToContent": "跳到主要内容"
-  },
-  "roles": {
-    "Viewer": "查看者",
-    "Operator": "操作员",
-    "Modeler": "建模者",
-    "Admin": "管理员"
-  },
-  "permission": {
-    "required": "此页面需要「{role}」或更高角色。请联系管理员开通权限。"
-  },
   "actions": {
     "close": "关闭",
     "retry": "重试",
@@ -120,7 +32,8 @@
     "run": "运行",
     "enable": "启用",
     "disable": "停用",
-    "loadMore": "加载更多"
+    "loadMore": "加载更多",
+    "signOut": "退出登录"
   },
   "state": {
     "loading": "加载中…",
@@ -130,40 +43,6 @@
     "saved": "已保存",
     "updatedAt": "更新于 {time}",
     "total": "共 {count, number} 条"
-  },
-  "errors": {
-    "generic": "操作失败，请稍后重试",
-    "errorId": "错误编号",
-    "renderFailed": "页面出错了",
-    "pageNotFound": "页面不存在",
-    "NETWORK": "网络连接失败，请检查网络",
-    "ABORTED": "请求已取消",
-    "HTTP_ERROR": "服务器返回错误",
-    "VALIDATION_FAILED": "输入不合法，请检查后重试",
-    "PERTURBATION_INVALID": "扰动设置不合法",
-    "OBJECT_SET_INVALID": "对象集定义不合法",
-    "AUTH_INVALID": "邮箱或密码错误",
-    "AUTH_EXPIRED": "登录已过期，请重新登录",
-    "SIGNATURE_INVALID": "签名校验失败",
-    "FORBIDDEN": "无权限访问",
-    "NOT_FOUND": "资源不存在",
-    "OBJECT_NOT_FOUND": "对象不存在或已被删除",
-    "SOURCE_NOT_FOUND": "数据源不存在",
-    "CONFLICT": "操作冲突，请刷新后重试",
-    "APPROVAL_REQUIRED": "该动作需要审批，请前往建议中心",
-    "INVALID_TRANSITION": "当前状态不允许此操作",
-    "REPLAY": "重复请求已被忽略",
-    "VERSION_CONFLICT": "对象已被他人修改，请刷新后重试",
-    "BATCH_TOO_LARGE": "批次过大",
-    "PRECONDITION_FAILED": "前置条件未满足",
-    "ONTOLOGY_BREAKING_CHANGE": "包含破坏性变更，需要确认新版本号",
-    "ONTOLOGY_INVALID": "本体定义不合法",
-    "GRAPH_TOO_LARGE": "关系图过大，请缩小范围",
-    "AUTH_LOCKED": "账号已被临时锁定，请稍后再试",
-    "RATE_LIMITED": "请求过于频繁，请 {seconds} 秒后重试",
-    "INTERNAL": "服务器内部错误",
-    "UPSTREAM_FAILED": "上游服务不可用",
-    "QUOTA_EXCEEDED": "今日免费额度即将用尽，写操作暂不可用"
   },
   "severity": {
     "LOW": "低",
@@ -178,8 +57,8 @@
   },
   "recStatus": {
     "Draft": "生成中",
-    "Proposed": "待审批",
-    "Approved": "已批准",
+    "Proposed": "待确认",
+    "Approved": "已确认",
     "Rejected": "已驳回",
     "Expired": "已过期",
     "Executed": "已执行",
@@ -207,9 +86,6 @@
     "true": "是",
     "false": "否"
   },
-  "markings": {
-    "hidden": "无访问权限（需要对应 Markings）"
-  },
   "picker": {
     "placeholder": "搜索对象…",
     "typeToSearch": "输入名称或 RID 搜索",
@@ -221,22 +97,6 @@
   "time": {
     "range24h": "24 小时",
     "range7d": "7 天"
-  },
-  "login": {
-    "badge": "本体驱动 · 实时态势 · 可解释决策",
-    "heroTitle1": "从数据到决策，",
-    "heroTitle2": "一屏掌握全局",
-    "heroSubtitle": "OntoDecide 以业务本体连接多源数据，实时感知风险、推演影响，并给出可追溯的处置建议。",
-    "feature1": "本体驱动的对象与关系图谱",
-    "feature2": "情景推演与 AI 处置建议",
-    "feature3": "审批留痕，证据链全程可追溯",
-    "title": "登录",
-    "subtitle": "使用企业邮箱与密码登录运营驾驶舱",
-    "email": "邮箱",
-    "emailInvalid": "请输入有效的邮箱地址",
-    "password": "密码",
-    "passwordRequired": "请输入密码",
-    "submit": "登录"
   },
   "filter": {
     "condition": "条件 {n}",
@@ -266,5 +126,116 @@
       "contains": "包含",
       "exists": "有值"
     }
+  },
+  "brand": {
+    "edition": "社区版 · 试用",
+    "editionAdmin": "社区版 · 管理",
+    "editionShort": "社区版"
+  },
+  "nav": {
+    "label": "主导航",
+    "group": {
+      "operate": "运营",
+      "build": "构建",
+      "mine": "我的",
+      "platform": "平台"
+    },
+    "cockpit": "态势总览",
+    "objects": "对象浏览",
+    "graph": "关系探索",
+    "scenarios": "情景推演",
+    "recommendations": "建议中心",
+    "imports": "数据导入",
+    "ontology": "本体工作台",
+    "automations": "自动化规则",
+    "account": "账户与数据",
+    "admin": "平台管理"
+  },
+  "search": {
+    "label": "全局检索",
+    "placeholder": "搜索对象、RID、告警...",
+    "openRid": "打开"
+  },
+  "realtime": {
+    "idle": "未连接",
+    "connecting": "连接中",
+    "open": "实时连接",
+    "reconnecting": "重连中",
+    "polling": "实时连接中断",
+    "paused": "已暂停（页面隐藏）",
+    "ended": "已结束",
+    "closed": "已断开"
+  },
+  "banner": {
+    "offline": "网络已断开，写操作已禁用；恢复后将自动重新拉取。",
+    "realtimeDown": "实时连接中断，已切换为每 30 秒轮询；正在后台重连。",
+    "adminSession": "管理员会话将在 {left} 后结束，届时需要重新登录。"
+  },
+  "lang": {
+    "label": "界面语言"
+  },
+  "role": {
+    "owner": "所有者",
+    "admin": "平台管理员",
+    "ownerFull": "所有者 Owner",
+    "adminFull": "平台管理员 Admin"
+  },
+  "account": {
+    "menu": "账户菜单"
+  },
+  "trial": {
+    "left": "试用剩余",
+    "progress": "试用已用时间",
+    "linkNote": "到期后下载链接发送至邮箱"
+  },
+  "adminCard": {
+    "title": "不过期 · 不可删除",
+    "note": "部署时自动创建，系统唯一"
+  },
+  "expiry": {
+    "title": "试用将于 {time}（{tz}）到期，剩余 {left}",
+    "body": "到期后数据打包为 ZIP，下载链接发到你的邮箱，7 天后永久删除；邮件只发一次，建议现在先导出。",
+    "export": "立即导出"
+  },
+  "quota": {
+    "objects": "对象数",
+    "links": "关系数",
+    "importRowsToday": "今日导入行数",
+    "aiRecsToday": "今日 AI 建议",
+    "mappingDraftsToday": "今日 AI 映射草稿",
+    "sessions": "活跃会话",
+    "usedUp": "今日已用完",
+    "resetNote": "每日 0 点（UTC）重置 · 下次 {time}（{tz}）"
+  },
+  "forbidden": {
+    "body": "该页面只对平台管理员开放。",
+    "back": "返回态势总览"
+  },
+  "a11y": {
+    "skipToContent": "跳到主要内容"
+  },
+  "errors": {
+    "generic": "操作失败，请稍后重试",
+    "errorId": "错误编号",
+    "pageNotFound": "页面不存在",
+    "UNAUTHENTICATED": "请重新登录",
+    "TRIAL_EXPIRED": "试用已结束，下载链接已发送到邮箱",
+    "SIGNUP_CLOSED": "今日名额已满，请明日再试",
+    "QUOTA_EXCEEDED": "今日{what}已用完，{resetAt}重置",
+    "RATE_LIMITED": "操作太频繁，{seconds} 秒后重试",
+    "CODE_INVALID": "验证码不正确，还可尝试 {left} 次",
+    "PRECONDITION_FAILED": "内容已在其他窗口修改",
+    "CONFLICT": "当前状态不允许该操作",
+    "NOT_FOUND": "未找到该内容",
+    "VALIDATION_FAILED": "请检查标出的字段",
+    "FORBIDDEN": "无权执行该操作",
+    "INTERNAL": "服务器内部错误，请稍后重试",
+    "UNAVAILABLE": "服务暂不可用，请稍后重试",
+    "NETWORK": "网络已断开",
+    "ABORTED": "请求已取消",
+    "HTTP_ERROR": "服务器返回错误",
+    "SERVER": "服务暂时出错，请稍后重试",
+    "PAYLOAD_TOO_LARGE": "内容过大（请求体不能超过 512 KB）",
+    "RENDER": "页面出错了"
   }
 }

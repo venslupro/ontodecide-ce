@@ -1,52 +1,63 @@
 /**
- * @fileoverview Tests for the job state machine and completion rule.
+ * @fileoverview Tests for the job model.
  */
 
 import {describe, expect, it} from 'vitest';
 import {
-  assertTransition,
-  canTransition,
-  finalStatus,
-  isJobComplete,
-  isTerminal,
-  qualityScore,
+  applyDelta,
+  effectiveStatus,
+  rejectedRows,
+  STALE_JOB_MS,
+  toJobDto,
 } from './job';
+import type {JobRecord} from './job';
 
-const base = {
-  received: 10,
+const JOB: JobRecord = {
+  id: 'J1',
+  kind: 'file',
+  fileName: 'a.csv',
+  targetType: 'Supplier',
+  mapping: null,
+  status: 'RECEIVING',
+  totalRows: 10,
+  received: 0,
+  upserted: 0,
+  skipped: 0,
   rejected: 0,
-  lastSeq: 1,
-  batches: 2,
-  ingestTotal: 3,
-  ingestDone: 3,
-  totalGroups: 3,
-  doneGroups: 3,
+  createdAt: 0,
+  updatedAt: 1000,
 };
 
 describe('job', () => {
-  it('transitions', () => {
-    expect(canTransition('Queued', 'Running')).toBe(true);
-    expect(canTransition('Running', 'Succeeded')).toBe(true);
-    expect(canTransition('Succeeded', 'Running')).toBe(false);
-    expect(isTerminal('PartiallyFailed')).toBe(true);
-    expect(() => assertTransition('Failed', 'Running')).toThrow(
-      /INVALID_TRANSITION/,
-    );
+  it('reads a stale RECEIVING job as FAILED', () => {
+    expect(effectiveStatus(JOB, 1000 + STALE_JOB_MS)).toBe('RECEIVING');
+    expect(effectiveStatus(JOB, 1001 + STALE_JOB_MS)).toBe('FAILED');
+    expect(effectiveStatus({...JOB, status: 'DONE'}, 1e12)).toBe('DONE');
   });
 
-  it('completion needs last batch, all batches, messages and groups', () => {
-    expect(isJobComplete(base)).toBe(true);
-    expect(isJobComplete({...base, lastSeq: null})).toBe(false);
-    expect(isJobComplete({...base, batches: 1})).toBe(false);
-    expect(isJobComplete({...base, ingestDone: 2})).toBe(false);
-    expect(isJobComplete({...base, doneGroups: 2})).toBe(false);
+  it('applies deltas and completes on last', () => {
+    const d = {received: 5, upserted: 3, skipped: 1, rejected: 1};
+    const a = applyDelta(JOB, d, false, 2000);
+    expect(a).toMatchObject({received: 5, upserted: 3, status: 'RECEIVING'});
+    const b = applyDelta(a, d, true, 3000);
+    expect(b).toMatchObject({received: 10, rejected: 2, status: 'DONE'});
+    expect(b.updatedAt).toBe(3000);
   });
 
-  it('final status and quality score', () => {
-    expect(finalStatus({received: 10, rejected: 0})).toBe('Succeeded');
-    expect(finalStatus({received: 10, rejected: 3})).toBe('PartiallyFailed');
-    expect(finalStatus({received: 10, rejected: 10})).toBe('Failed');
-    expect(qualityScore(10, 3)).toBe(0.7);
-    expect(qualityScore(0, 0)).toBe(1);
+  it('renders DTOs', () => {
+    const dto = toJobDto(JOB, 2000, []);
+    expect(dto.createdAt).toBe('1970-01-01T00:00:00.000Z');
+    expect(dto.rejects).toEqual([]);
+    expect('rejects' in toJobDto(JOB, 2000)).toBe(false);
+  });
+
+  it('counts distinct rejected rows', () => {
+    expect(
+      rejectedRows([
+        {row: 1, code: 'A'},
+        {row: 1, code: 'B'},
+        {row: 2, code: 'A'},
+      ]),
+    ).toBe(2);
   });
 });

@@ -1,12 +1,11 @@
 /**
- * @fileoverview Local user preferences (theme, language, sidebar). Every
+ * @fileoverview Local user preferences (language, sidebar). Every
  * storage access is wrapped in try/catch: private mode or disabled storage
  * falls back to in-memory defaults (前端详细设计 表 10).
  */
 
 /** Persisted preferences. */
 export interface Prefs {
-  theme?: 'light' | 'dark' | 'system';
   locale?: string;
   sidebarCollapsed?: boolean;
   /** Per-type visible columns in the object table. */

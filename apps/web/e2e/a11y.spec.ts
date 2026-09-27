@@ -1,50 +1,40 @@
 /**
- * @fileoverview WCAG 2.1 AA checks with axe-core on the core pages, in both
- * themes.
+ * @fileoverview WCAG 2.1 AA checks (axe-core) of the public platform pages
+ * in both languages. Skipped when no server answers.
  */
 
 import AxeBuilder from '@axe-core/playwright';
 import {expect, test} from '@playwright/test';
-import {uiLogin} from './helpers';
 
-const PAGES = [
-  '/cockpit',
-  '/objects',
-  '/graph',
-  '/scenarios',
-  '/recommendations',
-  '/sources',
-  '/ontology',
-  '/automations',
-  '/admin/users',
-  '/admin/health',
-];
+const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
 
-test('login page has no WCAG AA violations', async ({page}) => {
-  await page.goto('/login');
-  const r = await new AxeBuilder({page})
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-    .analyze();
-  expect(r.violations).toEqual([]);
+test.beforeAll(async ({request}) => {
+  const up = await request.get(BASE).then(
+    r => r.ok(),
+    () => false,
+  );
+  test.skip(!up, `no server at ${BASE}`);
 });
 
-for (const theme of ['dark', 'light'] as const) {
-  test(`core pages have no WCAG AA violations (${theme})`, async ({page}) => {
-    test.setTimeout(120_000);
-    await page.addInitScript(
-      t => localStorage.setItem('od.prefs', JSON.stringify({theme: t})),
-      theme,
-    );
-    await uiLogin(page, '/cockpit');
-    for (const path of PAGES) {
-      await page.goto(path);
+for (const lang of ['zh', 'en']) {
+  for (const path of ['/signup', '/login', '/ended']) {
+    test(`${path} (${lang}) has no WCAG AA violations`, async ({page}) => {
+      await page.route('**/api/v1/**', route =>
+        route.fulfill({
+          status: 401,
+          contentType: 'application/problem+json',
+          body: '{"type":"about:blank","title":"x","status":401,"code":"UNAUTHENTICATED"}',
+        }),
+      );
+      await page.route('**/challenges.cloudflare.com/**', route =>
+        route.fulfill({contentType: 'text/javascript', body: ''}),
+      );
+      await page.goto(`${path}?lang=${lang}`);
       await page.waitForLoadState('networkidle');
       const r = await new AxeBuilder({page})
-        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-        // Canvas charts/graphs are exposed via role=img + aria-label.
-        .exclude('canvas')
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
         .analyze();
-      expect(r.violations, `${path} (${theme})`).toEqual([]);
-    }
-  });
+      expect(r.violations.map(v => v.id)).toEqual([]);
+    });
+  }
 }

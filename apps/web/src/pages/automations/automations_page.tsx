@@ -1,24 +1,27 @@
 /**
- * @fileoverview 自动化规则: list of automation rules with human-readable
- * trigger / condition / effects, optimistic enable switch, edit (dialog
- * with condition builder and dry run before save) and delete.
+ * @fileoverview 自动化规则 (/automations): alert-only rules (threshold or
+ * scheduled every n hours; ≤ 3 scheduled per workspace), with the object
+ * type, condition summary, severity, cooldown, last fired / next run, an
+ * enable switch (PUT with the full definition and If-Match), edit and
+ * delete (confirmation, If-Match). 412 opens the conflict dialog.
  */
 
 import type {AutomationDto} from '@ontodecide/situation/contract';
-import {resolveText} from '@ontodecide/shared-kernel';
-import {Pencil, Plus, Sparkles, Trash2, Workflow} from 'lucide-react';
+import {CE_LIMITS, resolveText} from '@ontodecide/shared-kernel';
+import {Pencil, Plus, Trash2, Workflow} from 'lucide-react';
 import {useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useUiModel} from '../../entities/schema/api';
-import {useHasRole} from '../../entities/session/store';
+import {ConflictDialog} from '../../features/object-graph/components/conflict_dialog';
 import {
+  defOf,
   useAutomations,
   useDeleteAutomation,
-  useSaveAutomation,
+  useUpdateAutomation,
 } from '../../features/situation/api';
 import {errorMessage} from '../../shared/api/error_message';
+import {isApiError} from '../../shared/api/errors';
 import {fmt} from '../../shared/lib/format';
-import {useOnline} from '../../shared/lib/hooks';
 import {Badge, SeverityBadge} from '../../shared/ui/badge';
 import {Button} from '../../shared/ui/button';
 import {Card} from '../../shared/ui/card';
@@ -33,43 +36,52 @@ import {AutomationDialog} from './automation_dialog';
 import {
   conditionSummary,
   cooldownText,
-  defOf,
-  triggerObjectType,
+  scheduledCount,
   triggerSummary,
 } from './automation_model';
 
-/** Editor state: closed, creating, or editing one rule. */
 type Editor =
   {open: false} | {open: true; automation?: AutomationDto; key: number};
 
+function When({at, empty}: {at: string | null; empty: string}) {
+  if (!at) return <span className="text-dim">{empty}</span>;
+  return (
+    <time dateTime={at} title={fmt.dateTime(at)}>
+      {fmt.ago(at)}
+    </time>
+  );
+}
+
 /** Automations page. */
 export function AutomationsPage() {
-  const {t, i18n} = useTranslation('cockpit');
+  const {t, i18n} = useTranslation('automations');
   const {model} = useUiModel();
   const q = useAutomations();
-  const save = useSaveAutomation();
+  const update = useUpdateAutomation();
   const del = useDeleteAutomation();
-  const canWrite = useHasRole('Operator');
-  const online = useOnline();
   const [editor, setEditor] = useState<Editor>({open: false});
   const [deleting, setDeleting] = useState<AutomationDto | null>(null);
   const [toggling, setToggling] = useState<Record<string, boolean>>({});
+  const [conflict, setConflict] = useState<AutomationDto | null>(null);
 
+  const list = q.data ?? [];
   const nameOf = (a: AutomationDto) => resolveText(a.name, i18n.language, a.id);
+  const scheduled = scheduledCount(list);
+
+  const onConflict = (a: AutomationDto) => setConflict(a);
 
   const toggle = (a: AutomationDto, enabled: boolean) => {
     setToggling(s => ({...s, [a.id]: enabled}));
-    save.mutate(
-      {...defOf(a), enabled},
+    update.mutate(
+      {id: a.id, def: {...defOf(a), enabled}, version: a.version},
       {
         onSuccess: () =>
-          toast.success(
-            enabled
-              ? t('automations.enabledToast')
-              : t('automations.disabledToast'),
-          ),
-        onError: e =>
-          toast.error(t('automations.toggleFailed'), errorMessage(e, t)),
+          toast.success(enabled ? t('toast.enabled') : t('toast.disabled')),
+        onError: e => {
+          if (isApiError(e, 'PRECONDITION_FAILED') && e.status === 412)
+            onConflict(a);
+          else toast.error(t('toast.toggleFailed'), errorMessage(e, t));
+        },
         onSettled: () =>
           setToggling(s => {
             const next = {...s};
@@ -83,40 +95,58 @@ export function AutomationsPage() {
   const confirmDelete = () => {
     if (!deleting) return;
     const target = deleting;
-    del.mutate(target.id, {
-      onSuccess: () => {
-        toast.success(t('automations.deleted'));
-        setDeleting(null);
+    del.mutate(
+      {id: target.id, version: target.version},
+      {
+        onSuccess: () => {
+          toast.success(t('toast.deleted', {name: nameOf(target)}));
+          setDeleting(null);
+        },
+        onError: e => {
+          if (isApiError(e, 'PRECONDITION_FAILED') && e.status === 412) {
+            setDeleting(null);
+            onConflict(target);
+          }
+        },
       },
-      onError: e => toast.error(errorMessage(e, t)),
-    });
+    );
   };
 
-  const list = q.data ?? [];
+  const openCreate = () => setEditor({open: true, key: Date.now()});
 
   return (
     <div className="flex flex-col">
       <PageHeader
-        title={t('automations.title')}
-        description={t('automations.description')}
+        title={t('title')}
+        description={t('description')}
+        badges={
+          <Badge
+            tone={
+              scheduled >= CE_LIMITS.maxScheduledAutomations
+                ? 'warn'
+                : 'neutral'
+            }
+            className="num"
+            data-testid="scheduled-count"
+          >
+            {t('scheduledCount', {
+              used: scheduled,
+              max: CE_LIMITS.maxScheduledAutomations,
+            })}
+          </Badge>
+        }
         actions={
-          canWrite && (
-            <Button
-              variant="primary"
-              disabled={!online}
-              onClick={() => setEditor({open: true, key: Date.now()})}
-            >
-              <Plus aria-hidden />
-              {t('automations.create')}
-            </Button>
-          )
+          <Button variant="primary" onClick={openCreate}>
+            <Plus aria-hidden />
+            {t('actions.create')}
+          </Button>
         }
       />
 
       <Card className="overflow-hidden">
         {q.isLoading ? (
           <div className="flex flex-col gap-2 p-4" aria-hidden>
-            {Array.from({length: 4}, (_, i) => (
+            {Array.from({length: 3}, (_, i) => (
               <Skeleton key={i} className="h-10 w-full" />
             ))}
           </div>
@@ -128,83 +158,48 @@ export function AutomationsPage() {
         ) : list.length === 0 ? (
           <EmptyState
             icon={<Workflow aria-hidden />}
-            title={t('automations.empty')}
-            description={t('automations.emptyHint')}
+            title={t('empty.title')}
+            description={t('empty.hint')}
             action={
-              canWrite && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={!online}
-                  onClick={() => setEditor({open: true, key: Date.now()})}
-                >
-                  <Plus aria-hidden />
-                  {t('automations.create')}
-                </Button>
-              )
+              <Button variant="secondary" size="sm" onClick={openCreate}>
+                <Plus aria-hidden />
+                {t('actions.create')}
+              </Button>
             }
           />
         ) : (
           <div className="overflow-x-auto">
-            <Table>
+            <Table aria-label={t('title')}>
               <THead>
                 <Tr>
-                  <Th>{t('automations.col.name')}</Th>
-                  <Th>{t('automations.col.trigger')}</Th>
-                  <Th>{t('automations.col.condition')}</Th>
-                  <Th>{t('automations.col.effects')}</Th>
-                  <Th>{t('automations.col.severity')}</Th>
-                  <Th>{t('automations.col.cooldown')}</Th>
-                  <Th>{t('automations.col.lastFired')}</Th>
-                  <Th>{t('automations.col.enabled')}</Th>
-                  {canWrite && (
-                    <Th className="text-right">
-                      {t('automations.col.actions')}
-                    </Th>
-                  )}
+                  <Th>{t('col.name')}</Th>
+                  <Th>{t('col.trigger')}</Th>
+                  <Th>{t('col.objectType')}</Th>
+                  <Th>{t('col.condition')}</Th>
+                  <Th>{t('col.severity')}</Th>
+                  <Th>{t('col.cooldown')}</Th>
+                  <Th>{t('col.lastFired')}</Th>
+                  <Th>{t('col.nextRun')}</Th>
+                  <Th>{t('col.enabled')}</Th>
+                  <Th className="text-right">{t('col.actions')}</Th>
                 </Tr>
               </THead>
               <TBody>
                 {list.map(a => {
                   const name = nameOf(a);
-                  const type = model.byName[triggerObjectType(a.trigger)];
+                  const type = model.byName[a.objectType];
                   const enabled = toggling[a.id] ?? a.enabled;
                   return (
                     <Tr key={a.id} data-testid="automation-row">
                       <Td className="font-medium text-text">{name}</Td>
                       <Td className="text-sm whitespace-nowrap text-muted">
-                        {triggerSummary(a.trigger, model, t)}
+                        {triggerSummary(a, t)}
+                      </Td>
+                      <Td className="text-sm whitespace-nowrap">
+                        {type?.displayName ?? a.objectType}
                       </Td>
                       <Td className="max-w-[22rem] text-sm text-text">
                         {conditionSummary(a.condition, type, t)}
-                      </Td>
-                      <Td>
-                        <div className="flex flex-wrap gap-1">
-                          {a.effects.map((e, i) =>
-                            e.kind === 'alert' ? (
-                              <Badge key={i} tone="blue">
-                                {t('automations.effect.alert')}
-                              </Badge>
-                            ) : e.kind === 'recommend' ? (
-                              <Badge key={i} tone="violet">
-                                <Sparkles aria-hidden />
-                                {t('automations.effect.recommend')}
-                                {e.perturbation &&
-                                  ` · ${fmt.signedPercent(e.perturbation.change, 0)}`}
-                              </Badge>
-                            ) : (
-                              <Badge
-                                key={i}
-                                tone="cyan"
-                                title={t('automations.effect.action')}
-                              >
-                                {model.actions.find(
-                                  x => x.apiName === e.actionType,
-                                )?.displayName ?? e.actionType}
-                              </Badge>
-                            ),
-                          )}
-                        </div>
                       </Td>
                       <Td>
                         <SeverityBadge severity={a.severity} />
@@ -213,55 +208,59 @@ export function AutomationsPage() {
                         {cooldownText(a.cooldownSec, t)}
                       </Td>
                       <Td className="text-sm whitespace-nowrap text-muted">
-                        {a.lastFiredAt ? (
-                          <time
-                            dateTime={a.lastFiredAt}
-                            title={fmt.dateTime(a.lastFiredAt)}
-                          >
-                            {fmt.ago(a.lastFiredAt)}
-                          </time>
+                        <When at={a.lastFiredAt} empty={t('never')} />
+                      </Td>
+                      <Td className="text-sm whitespace-nowrap text-muted">
+                        {a.trigger === 'schedule' ? (
+                          a.nextRunAt ? (
+                            <time
+                              dateTime={a.nextRunAt}
+                              title={fmt.dateTime(a.nextRunAt)}
+                            >
+                              {fmt.shortDateTime(a.nextRunAt)}
+                            </time>
+                          ) : (
+                            <span className="text-dim">{t('pending')}</span>
+                          )
                         ) : (
-                          <span className="text-dim">
-                            {t('automations.never')}
-                          </span>
+                          <span className="text-dim">{t('onChange')}</span>
                         )}
                       </Td>
                       <Td>
                         <Switch
                           checked={enabled}
-                          disabled={!canWrite || !online || a.id in toggling}
-                          aria-label={t('automations.toggleLabel', {name})}
+                          disabled={a.id in toggling}
+                          aria-label={t('toggleLabel', {name})}
                           onCheckedChange={v => toggle(a, v)}
                         />
                       </Td>
-                      {canWrite && (
-                        <Td className="text-right whitespace-nowrap">
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={t('automations.editLabel', {name})}
-                            disabled={!online}
-                            onClick={() =>
-                              setEditor({
-                                open: true,
-                                automation: a,
-                                key: Date.now(),
-                              })
-                            }
-                          >
-                            <Pencil aria-hidden />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={t('automations.deleteLabel', {name})}
-                            disabled={!online}
-                            onClick={() => setDeleting(a)}
-                          >
-                            <Trash2 aria-hidden />
-                          </Button>
-                        </Td>
-                      )}
+                      <Td className="text-right whitespace-nowrap">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={t('editLabel', {name})}
+                          onClick={() =>
+                            setEditor({
+                              open: true,
+                              automation: a,
+                              key: Date.now(),
+                            })
+                          }
+                        >
+                          <Pencil aria-hidden />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={t('deleteLabel', {name})}
+                          onClick={() => {
+                            del.reset();
+                            setDeleting(a);
+                          }}
+                        >
+                          <Trash2 aria-hidden />
+                        </Button>
+                      </Td>
                     </Tr>
                   );
                 })}
@@ -279,6 +278,7 @@ export function AutomationsPage() {
           <AutomationDialog
             key={editor.key}
             automation={editor.automation}
+            list={list}
             onDone={() => setEditor({open: false})}
           />
         )}
@@ -288,29 +288,50 @@ export function AutomationsPage() {
         {deleting && (
           <DialogContent
             size="sm"
-            title={t('automations.deleteTitle')}
-            description={t('automations.deleteConfirm', {
-              name: nameOf(deleting),
-            })}
+            title={t('delete.title')}
+            description={t('delete.confirm', {name: nameOf(deleting)})}
             footer={
               <>
                 <Button variant="ghost" onClick={() => setDeleting(null)}>
-                  {t('common:actions.cancel')}
+                  {t('actions.cancel')}
                 </Button>
                 <Button
                   variant="danger"
                   loading={del.isPending}
-                  disabled={!online}
                   onClick={confirmDelete}
                 >
                   <Trash2 aria-hidden />
-                  {t('common:actions.delete')}
+                  {t('actions.delete')}
                 </Button>
               </>
             }
-          />
+          >
+            {del.error && !isApiError(del.error, 'PRECONDITION_FAILED') ? (
+              <p role="alert" className="text-sm text-crit">
+                {errorMessage(del.error, t)}
+              </p>
+            ) : null}
+          </DialogContent>
         )}
       </Dialog>
+
+      <ConflictDialog
+        open={!!conflict}
+        onOpenChange={o => !o && setConflict(null)}
+        mine={
+          conflict
+            ? (defOf(conflict) as unknown as Record<string, unknown>)
+            : undefined
+        }
+        loadTheirs={async () => {
+          const r = await q.refetch();
+          const fresh = r.data?.find(x => x.id === conflict?.id);
+          return fresh
+            ? (defOf(fresh) as unknown as Record<string, unknown>)
+            : undefined;
+        }}
+        onRefresh={() => void q.refetch()}
+      />
     </div>
   );
 }

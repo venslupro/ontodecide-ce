@@ -1,0 +1,2464 @@
+openapi: 3.2.0
+info:
+  title: OntoDecide CE API
+  version: 1.0.0
+  summary: Public REST and WebSocket API of OntoDecide Community Edition.
+  description: |
+    The only public contract of the Community Edition (修订说明书 10). Every
+    operationId equals the `op` of `apps/api-gateway/src/routes.ts`.
+
+    Conventions: JSON bodies are the contract DTOs without envelopes; errors
+    are RFC 9457 `application/problem+json` with the stable `code` and
+    `traceId` (= `X-Request-Id`). Paging uses `?cursor=&limit=` (limit ≤ 100)
+    and returns `nextCursor`. Modifiable resources return `ETag: "v{n}"`;
+    PUT / PATCH / DELETE of them require `If-Match` (412 on mismatch).
+    Action executions, recommendation decisions and `/admin/*` writes require
+    `Idempotency-Key` (16–64 chars). High-risk admin writes require
+    `X-Step-Up` (passkey user-verification proof, ≤ 5 min). Every non-GET
+    request and the refresh endpoint must carry `Origin` = the app origin.
+    Request bodies are limited to 512 KB (413, code VALIDATION_FAILED).
+
+    Admin: any `workspace` operation accepts `X-Act-As-Tenant: {tid}` (admin
+    tokens only; owners → 403). The target must exist and be a trial
+    workspace (404), writes need it ACTIVE (409); entries and writes are
+    audited. `Accept-Language` only affects e-mails and server-generated text.
+servers:
+  - url: https://app.example.com/api/v1
+    description: Production (same origin as the SPA)
+tags:
+  - {name: auth, summary: Sign-in and sessions, kind: nav}
+  - {name: workspace, summary: Workspace, kind: nav}
+  - {name: me, summary: Account and trial, parent: workspace, kind: nav}
+  - {name: ontology, summary: Ontology, parent: workspace, kind: nav}
+  - {name: data, summary: Imports, parent: workspace, kind: nav}
+  - {name: objects, summary: Objects and actions, parent: workspace, kind: nav}
+  - {name: situation, summary: Situation awareness, parent: workspace, kind: nav}
+  - {name: decision, summary: Scenarios and recommendations, parent: workspace, kind: nav}
+  - {name: archive, summary: Archive deletion links, kind: nav}
+  - {name: admin, summary: Platform administration (Admin), kind: nav}
+  - {name: admin-users, summary: Accounts, parent: admin, kind: nav}
+  - {name: admin-archives, summary: Archives, parent: admin, kind: nav}
+  - {name: admin-platform, summary: Settings and audit, parent: admin, kind: nav}
+  - {name: admin-passkeys, summary: Admin passkeys, parent: admin, kind: nav}
+  - {name: ops, summary: Operations, kind: nav}
+security:
+  - bearerAuth: []
+
+paths:
+  # ——————————————————————————————— auth ———————————————————————————————
+  /auth/codes:
+    post:
+      tags: [auth]
+      operationId: sendCode
+      summary: Send an e-mail code (signup / login)
+      description: Always 202, whether or not the e-mail exists. Rate class email + ip.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SendCodeRequest'}
+      responses:
+        '202': {description: Accepted}
+        '400': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/sessions:
+    post:
+      tags: [auth]
+      operationId: createSession
+      summary: Exchange an e-mail code for a session
+      description: |
+        Owner: 201 with an access token and the refresh cookie (signup also
+        creates the user and the trial workspace). Admin: 200 with
+        `passkeyRequired` — a passkey assertion (or the first-passkey setup,
+        or a recovery code) must follow.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateSessionRequest'}
+      responses:
+        '201': {$ref: '#/components/responses/SessionIssued'}
+        '200':
+          description: Admin code accepted; second factor required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeyRequired'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/sessions/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshSession
+      summary: Refresh the access token (rotates the refresh cookie)
+      description: Replay of a rotated refresh token revokes the whole family. Origin required.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: New access token
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SetRefreshCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenGrant'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/sessions/current:
+    delete:
+      tags: [auth]
+      operationId: logout
+      summary: End the current session (clears the refresh cookie)
+      responses:
+        '204':
+          description: Logged out
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SetRefreshCookie'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/passkeys/options:
+    post:
+      tags: [auth]
+      operationId: passkeyOptions
+      summary: WebAuthn request options (admin login or step-up)
+      description: '`login` needs `preAuth` (no token); `step_up` needs an admin token.'
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasskeyOptionsRequest'}
+      responses:
+        '200':
+          description: PublicKeyCredentialRequestOptionsJSON
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebAuthnJson'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/passkeys/assertion:
+    post:
+      tags: [auth]
+      operationId: passkeyAssertion
+      summary: Submit a passkey assertion
+      description: '`login` → 201 admin session (≤ 8 h) + cookie; `step_up` → 200 step-up token.'
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasskeyAssertionRequest'}
+      responses:
+        '201': {$ref: '#/components/responses/SessionIssued'}
+        '200':
+          description: Step-up proof for X-Step-Up
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StepUpToken'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/passkeys/setup-options:
+    post:
+      tags: [auth]
+      operationId: passkeySetupOptions
+      summary: Creation options for the first admin passkey (needs the setup code)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasskeySetupOptionsRequest'}
+      responses:
+        '200':
+          description: PublicKeyCredentialCreationOptionsJSON
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebAuthnJson'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/passkeys/setup:
+    post:
+      tags: [auth]
+      operationId: passkeySetup
+      summary: Bind the first admin passkey and open the admin session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasskeySetupRequest'}
+      responses:
+        '201':
+          description: Passkey bound; admin session issued
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SetRefreshCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeySetupResult'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/recovery:
+    post:
+      tags: [auth]
+      operationId: recoveryLogin
+      summary: Sign in with a one-time recovery code (a new passkey must follow)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RecoveryRequest'}
+      responses:
+        '201': {$ref: '#/components/responses/SessionIssued'}
+        '401': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+
+  # ——————————————————————————————— me ———————————————————————————————
+  /me:
+    get:
+      tags: [me]
+      operationId: getMe
+      summary: Account, trial and personal quotas
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: The caller with aggregated quotas
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MeWithQuotas'}
+        '401': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    patch:
+      tags: [me]
+      operationId: patchMe
+      summary: Change language or time zone
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: {$ref: '#/components/schemas/PatchMeRequest'}
+          application/json:
+            schema: {$ref: '#/components/schemas/PatchMeRequest'}
+      responses:
+        '200':
+          description: Updated account
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Me'}
+        default: {$ref: '#/components/responses/Problem'}
+  /me/codes:
+    post:
+      tags: [me]
+      operationId: sendMeCode
+      summary: Send a confirmation code (purpose terminate)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purpose]
+              properties:
+                purpose: {type: string, enum: [terminate]}
+      responses:
+        '202': {description: Accepted}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        default: {$ref: '#/components/responses/Problem'}
+  /me/trial/termination:
+    post:
+      tags: [me]
+      operationId: terminateTrial
+      summary: End the trial early (archive starts after 16 minutes)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: {type: string, pattern: '^\d{6}$'}
+      responses:
+        '202': {description: Workspace is EXPIRED}
+        '400': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /me/export:
+    get:
+      tags: [me]
+      operationId: exportWorkspace
+      summary: Export the workspace as JSON Lines (streamed)
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: One ExportRecord per line
+          headers:
+            Content-Disposition:
+              schema: {type: string}
+          content:
+            application/jsonl:
+              itemSchema: {$ref: '#/components/schemas/ExportRecord'}
+        '401': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /workspace/sample-data:
+    post:
+      tags: [workspace]
+      operationId: loadSampleData
+      summary: Load the sample scenario (80 objects, 160 links) once
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '202':
+          description: Sample job
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Job'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+
+  # ——————————————————————————————— archive ———————————————————————————————
+  /archive-deletions/{token}:
+    parameters: [{$ref: '#/components/parameters/Token'}]
+    get:
+      tags: [archive]
+      operationId: getArchiveDeletion
+      summary: Confirmation data of an e-mailed "delete now" link
+      security: []
+      responses:
+        '200':
+          description: Archive still present
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveDeletionInfo'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      tags: [archive]
+      operationId: confirmArchiveDeletion
+      summary: Delete the archive now (one-time token)
+      security: []
+      responses:
+        '204': {description: Deleted}
+        '404': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        default: {$ref: '#/components/responses/Problem'}
+
+  # ——————————————————————————————— ontology ———————————————————————————————
+  /ontology:
+    get:
+      tags: [ontology]
+      operationId: getOntology
+      summary: Whole workspace ontology
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: Ontology (ETag = schema version)
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Ontology'}
+        default: {$ref: '#/components/responses/Problem'}
+  /object-types:
+    get:
+      tags: [ontology]
+      operationId: listObjectTypes
+      summary: List object types
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200': {$ref: '#/components/responses/DefinitionList'}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      tags: [ontology]
+      operationId: createObjectType
+      summary: Create an object type (id = apiName)
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ObjectTypeDef'}
+      responses:
+        '201': {$ref: '#/components/responses/DefinitionResult'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /object-types/{id}:
+    parameters: [{$ref: '#/components/parameters/ApiName'}]
+    get:
+      tags: [ontology]
+      operationId: getObjectType
+      summary: Get an object type
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200': {$ref: '#/components/responses/DefinitionResult'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    put:
+      tags: [ontology]
+      operationId: putObjectType
+      summary: Replace an object type
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ObjectTypeDef'}
+      responses:
+        '200': {$ref: '#/components/responses/DefinitionResult'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    delete:
+      tags: [ontology]
+      operationId: deleteObjectType
+      summary: Delete an object type
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '204': {$ref: '#/components/responses/DefinitionDeleted'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /link-types:
+    get:
+      tags: [ontology]
+      operationId: listLinkTypes
+      summary: List link types
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200': {$ref: '#/components/responses/DefinitionList'}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      tags: [ontology]
+      operationId: createLinkType
+      summary: Create a link type (id = apiName)
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LinkTypeDef'}
+      responses:
+        '201': {$ref: '#/components/responses/DefinitionResult'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /link-types/{id}:
+    parameters: [{$ref: '#/components/parameters/ApiName'}]
+    get:
+      tags: [ontology]
+      operationId: getLinkType
+      summary: Get a link type
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200': {$ref: '#/components/responses/DefinitionResult'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    put:
+      tags: [ontology]
+      operationId: putLinkType
+      summary: Replace a link type
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LinkTypeDef'}
+      responses:
+        '200': {$ref: '#/components/responses/DefinitionResult'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    delete:
+      tags: [ontology]
+      operationId: deleteLinkType
+      summary: Delete a link type
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '204': {$ref: '#/components/responses/DefinitionDeleted'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /action-types:
+    get:
+      tags: [ontology]
+      operationId: listActionTypes
+      summary: List action types
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200': {$ref: '#/components/responses/DefinitionList'}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      tags: [ontology]
+      operationId: createActionType
+      summary: Create an action type (id = apiName)
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ActionTypeDef'}
+      responses:
+        '201': {$ref: '#/components/responses/DefinitionResult'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /action-types/{id}:
+    parameters: [{$ref: '#/components/parameters/ApiName'}]
+    get:
+      tags: [ontology]
+      operationId: getActionType
+      summary: Get an action type
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200': {$ref: '#/components/responses/DefinitionResult'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    put:
+      tags: [ontology]
+      operationId: putActionType
+      summary: Replace an action type
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ActionTypeDef'}
+      responses:
+        '200': {$ref: '#/components/responses/DefinitionResult'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    delete:
+      tags: [ontology]
+      operationId: deleteActionType
+      summary: Delete an action type
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '204': {$ref: '#/components/responses/DefinitionDeleted'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+
+  # ——————————————————————————————— data ———————————————————————————————
+  /imports:
+    get:
+      tags: [data]
+      operationId: listImports
+      summary: List import jobs
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '200':
+          description: Page of jobs
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/JobPage'}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      tags: [data]
+      operationId: createImport
+      summary: Create an import job (reserves the daily import rows)
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateImportRequest'}
+      responses:
+        '201':
+          description: Job created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Job'}
+        '429': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /imports/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      tags: [data]
+      operationId: getImport
+      summary: Import job progress (with the first ≤ 200 rejects)
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Job'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /imports/{id}/mapping:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      tags: [data]
+      operationId: putImportMapping
+      summary: Set the mapping (before the first batch)
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mapping]
+              properties:
+                mapping: {$ref: '#/components/schemas/MappingSpec'}
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Job'}
+        '409': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /imports/{id}/batches:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      tags: [data]
+      operationId: submitImportBatch
+      summary: Upload one batch (≤ 100 rows, written synchronously, idempotent by seq)
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BatchRequest'}
+      responses:
+        '200':
+          description: Batch result
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BatchResult'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /imports/{id}/mapping-draft:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      tags: [data]
+      operationId: draftImportMapping
+      summary: Mapping draft (deterministic, then AI ≤ 2 per day)
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MappingDraftRequest'}
+      responses:
+        '200':
+          description: Draft
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MappingDraft'}
+        '429': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+
+  # ——————————————————————————————— objects ———————————————————————————————
+  /objects:
+    get:
+      tags: [objects]
+      operationId: listObjects
+      summary: Search objects
+      parameters:
+        - {name: type, in: query, schema: {type: string}}
+        - {name: q, in: query, schema: {type: string, maxLength: 200}}
+        - name: filter
+          in: query
+          description: JSON-encoded FilterExpr (only indexed properties are pushed down)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FilterExpr'}
+        - name: orderBy
+          in: query
+          schema: {type: string, pattern: '^[A-Za-z][A-Za-z0-9_]*:(asc|desc)$'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '200':
+          description: Page of objects
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectPage'}
+        default: {$ref: '#/components/responses/Problem'}
+  /objects/stats:
+    get:
+      tags: [objects]
+      operationId: getObjectStats
+      summary: Object and link counts
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: Counts
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GraphStats'}
+        default: {$ref: '#/components/responses/Problem'}
+  /objects/{rid}:
+    parameters: [{$ref: '#/components/parameters/Rid'}]
+    get:
+      tags: [objects]
+      operationId: getObject
+      summary: Object detail
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: Object
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Object'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    patch:
+      tags: [objects]
+      operationId: patchObject
+      summary: Merge-patch object properties
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        '200':
+          description: Updated object
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Object'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /objects/{rid}/links:
+    parameters: [{$ref: '#/components/parameters/Rid'}]
+    get:
+      tags: [objects]
+      operationId: getObjectLinks
+      summary: Links around an object (depth ≤ 2)
+      parameters:
+        - {name: depth, in: query, schema: {type: integer, minimum: 1, maximum: 2, default: 1}}
+        - {name: linkTypes, in: query, description: Comma-separated link types, schema: {type: string}}
+        - {name: direction, in: query, schema: {type: string, enum: [out, in, both], default: both}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 300, default: 200}}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '200':
+          description: Subgraph
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GraphSlice'}
+        default: {$ref: '#/components/responses/Problem'}
+  /objects/{rid}/actions:
+    parameters: [{$ref: '#/components/parameters/Rid'}]
+    get:
+      tags: [objects]
+      operationId: listObjectActions
+      summary: Action audit of an object (newest first)
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '200':
+          description: Page of action log entries
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ActionLogPage'}
+        default: {$ref: '#/components/responses/Problem'}
+  /action-types/{id}/executions:
+    parameters: [{$ref: '#/components/parameters/ApiName'}]
+    post:
+      tags: [objects]
+      operationId: executeAction
+      summary: Execute an action on its target
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ExecuteActionRequest'}
+      responses:
+        '200':
+          description: Action result (also for an idempotent replay)
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ActionResult'}
+        '412': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+
+  # ——————————————————————————————— situation ———————————————————————————————
+  /situation/overview:
+    get:
+      tags: [situation]
+      operationId: getSituationOverview
+      summary: Cockpit (KPIs, trends, alerts, pending recommendations, quotas)
+      parameters:
+        - {name: range, in: query, schema: {type: string, enum: [24h, 7d], default: 24h}}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '200':
+          description: Cockpit data
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CockpitOverview'}
+        '401': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /alerts:
+    get:
+      tags: [situation]
+      operationId: listAlerts
+      summary: List alerts
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [OPEN, ACKED, CLOSED]}}
+        - {name: severity, in: query, schema: {$ref: '#/components/schemas/Severity'}}
+        - {name: rid, in: query, schema: {type: string}}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '200':
+          description: Page of alerts
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AlertPage'}
+        default: {$ref: '#/components/responses/Problem'}
+  /alerts/{id}/acknowledgement:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      tags: [situation]
+      operationId: acknowledgeAlert
+      summary: Acknowledge an alert
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: Alert
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Alert'}
+        default: {$ref: '#/components/responses/Problem'}
+  /automations:
+    get:
+      tags: [situation]
+      operationId: listAutomations
+      summary: List automations
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: Automations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Automation'}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      tags: [situation]
+      operationId: createAutomation
+      summary: Create an automation (≤ 3 scheduled, interval ≥ 1 h)
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AutomationDef'}
+      responses:
+        '201': {$ref: '#/components/responses/AutomationWithEtag'}
+        default: {$ref: '#/components/responses/Problem'}
+  /automations/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      tags: [situation]
+      operationId: getAutomation
+      summary: Get an automation
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200': {$ref: '#/components/responses/AutomationWithEtag'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    put:
+      tags: [situation]
+      operationId: putAutomation
+      summary: Replace an automation
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AutomationDef'}
+      responses:
+        '200': {$ref: '#/components/responses/AutomationWithEtag'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    delete:
+      tags: [situation]
+      operationId: deleteAutomation
+      summary: Delete an automation
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '204': {description: Deleted}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /situation/stream-tickets:
+    post:
+      tags: [situation]
+      operationId: issueStreamTicket
+      summary: 30-second one-time WebSocket ticket (bound to sub, tid and Act-as)
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '201':
+          description: Ticket
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StreamTicket'}
+        default: {$ref: '#/components/responses/Problem'}
+  /situation/stream:
+    get:
+      tags: [situation]
+      operationId: openSituationStream
+      summary: Realtime stream (WebSocket upgrade)
+      description: |
+        Same-origin WebSocket upgrade; Origin must equal the app origin (403).
+        The one-time ticket selects the workspace room. Heartbeats are
+        protocol-level ping/pong. A trial end closes sockets with code 4401.
+        Clients may send `{"type":"resume","lastSeq":n}`: a gap ≤ 200 is
+        replayed, otherwise a fresh snapshot is sent.
+      security: []
+      parameters:
+        - {name: ticket, in: query, required: true, schema: {type: string}}
+        - {name: Upgrade, in: header, required: true, schema: {type: string, enum: [websocket]}}
+      responses:
+        '101': {description: Switching protocols}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '426': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+      x-websocket-messages:
+        server:
+          summary: Server → client frame
+          schema: {$ref: '#/components/schemas/WsMsg'}
+        client:
+          summary: Client → server frame
+          schema: {$ref: '#/components/schemas/WsResume'}
+        closeCodes:
+          '4401': Trial ended
+
+  # ——————————————————————————————— decision ———————————————————————————————
+  /scenarios:
+    post:
+      tags: [decision]
+      operationId: runScenario
+      summary: Run and store a what-if scenario
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ScenarioInput'}
+      responses:
+        '201':
+          description: Scenario
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Scenario'}
+        '400': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /scenarios/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      tags: [decision]
+      operationId: getScenario
+      summary: Get a scenario
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: Scenario
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Scenario'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /recommendations:
+    get:
+      tags: [decision]
+      operationId: listRecommendations
+      summary: List recommendations
+      parameters:
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/RecStatus'}}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      responses:
+        '200':
+          description: Page of recommendations
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecommendationPage'}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      tags: [decision]
+      operationId: generateRecommendation
+      summary: Generate a recommendation (AI ranking ≤ 3 per day, else rules)
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GenerateRequest'}
+      responses:
+        '201':
+          description: Recommendation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Recommendation'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /recommendations/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      tags: [decision]
+      operationId: getRecommendation
+      summary: Get a recommendation
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: Recommendation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Recommendation'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /recommendations/{id}/decision:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      tags: [decision]
+      operationId: decideRecommendation
+      summary: Confirm (executes ranking[0]) or reject
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/ActAsTenant'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DecisionRequest'}
+      responses:
+        '200':
+          description: Recommendation after the decision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Recommendation'}
+        '409': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+
+  # ——————————————————————————————— admin ———————————————————————————————
+  /admin/overview:
+    get:
+      tags: [admin-platform]
+      operationId: adminOverview
+      summary: Platform overview (free-tier usage, signups, workspaces, backlog)
+      responses:
+        '200':
+          description: Overview
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PlatformOverview'}
+        '403': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/users:
+    get:
+      tags: [admin-users]
+      operationId: adminListUsers
+      summary: All accounts (full e-mail)
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [ACTIVE, EXPIRED, ARCHIVING, ARCHIVE_ONLY]}}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Page of accounts
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminUserPage'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/users/{uid}:
+    parameters: [{$ref: '#/components/parameters/Uid'}]
+    get:
+      tags: [admin-users]
+      operationId: adminGetUser
+      summary: Account detail (writes email.view)
+      responses:
+        '200':
+          description: Account
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminUser'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    patch:
+      tags: [admin-users]
+      operationId: adminPatchUser
+      summary: Change trial end, end the trial, ban (revokes the user's sessions)
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/StepUp'}
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: {$ref: '#/components/schemas/AdminUserPatch'}
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminUserPatch'}
+      responses:
+        '200':
+          description: Account
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminUser'}
+        '403': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+    delete:
+      tags: [admin-users]
+      operationId: adminDeleteUser
+      summary: Delete an account (archive=true archives and e-mails the link)
+      parameters:
+        - {name: archive, in: query, schema: {type: boolean, default: true}}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/StepUp'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string, minLength: 1, maxLength: 500}
+      responses:
+        '202': {description: Deletion started}
+        '403': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/users/{uid}/sessions:
+    parameters: [{$ref: '#/components/parameters/Uid'}]
+    delete:
+      tags: [admin-users]
+      operationId: adminRevokeSessions
+      summary: Revoke every session of an account
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200':
+          description: Revoked sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked: {type: integer, minimum: 0}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/archives:
+    get:
+      tags: [admin-archives]
+      operationId: adminListArchives
+      summary: Archive index
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Page of archives
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchivePage'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/archives/{tid}:
+    parameters: [{$ref: '#/components/parameters/Tid'}]
+    delete:
+      tags: [admin-archives]
+      operationId: adminDeleteArchive
+      summary: Delete an archive ZIP
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/StepUp'}
+      responses:
+        '204': {description: Deleted}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/archives/{tid}/download-link:
+    parameters: [{$ref: '#/components/parameters/Tid'}]
+    post:
+      tags: [admin-archives]
+      operationId: adminArchiveLink
+      summary: 15-minute presigned download link (writes archive.download)
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200':
+          description: Link
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expiresAt]
+                properties:
+                  url: {type: string, format: uri}
+                  expiresAt: {type: string, format: date-time}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/settings:
+    get:
+      tags: [admin-platform]
+      operationId: adminGetSettings
+      summary: Platform settings
+      responses:
+        '200': {$ref: '#/components/responses/SettingsWithEtag'}
+        default: {$ref: '#/components/responses/Problem'}
+    patch:
+      tags: [admin-platform]
+      operationId: adminPatchSettings
+      summary: Change signup switch and limits
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/StepUp'}
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: {$ref: '#/components/schemas/SettingsPatch'}
+          application/json:
+            schema: {$ref: '#/components/schemas/SettingsPatch'}
+      responses:
+        '200': {$ref: '#/components/responses/SettingsWithEtag'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '412': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/blocked-domains:
+    get:
+      tags: [admin-platform]
+      operationId: adminGetBlockedDomains
+      summary: Disposable e-mail domain block list
+      responses:
+        '200': {$ref: '#/components/responses/BlockedDomains'}
+        default: {$ref: '#/components/responses/Problem'}
+    put:
+      tags: [admin-platform]
+      operationId: adminPutBlockedDomains
+      summary: Replace the block list
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BlockedDomains'}
+      responses:
+        '200': {$ref: '#/components/responses/BlockedDomains'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/audit-log:
+    get:
+      tags: [admin-platform]
+      operationId: adminAuditLog
+      summary: Admin audit log with hash-chain verification
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Page of audit rows
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuditPage'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/passkeys:
+    get:
+      tags: [admin-passkeys]
+      operationId: adminListPasskeys
+      summary: Admin passkeys
+      description: Also available to a recovery-code session.
+      responses:
+        '200':
+          description: Passkeys
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Passkey'}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      tags: [admin-passkeys]
+      operationId: adminAddPasskey
+      summary: Register another passkey (the second one returns 10 recovery codes once)
+      description: X-Step-Up is not required for a recovery-code session.
+      parameters: [{$ref: '#/components/parameters/StepUp'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential]
+              properties:
+                credential: {$ref: '#/components/schemas/WebAuthnJson'}
+                label: {type: string, maxLength: 60}
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeyRegistered'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/passkeys/options:
+    post:
+      tags: [admin-passkeys]
+      operationId: adminPasskeyOptions
+      summary: WebAuthn creation options for a new passkey
+      responses:
+        '200':
+          description: PublicKeyCredentialCreationOptionsJSON
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebAuthnJson'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/passkeys/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    delete:
+      tags: [admin-passkeys]
+      operationId: adminDeletePasskey
+      summary: Remove a passkey (at least 2 must remain)
+      parameters: [{$ref: '#/components/parameters/StepUp'}]
+      responses:
+        '204': {description: Removed}
+        '409': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+
+  # ——————————————————————————————— ops ———————————————————————————————
+  /health:
+    get:
+      tags: [ops]
+      operationId: getHealth
+      summary: Liveness
+      security: []
+      responses:
+        '200':
+          description: Alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, enum: [ok]}
+                  version: {type: string}
+                  environment: {type: string}
+  /openapi.yaml:
+    get:
+      tags: [ops]
+      operationId: getOpenApi
+      summary: This document
+      security: []
+      responses:
+        '200':
+          description: OpenAPI 3.2 document
+          content:
+            application/yaml:
+              schema: {type: string}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Ed25519 (EdDSA) access token, 15 minutes, kept in memory only.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: __Host-od_rt
+      description: Refresh token cookie (HttpOnly; Secure; SameSite=Strict; Path=/).
+
+  parameters:
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: Current version, `"v{n}"`.
+      schema: {type: string, example: '"v3"'}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, pattern: '^[A-Za-z0-9._:-]{16,64}$'}
+    StepUp:
+      name: X-Step-Up
+      in: header
+      required: true
+      description: Step-up token from a passkey user verification (≤ 5 min).
+      schema: {type: string}
+    ActAsTenant:
+      name: X-Act-As-Tenant
+      in: header
+      required: false
+      description: Admin only. Target trial workspace id (ULID).
+      schema: {$ref: '#/components/schemas/Ulid'}
+    Cursor:
+      name: cursor
+      in: query
+      schema: {type: string}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+    Rid:
+      name: rid
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Rid'}
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, maxLength: 128}
+    ApiName:
+      name: id
+      in: path
+      required: true
+      description: Definition api name.
+      schema: {$ref: '#/components/schemas/ApiName'}
+    Uid:
+      name: uid
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Ulid'}
+    Tid:
+      name: tid
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Ulid'}
+    Token:
+      name: token
+      in: path
+      required: true
+      schema: {type: string, pattern: '^[A-Za-z0-9_-]{16,128}$'}
+
+  headers:
+    ETag:
+      description: Resource version, `"v{n}"`.
+      schema: {type: string}
+    RetryAfter:
+      description: Seconds until the rate window resets.
+      schema: {type: integer}
+    SetRefreshCookie:
+      description: '`__Host-od_rt=…; HttpOnly; Secure; SameSite=Strict; Path=/; Expires=…`'
+      schema: {type: string}
+
+  responses:
+    Problem:
+      description: Error (RFC 9457)
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After: {$ref: '#/components/headers/RetryAfter'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    SessionIssued:
+      description: Session issued; the refresh token is only in the cookie
+      headers:
+        Set-Cookie: {$ref: '#/components/headers/SetRefreshCookie'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Session'}
+    DefinitionList:
+      description: Definitions (ETag = schema version)
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/DefinitionList'}
+    DefinitionResult:
+      description: Definition (ETag = schema version)
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/DefinitionResult'}
+    DefinitionDeleted:
+      description: Deleted (ETag = new schema version)
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+    AutomationWithEtag:
+      description: Automation
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Automation'}
+    SettingsWithEtag:
+      description: Settings
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/PlatformSettings'}
+    BlockedDomains:
+      description: Block list
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/BlockedDomains'}
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: {type: string, format: uri-reference}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        code:
+          type: string
+          enum:
+            - VALIDATION_FAILED
+            - CODE_INVALID
+            - UNAUTHENTICATED
+            - TRIAL_EXPIRED
+            - FORBIDDEN
+            - NOT_FOUND
+            - CONFLICT
+            - PRECONDITION_FAILED
+            - RATE_LIMITED
+            - QUOTA_EXCEEDED
+            - INTERNAL
+            - UNAVAILABLE
+            - SIGNUP_CLOSED
+        traceId: {type: string}
+        errors:
+          type: array
+          description: Field errors (VALIDATION_FAILED)
+          items:
+            type: object
+            required: [path, message]
+            properties:
+              path: {type: string}
+              message: {type: string}
+      additionalProperties: true
+    Ulid: {type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'}
+    Rid: {type: string, pattern: '^ri\.[A-Za-z][A-Za-z0-9_]*\.[0-9A-Z]{26}$'}
+    ApiName: {type: string, pattern: '^[A-Za-z][A-Za-z0-9_]{0,63}$'}
+    Locale: {type: string, enum: [zh-CN, en-US]}
+    I18nText:
+      oneOf:
+        - {type: string}
+        - {type: object, additionalProperties: {type: string}}
+    Used:
+      type: object
+      required: [used, limit]
+      properties:
+        used: {type: integer}
+        limit: {type: integer}
+    Quotas:
+      type: object
+      required: [objects, links, importRowsToday, aiRecsToday, mappingDraftsToday, sessions, resetsAt]
+      properties:
+        objects: {$ref: '#/components/schemas/Used'}
+        links: {$ref: '#/components/schemas/Used'}
+        importRowsToday: {$ref: '#/components/schemas/Used'}
+        aiRecsToday: {$ref: '#/components/schemas/Used'}
+        mappingDraftsToday: {$ref: '#/components/schemas/Used'}
+        sessions: {$ref: '#/components/schemas/Used'}
+        resetsAt: {type: string, format: date-time}
+
+    # —— auth / me ——
+    SendCodeRequest:
+      type: object
+      required: [email, purpose, turnstileToken]
+      properties:
+        email: {type: string, format: email, maxLength: 254}
+        purpose: {type: string, enum: [signup, login]}
+        turnstileToken: {type: string, maxLength: 4096}
+        locale: {$ref: '#/components/schemas/Locale'}
+    CreateSessionRequest:
+      type: object
+      required: [email, code, purpose]
+      properties:
+        email: {type: string, format: email, maxLength: 254}
+        code: {type: string, pattern: '^\d{6}$'}
+        purpose: {type: string, enum: [signup, login]}
+    WebAuthnJson:
+      type: object
+      additionalProperties: true
+      description: PublicKeyCredential*OptionsJSON / *ResponseJSON
+    PasskeyOptionsRequest:
+      type: object
+      required: [purpose]
+      properties:
+        purpose: {type: string, enum: [login, step_up]}
+        preAuth: {type: string}
+    PasskeyAssertionRequest:
+      type: object
+      required: [purpose, credential]
+      properties:
+        purpose: {type: string, enum: [login, step_up]}
+        preAuth: {type: string}
+        credential: {$ref: '#/components/schemas/WebAuthnJson'}
+    PasskeySetupOptionsRequest:
+      type: object
+      required: [preAuth, setupCode]
+      properties:
+        preAuth: {type: string}
+        setupCode: {type: string, minLength: 8, maxLength: 128}
+    PasskeySetupRequest:
+      allOf:
+        - {$ref: '#/components/schemas/PasskeySetupOptionsRequest'}
+        - type: object
+          required: [credential]
+          properties:
+            credential: {$ref: '#/components/schemas/WebAuthnJson'}
+    RecoveryRequest:
+      type: object
+      required: [preAuth, recoveryCode]
+      properties:
+        preAuth: {type: string}
+        recoveryCode: {type: string, minLength: 8, maxLength: 64}
+    TokenGrant:
+      type: object
+      required: [accessToken, expiresIn]
+      properties:
+        accessToken: {type: string}
+        expiresIn: {type: integer, description: Seconds (900)}
+    Session:
+      allOf:
+        - {$ref: '#/components/schemas/TokenGrant'}
+        - type: object
+          required: [me]
+          properties:
+            me: {$ref: '#/components/schemas/Me'}
+    PasskeyRequired:
+      type: object
+      required: [passkeyRequired, preAuth, setupRequired]
+      properties:
+        passkeyRequired: {type: boolean, const: true}
+        preAuth: {type: string, description: 5-minute pre-authentication token}
+        setupRequired: {type: boolean}
+    StepUpToken:
+      type: object
+      required: [stepUpToken, expiresIn]
+      properties:
+        stepUpToken: {type: string}
+        expiresIn: {type: integer}
+    Passkey:
+      type: object
+      required: [id, label, createdAt, lastUsedAt]
+      properties:
+        id: {type: string}
+        label: {type: [string, 'null']}
+        createdAt: {type: string, format: date-time}
+        lastUsedAt: {type: [string, 'null'], format: date-time}
+    PasskeyRegistered:
+      type: object
+      required: [passkey, total]
+      properties:
+        passkey: {$ref: '#/components/schemas/Passkey'}
+        total: {type: integer}
+        recoveryCodes:
+          type: array
+          description: Shown exactly once, when the second passkey is bound
+          items: {type: string}
+    PasskeySetupResult:
+      allOf:
+        - {$ref: '#/components/schemas/PasskeyRegistered'}
+        - {$ref: '#/components/schemas/Session'}
+    Workspace:
+      type: object
+      required: [tenantId, kind, status, verifiedAt, trialExpiresAt, expiredAt]
+      properties:
+        tenantId: {$ref: '#/components/schemas/Ulid'}
+        kind: {type: string, enum: [trial, admin]}
+        status: {type: string, enum: [ACTIVE, EXPIRED, ARCHIVING]}
+        verifiedAt: {type: string, format: date-time}
+        trialExpiresAt: {type: [string, 'null'], format: date-time}
+        expiredAt: {type: [string, 'null'], format: date-time}
+    Me:
+      type: object
+      required: [userId, email, role, locale, timeZone, workspace, sessions]
+      properties:
+        userId: {$ref: '#/components/schemas/Ulid'}
+        email: {type: string, format: email}
+        role: {type: string, enum: [owner, admin]}
+        locale: {$ref: '#/components/schemas/Locale'}
+        timeZone: {type: string}
+        workspace: {$ref: '#/components/schemas/Workspace'}
+        sessions: {$ref: '#/components/schemas/Used'}
+        passkeys: {type: integer, description: Admin only}
+        recoveryCodesLeft: {type: integer, description: Admin only}
+    MeWithQuotas:
+      allOf:
+        - {$ref: '#/components/schemas/Me'}
+        - type: object
+          required: [quotas]
+          properties:
+            quotas: {$ref: '#/components/schemas/Quotas'}
+    PatchMeRequest:
+      type: object
+      properties:
+        locale: {$ref: '#/components/schemas/Locale'}
+        timeZone: {type: string, maxLength: 64}
+    ExportRecord:
+      type: object
+      required: [file, data]
+      properties:
+        file:
+          type: string
+          description: Archive file the record belongs to (e.g. objects.jsonl)
+        data: {description: A JSON Lines record or a whole JSON document}
+    ArchiveDeletionInfo:
+      type: object
+      required: [expiresAt, sizeBytes]
+      properties:
+        expiresAt: {type: string, format: date-time}
+        sizeBytes: {type: integer}
+
+    # —— ontology ——
+    PropertyDef:
+      type: object
+      required: [apiName, displayName, dataType]
+      properties:
+        apiName: {$ref: '#/components/schemas/ApiName'}
+        displayName: {$ref: '#/components/schemas/I18nText'}
+        dataType: {type: string, description: 'string|integer|double|boolean|date|timestamp|geopoint|enum|objectRef:<Type>'}
+        required: {type: boolean}
+        unit: {type: string}
+        indexed: {type: boolean}
+        semanticTags: {type: array, items: {type: string}}
+        sensitive: {type: boolean}
+        enumValues: {type: array, items: {type: string}}
+        description: {$ref: '#/components/schemas/I18nText'}
+    ObjectTypeDef:
+      type: object
+      required: [apiName, displayName, primaryKey, titleProperty, properties]
+      properties:
+        apiName: {$ref: '#/components/schemas/ApiName'}
+        displayName: {$ref: '#/components/schemas/I18nText'}
+        icon: {type: string}
+        primaryKey: {type: string}
+        titleProperty: {type: string}
+        properties: {type: array, minItems: 1, items: {$ref: '#/components/schemas/PropertyDef'}}
+        description: {$ref: '#/components/schemas/I18nText'}
+    LinkTypeDef:
+      type: object
+      required: [apiName, displayName, from, to, cardinality]
+      properties:
+        apiName: {$ref: '#/components/schemas/ApiName'}
+        displayName: {$ref: '#/components/schemas/I18nText'}
+        from: {type: string}
+        to: {type: string}
+        cardinality: {type: string, enum: [one, many]}
+        propagation:
+          type: object
+          required: [defaultWeight]
+          properties:
+            defaultWeight: {type: number, minimum: 0, maximum: 1}
+    ActionTypeDef:
+      type: object
+      required: [apiName, displayName, targetType, parameters, preconditions, effects]
+      properties:
+        apiName: {$ref: '#/components/schemas/ApiName'}
+        displayName: {$ref: '#/components/schemas/I18nText'}
+        targetType: {type: string}
+        parameters: {type: array, items: {type: object, additionalProperties: true}}
+        preconditions:
+          type: array
+          items:
+            type: object
+            required: [expr, message]
+            properties:
+              expr: {description: JSONLogic (safe subset)}
+              message: {$ref: '#/components/schemas/I18nText'}
+        effects:
+          type: array
+          items:
+            type: object
+            required: [kind]
+            properties:
+              kind: {type: string, enum: [set, increment, relink, unlink]}
+            additionalProperties: true
+        impact:
+          type: array
+          items:
+            type: object
+            required: [property, change]
+            properties:
+              property: {type: string}
+              change: {type: number, minimum: -1, maximum: 1}
+        description: {$ref: '#/components/schemas/I18nText'}
+    Ontology:
+      type: object
+      required: [templateId, templateVersion, custom, etag, definition, updatedAt]
+      properties:
+        templateId: {type: string}
+        templateVersion: {type: string}
+        custom: {type: boolean}
+        etag: {type: integer}
+        definition:
+          type: object
+          required: [objectTypes, linkTypes, actionTypes, functions, simulationKpis]
+          properties:
+            objectTypes: {type: array, items: {$ref: '#/components/schemas/ObjectTypeDef'}}
+            linkTypes: {type: array, items: {$ref: '#/components/schemas/LinkTypeDef'}}
+            actionTypes: {type: array, items: {$ref: '#/components/schemas/ActionTypeDef'}}
+            functions: {type: array, items: {type: object, additionalProperties: true}}
+            simulationKpis: {type: array, items: {type: object, additionalProperties: true}}
+        updatedAt: {type: [string, 'null'], format: date-time}
+    DefinitionList:
+      type: object
+      required: [items, etag, custom]
+      properties:
+        items:
+          type: array
+          items:
+            oneOf:
+              - {$ref: '#/components/schemas/ObjectTypeDef'}
+              - {$ref: '#/components/schemas/LinkTypeDef'}
+              - {$ref: '#/components/schemas/ActionTypeDef'}
+        etag: {type: integer}
+        custom: {type: boolean}
+    DefinitionResult:
+      type: object
+      required: [item, etag]
+      properties:
+        item:
+          oneOf:
+            - {$ref: '#/components/schemas/ObjectTypeDef'}
+            - {$ref: '#/components/schemas/LinkTypeDef'}
+            - {$ref: '#/components/schemas/ActionTypeDef'}
+        etag: {type: integer}
+
+    # —— data ——
+    MappingSpec:
+      type: object
+      required: [targetType, primaryKey, fields]
+      properties:
+        targetType: {$ref: '#/components/schemas/ApiName'}
+        primaryKey:
+          type: object
+          required: [from]
+          properties:
+            from: {type: string}
+            transform: {type: string, maxLength: 200}
+        fields:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [to, from]
+            properties:
+              to: {$ref: '#/components/schemas/ApiName'}
+              from: {type: string}
+              transform: {type: string, maxLength: 200}
+              matchedBy: {type: string, enum: [exact, synonym, similarity, ai, manual]}
+        links:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            required: [type, toType, toKey]
+            properties:
+              type: {$ref: '#/components/schemas/ApiName'}
+              toType: {$ref: '#/components/schemas/ApiName'}
+              toKey: {type: string}
+              split: {type: string, maxLength: 4}
+              weightFrom: {type: string}
+    MappingDraft:
+      allOf:
+        - {$ref: '#/components/schemas/MappingSpec'}
+        - type: object
+          required: [rankedBy, unmatched]
+          properties:
+            rankedBy: {type: string, enum: [ai, rules]}
+            unmatched: {type: array, items: {type: string}}
+    CreateImportRequest:
+      type: object
+      required: [fileName, targetType, totalRows]
+      properties:
+        fileName: {type: string, maxLength: 200}
+        targetType: {$ref: '#/components/schemas/ApiName'}
+        totalRows: {type: integer, minimum: 1, maximum: 2000}
+        mapping: {$ref: '#/components/schemas/MappingSpec'}
+    BatchRequest:
+      type: object
+      required: [seq, last, rows]
+      properties:
+        seq: {type: integer, minimum: 0, maximum: 10000}
+        last: {type: boolean}
+        rows: {type: array, maxItems: 100, items: {type: object, additionalProperties: true}}
+    MappingDraftRequest:
+      type: object
+      required: [fields, sampleRows, targetType]
+      properties:
+        fields: {type: array, minItems: 1, maxItems: 100, items: {type: string, maxLength: 200}}
+        sampleRows: {type: array, maxItems: 20, items: {type: array, items: {}}}
+        targetType: {$ref: '#/components/schemas/ApiName'}
+    Reject:
+      type: object
+      required: [row, code]
+      properties:
+        row: {type: integer}
+        code: {type: string}
+        column: {type: string}
+        detail: {type: string}
+    Job:
+      type: object
+      required: [id, kind, fileName, targetType, mapping, status, totalRows, received, upserted, skipped, rejected, createdAt, updatedAt]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [file, sample]}
+        fileName: {type: [string, 'null']}
+        targetType: {type: string}
+        mapping:
+          oneOf:
+            - {$ref: '#/components/schemas/MappingSpec'}
+            - {type: 'null'}
+        status: {type: string, enum: [RECEIVING, DONE, FAILED]}
+        totalRows: {type: integer}
+        received: {type: integer}
+        upserted: {type: integer}
+        skipped: {type: integer}
+        rejected: {type: integer}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        rejects: {type: array, items: {$ref: '#/components/schemas/Reject'}}
+    JobPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Job'}}
+        nextCursor: {type: [string, 'null']}
+    BatchResult:
+      type: object
+      required: [seq, upserted, skipped, rejected, job]
+      properties:
+        seq: {type: integer}
+        upserted: {type: integer}
+        skipped: {type: integer}
+        rejected: {type: array, items: {$ref: '#/components/schemas/Reject'}}
+        job: {type: object, additionalProperties: true}
+
+    # —— objects ——
+    FilterExpr:
+      type: object
+      required: [op]
+      description: and/or/not/eq/neq/gt/gte/lt/lte/in/contains/exists over object properties
+      properties:
+        op: {type: string, enum: [and, or, not, eq, neq, gt, gte, lt, lte, in, contains, exists]}
+        args: {type: array, items: {$ref: '#/components/schemas/FilterExpr'}}
+        arg: {$ref: '#/components/schemas/FilterExpr'}
+        prop: {type: string}
+        value: {type: [string, number, boolean]}
+        values: {type: array, items: {type: [string, number, boolean]}}
+    Provenance:
+      type: object
+      required: [jobId, row, at]
+      properties:
+        jobId: {type: string}
+        row: {type: integer}
+        at: {type: integer, description: Unix ms}
+    Object:
+      type: object
+      required: [rid, type, primaryKey, title, props, provenance, version, updatedAt]
+      properties:
+        rid: {$ref: '#/components/schemas/Rid'}
+        type: {type: string}
+        primaryKey: {type: string}
+        title: {type: string}
+        props: {type: object, additionalProperties: true}
+        provenance: {type: object, additionalProperties: {$ref: '#/components/schemas/Provenance'}}
+        version: {type: integer}
+        updatedAt: {type: string, format: date-time}
+        invalidProps: {type: array, items: {type: string}}
+    ObjectPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Object'}}
+        nextCursor: {type: [string, 'null']}
+    GraphStats:
+      type: object
+      required: [objects, links, byType]
+      properties:
+        objects: {type: integer}
+        links: {type: integer}
+        byType: {type: object, additionalProperties: {type: integer}}
+    GraphSlice:
+      type: object
+      required: [nodes, edges, truncated]
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [rid, type, title, props, hop]
+            properties:
+              rid: {$ref: '#/components/schemas/Rid'}
+              type: {type: string}
+              title: {type: string}
+              props: {type: object, additionalProperties: true}
+              hop: {type: integer}
+        edges:
+          type: array
+          items:
+            type: object
+            required: [type, src, dst, weight]
+            properties:
+              type: {type: string}
+              src: {$ref: '#/components/schemas/Rid'}
+              dst: {$ref: '#/components/schemas/Rid'}
+              weight: {type: [number, 'null']}
+        truncated: {type: boolean}
+    ExecuteActionRequest:
+      type: object
+      required: [target]
+      properties:
+        target: {$ref: '#/components/schemas/Rid'}
+        params: {type: object, additionalProperties: true}
+        recommendationId: {type: string}
+    ActionResult:
+      type: object
+      required: [actionLogId, actionType, rid, version, before, after, executedAt, replayed]
+      properties:
+        actionLogId: {type: string}
+        actionType: {type: string}
+        rid: {$ref: '#/components/schemas/Rid'}
+        version: {type: integer}
+        before: {type: object, additionalProperties: true}
+        after: {type: object, additionalProperties: true}
+        executedAt: {type: string, format: date-time}
+        replayed: {type: boolean}
+    ActionLog:
+      type: object
+      required: [id, actionType, targetRid, params, before, after, actor, executedAt]
+      properties:
+        id: {type: string}
+        actionType: {type: string}
+        targetRid: {$ref: '#/components/schemas/Rid'}
+        params: {type: object, additionalProperties: true}
+        before: {type: object, additionalProperties: true}
+        after: {type: object, additionalProperties: true}
+        actor: {type: string, description: 'owner, admin or svc:decision-engine'}
+        actorUserId: {type: string}
+        recommendationId: {type: string}
+        executedAt: {type: string, format: date-time}
+    ActionLogPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ActionLog'}}
+        nextCursor: {type: [string, 'null']}
+
+    # —— situation ——
+    Severity: {type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL]}
+    AutomationDef:
+      type: object
+      required: [name, trigger, objectType, condition, severity]
+      properties:
+        name: {$ref: '#/components/schemas/I18nText'}
+        trigger: {type: string, enum: [threshold, schedule]}
+        objectType: {$ref: '#/components/schemas/ApiName'}
+        condition: {$ref: '#/components/schemas/FilterExpr'}
+        everyHours: {type: integer, minimum: 1, maximum: 24}
+        severity: {$ref: '#/components/schemas/Severity'}
+        cooldownSec: {type: integer, minimum: 0, maximum: 86400, default: 3600}
+        enabled: {type: boolean, default: true}
+    Automation:
+      allOf:
+        - {$ref: '#/components/schemas/AutomationDef'}
+        - type: object
+          required: [id, version, nextRunAt, lastFiredAt]
+          properties:
+            id: {type: string}
+            version: {type: integer}
+            nextRunAt: {type: [string, 'null'], format: date-time}
+            lastFiredAt: {type: [string, 'null'], format: date-time}
+    Alert:
+      type: object
+      required: [id, automationId, automationName, rid, title, severity, status, snapshot, hits, raisedAt, ackedAt, closedAt]
+      properties:
+        id: {type: string}
+        automationId: {type: string}
+        automationName: {$ref: '#/components/schemas/I18nText'}
+        rid: {type: [string, 'null']}
+        title: {type: string}
+        severity: {$ref: '#/components/schemas/Severity'}
+        status: {type: string, enum: [OPEN, ACKED, CLOSED]}
+        snapshot: {type: object, additionalProperties: true}
+        hits: {type: integer}
+        raisedAt: {type: string, format: date-time}
+        ackedAt: {type: [string, 'null'], format: date-time}
+        closedAt: {type: [string, 'null'], format: date-time}
+    AlertPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Alert'}}
+        nextCursor: {type: [string, 'null']}
+    Kpi:
+      type: object
+      required: [id, name, objectType, aggregate, value, previous, target, unit, higherIsBetter, updatedAt]
+      properties:
+        id: {type: string}
+        name: {$ref: '#/components/schemas/I18nText'}
+        objectType: {type: string}
+        aggregate: {type: object, additionalProperties: true}
+        value: {type: [number, 'null']}
+        previous: {type: [number, 'null']}
+        target: {type: [number, 'null']}
+        unit: {type: [string, 'null']}
+        higherIsBetter: {type: boolean}
+        updatedAt: {type: [string, 'null'], format: date-time}
+    ImpactedObject:
+      type: object
+      required: [rid, type, title, delta, hop]
+      properties:
+        rid: {$ref: '#/components/schemas/Rid'}
+        type: {type: string}
+        title: {type: string}
+        delta: {type: number}
+        hop: {type: integer}
+    CockpitOverview:
+      type: object
+      required: [kpis, trends, alerts, impacted, initialized, generatedAt, pendingRecommendations, quotas]
+      properties:
+        kpis: {type: array, items: {$ref: '#/components/schemas/Kpi'}}
+        trends:
+          type: array
+          items:
+            type: object
+            required: [kpiId, points]
+            properties:
+              kpiId: {type: string}
+              points:
+                type: array
+                items:
+                  type: object
+                  required: [ts, value]
+                  properties:
+                    ts: {type: string, format: date-time}
+                    value: {type: number}
+        alerts: {type: array, items: {$ref: '#/components/schemas/Alert'}}
+        impacted: {type: array, items: {$ref: '#/components/schemas/ImpactedObject'}}
+        initialized: {type: boolean}
+        generatedAt: {type: string, format: date-time}
+        pendingRecommendations:
+          type: array
+          maxItems: 5
+          items: {$ref: '#/components/schemas/Recommendation'}
+        quotas: {$ref: '#/components/schemas/Quotas'}
+    StreamTicket:
+      type: object
+      required: [ticket, expiresIn]
+      properties:
+        ticket: {type: string, description: '`{tid}.{random}`, single use'}
+        expiresIn: {type: integer, const: 30}
+    WsMsg:
+      type: object
+      required: [seq, type, data, occurredAt]
+      properties:
+        seq: {type: integer}
+        type: {type: string, enum: [snapshot, kpi, alert, recommendation, trial]}
+        data: {}
+        occurredAt: {type: string, format: date-time}
+    WsResume:
+      type: object
+      required: [type, lastSeq]
+      properties:
+        type: {type: string, const: resume}
+        lastSeq: {type: integer}
+
+    # —— decision ——
+    RecStatus: {type: string, enum: [Proposed, Confirmed, Rejected, Expired, Executed, ExecFailed]}
+    Perturbation:
+      type: object
+      required: [rid, property, change]
+      properties:
+        rid: {$ref: '#/components/schemas/Rid'}
+        property: {type: string}
+        change: {type: number, minimum: -1, maximum: 1}
+    Candidate:
+      type: object
+      required: [id, actionType, displayName, target, targetTitle, params, expectedImpact, affectedCount]
+      properties:
+        id: {type: string}
+        actionType: {type: string}
+        displayName: {$ref: '#/components/schemas/I18nText'}
+        target: {$ref: '#/components/schemas/Rid'}
+        targetTitle: {type: string}
+        params: {type: object, additionalProperties: true}
+        expectedImpact: {type: number}
+        affectedCount: {type: integer}
+    ScenarioResult:
+      type: object
+      required: [baseline, scenario, affected, riskLevel, kpis, nodeCount, computedAt]
+      properties:
+        baseline: {type: object, additionalProperties: {type: number}}
+        scenario: {type: object, additionalProperties: {type: number}}
+        withActions:
+          type: object
+          additionalProperties: {type: object, additionalProperties: {type: number}}
+        affected: {type: array, items: {$ref: '#/components/schemas/ImpactedObject'}}
+        riskLevel: {type: string, enum: [LOW, MEDIUM, HIGH]}
+        kpis: {type: array, items: {type: object, additionalProperties: true}}
+        nodeCount: {type: integer}
+        computedAt: {type: string, format: date-time}
+    ScenarioInput:
+      type: object
+      required: [perturbations]
+      properties:
+        name: {type: string, maxLength: 120}
+        perturbations: {type: array, minItems: 1, maxItems: 10, items: {$ref: '#/components/schemas/Perturbation'}}
+        candidateActions:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            required: [actionType, target]
+            properties:
+              actionType: {type: string}
+              target: {$ref: '#/components/schemas/Rid'}
+              params: {type: object, additionalProperties: true}
+    Scenario:
+      type: object
+      required: [id, name, perturbations, candidates, result, createdAt]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        perturbations: {type: array, items: {$ref: '#/components/schemas/Perturbation'}}
+        candidates: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+        result: {$ref: '#/components/schemas/ScenarioResult'}
+        createdAt: {type: string, format: date-time}
+    Recommendation:
+      type: object
+      required: [id, status, focus, summary, rationale, candidates, ranking, evidence, risks, confidence, rankedBy, locale, createdAt, expiresAt, version]
+      properties:
+        id: {type: string}
+        status: {$ref: '#/components/schemas/RecStatus'}
+        focus: {$ref: '#/components/schemas/Rid'}
+        alertId: {type: string}
+        scenarioId: {type: string}
+        summary: {type: string}
+        rationale: {type: string}
+        candidates: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+        ranking: {type: array, items: {type: string}}
+        evidence:
+          type: array
+          items:
+            type: object
+            required: [rid, prop, value]
+            properties:
+              rid: {$ref: '#/components/schemas/Rid'}
+              prop: {type: string}
+              value: {}
+              provenance: {$ref: '#/components/schemas/Provenance'}
+        risks: {type: array, items: {type: string}}
+        confidence: {type: number, minimum: 0, maximum: 1}
+        rankedBy: {type: string, enum: [ai, rules]}
+        model: {type: string}
+        simulation: {$ref: '#/components/schemas/ScenarioResult'}
+        decidedBy: {type: string, enum: [owner, admin]}
+        decidedAt: {type: string, format: date-time}
+        rejectReason: {type: string}
+        execution:
+          type: array
+          items:
+            type: object
+            required: [candidateId, status]
+            properties:
+              candidateId: {type: string}
+              status: {type: string, enum: [Executed, Failed]}
+              actionLogId: {type: string}
+              error: {type: string}
+        locale: {type: string}
+        createdAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        version: {type: integer}
+    RecommendationPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Recommendation'}}
+        nextCursor: {type: [string, 'null']}
+    GenerateRequest:
+      type: object
+      required: [focus]
+      properties:
+        focus: {$ref: '#/components/schemas/Rid'}
+        alertId: {type: string}
+        scenarioId: {type: string}
+    DecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision: {type: string, enum: [confirm, reject]}
+        reason: {type: string, maxLength: 500, description: Required to reject}
+
+    # —— admin ——
+    PlatformOverview:
+      type: object
+      required: [activeTrials, signupsToday, archives, purgeBacklog, signup, freeQuota, analyticsAt, recentActions]
+      properties:
+        activeTrials: {$ref: '#/components/schemas/Used'}
+        signupsToday: {$ref: '#/components/schemas/Used'}
+        archives: {$ref: '#/components/schemas/Used'}
+        purgeBacklog: {$ref: '#/components/schemas/Used'}
+        signup:
+          type: object
+          required: [state]
+          properties:
+            state: {type: string, enum: [open, paused, auto_closed]}
+        freeQuota:
+          type: array
+          items:
+            type: object
+            required: [key, used, limit]
+            properties:
+              key: {type: string, enum: [workers, d1Writes, neurons, queues, emailResend, emailBrevo]}
+              used: {type: number}
+              limit: {type: number}
+        analyticsAt: {type: [string, 'null'], format: date-time}
+        recentActions:
+          type: array
+          items:
+            type: object
+            required: [at, action, target, kind]
+            properties:
+              at: {type: string, format: date-time}
+              action: {type: string}
+              target: {type: [string, 'null']}
+              kind: {type: string, enum: [modify, delete, enter, view]}
+    AdminUserRow:
+      type: object
+      required: [userId, tenantId, email, status, trialExpiresAt, zipExpiresAt, sessions, banned]
+      properties:
+        userId: {type: [string, 'null']}
+        tenantId: {$ref: '#/components/schemas/Ulid'}
+        email: {type: [string, 'null']}
+        status: {type: string, enum: [ACTIVE, EXPIRED, ARCHIVING, ARCHIVE_ONLY]}
+        trialExpiresAt: {type: [string, 'null'], format: date-time}
+        zipExpiresAt: {type: [string, 'null'], format: date-time}
+        sessions: {type: integer}
+        banned: {type: boolean}
+    AdminUser:
+      allOf:
+        - {$ref: '#/components/schemas/AdminUserRow'}
+        - type: object
+          required: [locale, timeZone, verifiedAt, expiredAt, archivePhase]
+          properties:
+            locale: {$ref: '#/components/schemas/Locale'}
+            timeZone: {type: string}
+            verifiedAt: {type: string, format: date-time}
+            expiredAt: {type: [string, 'null'], format: date-time}
+            archivePhase: {type: [string, 'null']}
+    AdminUserPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AdminUserRow'}}
+        nextCursor: {type: [string, 'null']}
+    AdminUserPatch:
+      type: object
+      required: [reason]
+      properties:
+        trialExpiresAt: {type: string, format: date-time}
+        status: {type: string, enum: [EXPIRED]}
+        banned: {type: boolean}
+        reason: {type: string, minLength: 1, maxLength: 500}
+    ArchiveIndex:
+      type: object
+      required: [tenantId, sizeBytes, sha256, createdAt, expiresAt]
+      properties:
+        tenantId: {$ref: '#/components/schemas/Ulid'}
+        sizeBytes: {type: integer}
+        sha256: {type: string}
+        createdAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+    ArchivePage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ArchiveIndex'}}
+        nextCursor: {type: [string, 'null']}
+    PlatformSettings:
+      type: object
+      required: [signupEnabled, signupDailyLimit, activeWorkspaceLimit, trialHours, archiveDays, version]
+      properties:
+        signupEnabled: {type: boolean}
+        signupDailyLimit: {type: integer, minimum: 0, maximum: 20}
+        activeWorkspaceLimit: {type: integer, minimum: 0, maximum: 60}
+        trialHours: {type: integer, readOnly: true}
+        archiveDays: {type: integer, readOnly: true}
+        version: {type: integer}
+    SettingsPatch:
+      type: object
+      properties:
+        signupEnabled: {type: boolean}
+        signupDailyLimit: {type: integer, minimum: 0, maximum: 20}
+        activeWorkspaceLimit: {type: integer, minimum: 0, maximum: 60}
+    BlockedDomains:
+      type: object
+      required: [domains]
+      properties:
+        domains:
+          type: array
+          maxItems: 5000
+          items: {type: string, pattern: '^[a-z0-9.-]+\.[a-z]{2,}$'}
+    AuditRow:
+      type: object
+      required: [id, at, action, targetTenantId, targetUserId, reason]
+      properties:
+        id: {type: string}
+        at: {type: string, format: date-time}
+        action: {type: string}
+        targetTenantId: {type: [string, 'null']}
+        targetUserId: {type: [string, 'null']}
+        reason: {type: [string, 'null']}
+    AuditPage:
+      type: object
+      required: [items, nextCursor, chainOk]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AuditRow'}}
+        nextCursor: {type: [string, 'null']}
+        chainOk: {type: boolean}

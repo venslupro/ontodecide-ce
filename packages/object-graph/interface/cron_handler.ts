@@ -1,18 +1,31 @@
 /**
- * @fileoverview Cron dispatch (`*\/15 * * * *`): runs maintenance.
+ * @fileoverview Cron dispatch of object-graph. The only trigger is
+ * `*\/15 * * * *`: outbox redelivery and tombstone sweep.
  */
 
-import {RunMaintenance} from '../application';
-import type {AppDeps, MaintenanceReport} from '../application';
+import type {Clock, Logger} from '@ontodecide/shared-kernel';
+import {runMaintenance} from '../application';
+import type {EventPublisher, OutboxRelayStore} from '../application';
 
-/** Builds the scheduled handler. */
-export function createCronHandler(
-  deps: AppDeps,
-): (cron: string, now: Date) => Promise<MaintenanceReport> {
-  const maintenance = new RunMaintenance(deps);
+/** The object-graph cron expression. */
+export const OUTBOX_CRON = '*/15 * * * *';
+
+/** Builds the scheduled() handler. */
+export function createCronHandler(deps: {
+  store: () => OutboxRelayStore;
+  publisher: EventPublisher;
+  clock: Clock;
+  logger: Logger;
+}): (cron: string, now: Date) => Promise<void> {
   return async (cron, now) => {
-    const report = await maintenance.handle(now);
-    deps.logger.info('cron finished', {cron, ...report});
-    return report;
+    if (cron !== OUTBOX_CRON) {
+      deps.logger.warn('cron.unknown', {cron});
+    }
+    await runMaintenance({
+      store: deps.store(),
+      publisher: deps.publisher,
+      clock: {now: () => now ?? deps.clock.now()},
+      logger: deps.logger,
+    });
   };
 }

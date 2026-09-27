@@ -1,5 +1,7 @@
 /**
- * @fileoverview Typed API error mapped from RFC 9457 Problem Details.
+ * @fileoverview Typed API error mapped from RFC 9457 Problem Details. The
+ * stable `code` drives localized messages (`errors.<CODE>`); `detail` is
+ * supplementary and `traceId` is shown for support.
  */
 
 import type {ErrorCode, Problem} from '@ontodecide/shared-kernel';
@@ -14,8 +16,8 @@ export class ApiError extends Error {
   readonly detail?: string;
   /** Seconds to wait before retrying (429 / 503). */
   readonly retryAfter?: number;
-  readonly requestId?: string;
-  /** Problem extension members (e.g. `errors`, `unmet`, `recommendationId`). */
+  readonly traceId?: string;
+  /** Problem extension members (e.g. `errors`, `unmet`). */
   readonly extras: Record<string, unknown>;
 
   constructor(init: {
@@ -23,7 +25,7 @@ export class ApiError extends Error {
     status: number;
     detail?: string;
     retryAfter?: number;
-    requestId?: string;
+    traceId?: string;
     extras?: Record<string, unknown>;
   }) {
     super(init.detail ? `${init.code}: ${init.detail}` : init.code);
@@ -32,7 +34,7 @@ export class ApiError extends Error {
     this.status = init.status;
     this.detail = init.detail;
     this.retryAfter = init.retryAfter;
-    this.requestId = init.requestId;
+    this.traceId = init.traceId;
     this.extras = init.extras ?? {};
   }
 }
@@ -72,15 +74,15 @@ export async function toApiError(res: Response): Promise<ApiError> {
     status: _s,
     code,
     detail,
-    requestId,
+    traceId,
     ...extras
   } = problem;
   return new ApiError({
     code: (code as ErrorCode | undefined) ?? 'HTTP_ERROR',
     status: res.status,
     detail: typeof detail === 'string' ? detail : undefined,
-    requestId:
-      (requestId as string | undefined) ??
+    traceId:
+      (traceId as string | undefined) ??
       res.headers.get('x-request-id') ??
       undefined,
     retryAfter: parseRetryAfter(res.headers.get('retry-after')),

@@ -1,7 +1,7 @@
 /**
- * @fileoverview decision-engine Worker entry point: the DecisionRpc
- * WorkerEntrypoint plus queue and cron handlers. The only file importing
- * `cloudflare:workers`.
+ * @fileoverview decision-engine Worker entry point: the DecisionRpc and
+ * TenantLifecycle WorkerEntrypoints. The only file importing
+ * `cloudflare:workers`. No routes, no queue, no cron.
  */
 
 import {WorkerEntrypoint} from 'cloudflare:workers';
@@ -19,28 +19,16 @@ function svc(env: Env): ServiceModule<DecisionContract> {
 
 type P<K extends keyof DecisionContract> = Parameters<DecisionContract[K]>;
 
-/** Service-binding RPC entry point (one explicit method per contract method). */
+/** Business RPC entry point (bound by api-gateway). */
 export class DecisionRpc
   extends WorkerEntrypoint<Env>
   implements DecisionContract
 {
-  listScenarios(...a: P<'listScenarios'>) {
-    return svc(this.env).rpc.listScenarios(...a);
-  }
-  createScenario(...a: P<'createScenario'>) {
-    return svc(this.env).rpc.createScenario(...a);
-  }
-  getScenario(...a: P<'getScenario'>) {
-    return svc(this.env).rpc.getScenario(...a);
-  }
   runScenario(...a: P<'runScenario'>) {
     return svc(this.env).rpc.runScenario(...a);
   }
-  listCandidateActions(...a: P<'listCandidateActions'>) {
-    return svc(this.env).rpc.listCandidateActions(...a);
-  }
-  generateRecommendation(...a: P<'generateRecommendation'>) {
-    return svc(this.env).rpc.generateRecommendation(...a);
+  getScenario(...a: P<'getScenario'>) {
+    return svc(this.env).rpc.getScenario(...a);
   }
   listRecommendations(...a: P<'listRecommendations'>) {
     return svc(this.env).rpc.listRecommendations(...a);
@@ -48,29 +36,30 @@ export class DecisionRpc
   getRecommendation(...a: P<'getRecommendation'>) {
     return svc(this.env).rpc.getRecommendation(...a);
   }
-  approve(...a: P<'approve'>) {
-    return svc(this.env).rpc.approve(...a);
+  generateRecommendation(...a: P<'generateRecommendation'>) {
+    return svc(this.env).rpc.generateRecommendation(...a);
   }
-  reject(...a: P<'reject'>) {
-    return svc(this.env).rpc.reject(...a);
+  decide(...a: P<'decide'>) {
+    return svc(this.env).rpc.decide(...a);
   }
-  feedback(...a: P<'feedback'>) {
-    return svc(this.env).rpc.feedback(...a);
+  usage(...a: P<'usage'>) {
+    return svc(this.env).rpc.usage(...a);
   }
-  suggestMapping(...a: P<'suggestMapping'>) {
-    return svc(this.env).rpc.suggestMapping(...a);
+}
+
+/** Lifecycle entry point (bound only by identity-access). */
+export class TenantLifecycle extends WorkerEntrypoint<Env> {
+  exportTenant(tid: string, cursor: string | null) {
+    return svc(this.env).lifecycle!.exportTenant(tid, cursor);
   }
-  llmQuota(...a: P<'llmQuota'>) {
-    return svc(this.env).rpc.llmQuota(...a);
+  purgeTenant(tid: string, maxRows: number) {
+    return svc(this.env).lifecycle!.purgeTenant(tid, maxRows);
   }
-  evaluateOutcomes(...a: P<'evaluateOutcomes'>) {
-    return svc(this.env).rpc.evaluateOutcomes(...a);
+  countTenant(tid: string) {
+    return svc(this.env).lifecycle!.countTenant(tid);
   }
 }
 
 export default {
   fetch: () => new Response('Not found', {status: 404}),
-  queue: (batch, env) => svc(env).queue!(batch),
-  scheduled: (evt, env, ctx) =>
-    ctx.waitUntil(svc(env).scheduled!(evt.cron, new Date(evt.scheduledTime))),
 } satisfies ExportedHandler<Env>;

@@ -1,60 +1,30 @@
 /**
- * @fileoverview Tests for the memory LRU and the tiered schema cache.
+ * @fileoverview Tests of the isolate-memory compiled-schema cache.
  */
 
-import {FixedClock, silentLogger} from '@ontodecide/shared-kernel';
-import {MemoryKV} from '@ontodecide/testing';
 import {describe, expect, it} from 'vitest';
-import {SUPPLY_CHAIN_PACK, compileSchema, mergeModel} from '../domain';
-import {
-  LruCache,
-  TieredSchemaCache,
-  modelKvKey,
-  schemaKvKey,
-} from './schema_cache';
+import type {CompiledSchema} from '../contract';
+import {MemoryCompiledCache} from './schema_cache';
 
-describe('LruCache', () => {
-  it('evicts the least recently used entry and honours TTLs', () => {
-    const clock = new FixedClock();
-    const lru = new LruCache<number>(clock, 2);
-    lru.set('a', 1);
-    lru.set('b', 2);
-    expect(lru.get('a')).toBe(1);
-    lru.set('c', 3);
-    expect(lru.get('b')).toBeUndefined();
-    expect(lru.get('a')).toBe(1);
-    lru.set('t', 4, 1000);
-    clock.advance(1001);
-    expect(lru.get('t')).toBeUndefined();
-    expect(lru.size).toBe(1);
+const schema = (etag: number) => ({etag}) as unknown as CompiledSchema;
+
+describe('MemoryCompiledCache', () => {
+  it('keys entries by (tid, etag)', () => {
+    const cache = new MemoryCompiledCache();
+    cache.set('t1', 1, schema(1));
+    expect(cache.get('t1', 1)?.etag).toBe(1);
+    expect(cache.get('t1', 2)).toBeUndefined();
+    expect(cache.get('t2', 1)).toBeUndefined();
   });
-});
 
-describe('TieredSchemaCache', () => {
-  it('writes KV only on publish and reads through memory → KV', async () => {
-    const clock = new FixedClock();
-    const kv = new MemoryKV();
-    const cache = new TieredSchemaCache(kv.asKV(), clock, silentLogger);
-    const compiled = await compileSchema(SUPPLY_CHAIN_PACK.schema, '1.0.0');
-    const model = await mergeModel('t1', [compiled]);
-
-    cache.putModel('t1', model);
-    cache.putSchema('t1', 'current', compiled);
-    expect(kv.writes).toBe(0);
-
-    await cache.onPublish('t1', compiled, model);
-    expect(kv.writes).toBe(2);
-    expect([...kv.data.keys()].sort()).toEqual([
-      modelKvKey('t1'),
-      schemaKvKey('t1', 'supplyChain'),
-    ]);
-
-    const fresh = new TieredSchemaCache(kv.asKV(), clock, silentLogger);
-    expect((await fresh.getModel('t1'))?.version).toBe('supplyChain@1.0.0');
-    expect((await fresh.getSchema('t1', 'supplyChain', 'current'))?.hash).toBe(
-      compiled.hash,
-    );
-    expect(await fresh.getSchema('t1', 'supplyChain', '1.0.0')).toBeNull();
-    expect(await fresh.getModel('t2')).toBeNull();
+  it('evicts the least recently used entry', () => {
+    const cache = new MemoryCompiledCache(2);
+    cache.set('a', 1, schema(1));
+    cache.set('b', 1, schema(1));
+    cache.get('a', 1);
+    cache.set('c', 1, schema(1));
+    expect(cache.size).toBe(2);
+    expect(cache.get('a', 1)).toBeDefined();
+    expect(cache.get('b', 1)).toBeUndefined();
   });
 });

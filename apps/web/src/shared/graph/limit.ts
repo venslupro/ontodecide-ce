@@ -31,7 +31,7 @@ export interface GEdge {
 
 /** Limits (前端详细设计 表 9). */
 export const GRAPH_NODE_DEFAULT = 200;
-export const GRAPH_NODE_MAX = 500;
+export const GRAPH_NODE_MAX = 300;
 
 /**
  * Keeps at most `max` nodes (roots always kept), ranking by score / impact

@@ -1,22 +1,25 @@
 /**
- * @fileoverview Worker entry point of object-graph: the ObjectGraphRpc
- * WorkerEntrypoint (service binding RPC) plus queue and cron handlers.
+ * @fileoverview Worker entry point of object-graph: the ObjectGraphRpc and
+ * TenantLifecycle WorkerEntrypoints plus the 15-minute outbox cron. The only
+ * file importing cloudflare:workers.
  */
 
 import {WorkerEntrypoint} from 'cloudflare:workers';
 import type {ObjectGraphRpc as Contract} from '@ontodecide/object-graph/contract';
-import type {QueueBatch, ServiceModule} from '@ontodecide/shared-kernel';
+import type {TenantLifecycleRpc} from '@ontodecide/shared-kernel';
 import type {Env} from './env';
 import {createService} from './service';
 
-let cache: {env: Env; svc: ServiceModule<Contract>} | undefined;
+type Service = ReturnType<typeof createService>;
 
-function svc(env: Env): ServiceModule<Contract> {
+let cache: {env: Env; svc: Service} | undefined;
+
+function svc(env: Env): Service {
   if (cache?.env !== env) cache = {env, svc: createService(env)};
   return cache.svc;
 }
 
-/** RPC entrypoint bound by other Workers as `OBJECTS`. */
+/** Business RPC bound by other Workers as `OBJECTS`. */
 export class ObjectGraphRpc extends WorkerEntrypoint<Env> implements Contract {
   getObject(...a: Parameters<Contract['getObject']>) {
     return svc(this.env).rpc.getObject(...a);
@@ -27,32 +30,20 @@ export class ObjectGraphRpc extends WorkerEntrypoint<Env> implements Contract {
   listObjects(...a: Parameters<Contract['listObjects']>) {
     return svc(this.env).rpc.listObjects(...a);
   }
-  evaluateObjectSet(...a: Parameters<Contract['evaluateObjectSet']>) {
-    return svc(this.env).rpc.evaluateObjectSet(...a);
+  patchObject(...a: Parameters<Contract['patchObject']>) {
+    return svc(this.env).rpc.patchObject(...a);
   }
-  aggregate(...a: Parameters<Contract['aggregate']>) {
-    return svc(this.env).rpc.aggregate(...a);
-  }
-  listObjectSets(...a: Parameters<Contract['listObjectSets']>) {
-    return svc(this.env).rpc.listObjectSets(...a);
-  }
-  saveObjectSet(...a: Parameters<Contract['saveObjectSet']>) {
-    return svc(this.env).rpc.saveObjectSet(...a);
-  }
-  evaluateSavedObjectSet(...a: Parameters<Contract['evaluateSavedObjectSet']>) {
-    return svc(this.env).rpc.evaluateSavedObjectSet(...a);
-  }
-  search(...a: Parameters<Contract['search']>) {
-    return svc(this.env).rpc.search(...a);
-  }
-  lineage(...a: Parameters<Contract['lineage']>) {
-    return svc(this.env).rpc.lineage(...a);
+  getLinks(...a: Parameters<Contract['getLinks']>) {
+    return svc(this.env).rpc.getLinks(...a);
   }
   impactSubgraph(...a: Parameters<Contract['impactSubgraph']>) {
     return svc(this.env).rpc.impactSubgraph(...a);
   }
-  paths(...a: Parameters<Contract['paths']>) {
-    return svc(this.env).rpc.paths(...a);
+  stats(...a: Parameters<Contract['stats']>) {
+    return svc(this.env).rpc.stats(...a);
+  }
+  upsertBatch(...a: Parameters<Contract['upsertBatch']>) {
+    return svc(this.env).rpc.upsertBatch(...a);
   }
   applyAction(...a: Parameters<Contract['applyAction']>) {
     return svc(this.env).rpc.applyAction(...a);
@@ -60,24 +51,26 @@ export class ObjectGraphRpc extends WorkerEntrypoint<Env> implements Contract {
   listActionLog(...a: Parameters<Contract['listActionLog']>) {
     return svc(this.env).rpc.listActionLog(...a);
   }
-  listMergeSuggestions(...a: Parameters<Contract['listMergeSuggestions']>) {
-    return svc(this.env).rpc.listMergeSuggestions(...a);
+}
+
+/** Lifecycle entry point, bound only to identity-access as `LC_OBJECTS`. */
+export class TenantLifecycle
+  extends WorkerEntrypoint<Env>
+  implements TenantLifecycleRpc
+{
+  exportTenant(tid: string, cursor: string | null) {
+    return svc(this.env).lifecycle.exportTenant(tid, cursor);
   }
-  resolveMergeSuggestion(...a: Parameters<Contract['resolveMergeSuggestion']>) {
-    return svc(this.env).rpc.resolveMergeSuggestion(...a);
+  purgeTenant(tid: string, maxRows: number) {
+    return svc(this.env).lifecycle.purgeTenant(tid, maxRows);
   }
-  onOntologyPublished(...a: Parameters<Contract['onOntologyPublished']>) {
-    return svc(this.env).rpc.onOntologyPublished(...a);
-  }
-  rebuildProjection(...a: Parameters<Contract['rebuildProjection']>) {
-    return svc(this.env).rpc.rebuildProjection(...a);
+  countTenant(tid: string) {
+    return svc(this.env).lifecycle.countTenant(tid);
   }
 }
 
 export default {
   fetch: () => new Response('Not found', {status: 404}),
-  queue: (batch, env) =>
-    svc(env).queue!(batch as unknown as QueueBatch<unknown>),
   scheduled: (evt, env, ctx) =>
-    ctx.waitUntil(svc(env).scheduled!(evt.cron, new Date(evt.scheduledTime))),
+    ctx.waitUntil(svc(env).scheduled(evt.cron, new Date(evt.scheduledTime))),
 } satisfies ExportedHandler<Env>;

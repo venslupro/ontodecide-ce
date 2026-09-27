@@ -1,10 +1,12 @@
 /**
  * @fileoverview i18n integrity: identical key sets in zh-CN and en-US for
- * every namespace, non-empty strings, valid ICU messages, and bundle size.
+ * every namespace, non-empty strings, valid ICU messages, bundle size, and
+ * an `errors.<CODE>` message for every server and client error code.
  */
 
 import IntlMessageFormat from 'intl-messageformat';
 import {describe, expect, it} from 'vitest';
+import {ERROR_CODES} from '@ontodecide/shared-kernel';
 import {NAMESPACES} from '../shared/lib/i18n';
 
 const bundles = import.meta.glob<Record<string, unknown>>('./*/*.json', {
@@ -67,4 +69,47 @@ describe('locale bundles', () => {
       });
     });
   }
+});
+
+/** Client-side codes used by the UI (前端详细设计 表 10). */
+const CLIENT_CODES = [
+  'NETWORK',
+  'ABORTED',
+  'HTTP_ERROR',
+  'SERVER',
+  'RENDER',
+  'PAYLOAD_TOO_LARGE',
+];
+
+describe('error messages', () => {
+  it('has common:errors.<CODE> for every error code in both languages', () => {
+    for (const lang of ['zh-CN', 'en-US']) {
+      const errors = (
+        bundle(lang, 'common') as {errors: Record<string, string>}
+      ).errors;
+      for (const code of [...ERROR_CODES, ...CLIENT_CODES]) {
+        expect(errors[code], `${lang} errors.${code}`).toBeTruthy();
+      }
+    }
+  });
+
+  it('keeps the documented ICU arguments', () => {
+    const zh = (bundle('zh-CN', 'common') as {errors: Record<string, string>})
+      .errors;
+    expect(
+      new IntlMessageFormat(zh.CODE_INVALID, 'zh-CN').format({left: 2}),
+    ).toBe('验证码不正确，还可尝试 2 次');
+    expect(
+      new IntlMessageFormat(zh.RATE_LIMITED, 'zh-CN').format({seconds: 5}),
+    ).toContain('5');
+  });
+
+  it('ships no legacy theme or password strings', () => {
+    for (const lang of ['zh-CN', 'en-US']) {
+      const flat = flatten(bundle(lang, 'common'));
+      expect(
+        Object.keys(flat).some(k => /^theme\.|password|markings/i.test(k)),
+      ).toBe(false);
+    }
+  });
 });

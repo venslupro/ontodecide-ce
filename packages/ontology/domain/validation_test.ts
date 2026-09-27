@@ -1,242 +1,308 @@
 /**
- * @fileoverview Tests for structural and cross-schema validation.
+ * @fileoverview Tests of structural ontology validation and of the
+ * built-in supply-chain template.
  */
 
+import {filterProps} from '@ontodecide/shared-kernel';
 import {describe, expect, it} from 'vitest';
-import type {SchemaDef} from '../contract';
-import {SUPPLY_CHAIN_PACK} from './packs/supply_chain';
+import {MAX_INDEXED_PROPS} from '../contract';
+import type {ActionTypeDef, ObjectTypeDef, OntologyDef} from '../contract';
 import {
-  checkCrossSchemaConflicts,
-  schemaNames,
-  validateSchema,
+  logicVarPaths,
+  objectRefTarget,
+  referencesTo,
+  validateOntology,
 } from './validation';
+import {DEFAULT_TEMPLATE, findTemplate} from './pack_registry';
+import {
+  SUPPLY_CHAIN_DEFINITION,
+  SUPPLY_CHAIN_SEEDS,
+} from './packs/supply_chain';
 
-const base = (): SchemaDef => structuredClone(SUPPLY_CHAIN_PACK.schema);
+const clone = (): OntologyDef => structuredClone(SUPPLY_CHAIN_DEFINITION);
 
-function messages(def: SchemaDef): string[] {
-  return validateSchema(def).map(i => `${i.path}: ${i.message}`);
+function objectType(def: OntologyDef, name: string): ObjectTypeDef {
+  return def.objectTypes.find(t => t.apiName === name)!;
 }
 
-describe('validateSchema', () => {
-  it('accepts the built-in supply chain pack', () => {
-    expect(validateSchema(base())).toEqual([]);
+function action(def: OntologyDef, name: string): ActionTypeDef {
+  return def.actionTypes.find(a => a.apiName === name)!;
+}
+
+const messages = (def: OntologyDef) =>
+  validateOntology(def).map(i => i.message);
+
+describe('supply-chain template', () => {
+  it('is structurally valid', () => {
+    expect(validateOntology(SUPPLY_CHAIN_DEFINITION)).toEqual([]);
   });
 
-  it('reports duplicate api names per kind', () => {
-    const def = base();
-    def.objectTypes.push(structuredClone(def.objectTypes[0]));
-    def.linkTypes.push(structuredClone(def.linkTypes[0]));
-    def.actionTypes.push(structuredClone(def.actionTypes[0]));
-    def.functions.push(structuredClone(def.functions[0]));
-    def.objectTypes[1].properties.push(
-      structuredClone(def.objectTypes[1].properties[0]),
-    );
-    const m = messages(def);
-    expect(m).toContain(
-      'objectTypes.3.apiName: Duplicate object type api name: Supplier',
-    );
-    expect(m).toContain(
-      'linkTypes.2.apiName: Duplicate link type api name: supplies',
-    );
-    expect(m).toContain(
-      'actionTypes.3.apiName: Duplicate action type api name: switchSupplier',
-    );
-    expect(m).toContain(
-      'functions.2.apiName: Duplicate function api name: supplierRiskLevel',
-    );
-    expect(m).toContain(
-      'objectTypes.1.properties.4.apiName: Duplicate property api name: materialId',
-    );
-  });
-
-  it('reports missing primary key and title property', () => {
-    const def = base();
-    def.objectTypes[0].primaryKey = 'nope';
-    def.objectTypes[0].titleProperty = 'nada';
-    const m = messages(def);
-    expect(m).toContain(
-      'objectTypes.0.primaryKey: Primary key property does not exist: nope',
-    );
-    expect(m).toContain(
-      'objectTypes.0.titleProperty: Title property does not exist: nada',
-    );
-  });
-
-  it('reports link ends that do not exist', () => {
-    const def = base();
-    def.linkTypes[0].from = 'Ghost';
-    def.linkTypes[1].to = 'Phantom';
-    const m = messages(def);
-    expect(m).toContain('linkTypes.0.from: Object type does not exist: Ghost');
-    expect(m).toContain('linkTypes.1.to: Object type does not exist: Phantom');
-  });
-
-  it('reports a missing action target type', () => {
-    const def = base();
-    def.actionTypes[2].targetType = 'Ghost';
-    expect(messages(def)).toContain(
-      'actionTypes.2.targetType: Object type does not exist: Ghost',
-    );
-  });
-
-  it('reports effects on unknown props, links and params', () => {
-    const def = base();
-    def.actionTypes[1].effects[0] = {kind: 'increment', prop: 'nope', by: 1};
-    def.actionTypes[1].effects[1] = {kind: 'increment', prop: 'name', by: 1};
-    def.actionTypes[0].effects = [
-      {
-        kind: 'relink',
-        link: 'ghostLink',
-        direction: 'in',
-        toParam: 'newSupplier',
-      },
-      {kind: 'relink', link: 'supplies', direction: 'out', toParam: 'missing'},
-    ];
-    const m = messages(def);
-    expect(m).toContain(
-      'actionTypes.1.effects.0.prop: Unknown property of Product: nope',
-    );
-    expect(m).toContain(
-      'actionTypes.1.effects.1.prop: Increment needs a numeric property: name',
-    );
-    expect(m).toContain(
-      'actionTypes.0.effects.0.link: Link type does not exist: ghostLink',
-    );
-    expect(m).toContain(
-      'actionTypes.0.effects.1.direction: Link supplies (out) does not attach to Material',
-    );
-    expect(m).toContain(
-      'actionTypes.0.effects.1.toParam: Unknown parameter: missing',
-    );
-  });
-
-  it('reports JSONLogic variables that do not resolve', () => {
-    const def = base();
-    def.actionTypes[1].preconditions[0].expr = {
-      '>': [{var: 'params.weeks'}, 0],
-    };
-    def.actionTypes[2].preconditions[0].expr = {
-      '!==': [{var: 'target.ghost'}, 'x'],
-    };
-    def.functions[0].expr = {'>': [{var: 'ghostScore'}, 1]};
-    const m = messages(def);
-    expect(m).toContain(
-      'actionTypes.1.preconditions.0.expr: Unknown parameter: weeks',
-    );
-    expect(m).toContain(
-      'actionTypes.2.preconditions.0.expr: Unknown property of Supplier: ghost',
-    );
-    expect(m).toContain(
-      'functions.0.expr: Unknown property of Supplier: ghostScore',
-    );
-  });
-
-  it('reports suggest.objectType, orderBy and filter props that do not exist', () => {
-    const def = base();
-    const suggest = def.actionTypes[0].parameters[0].suggest!;
-    suggest.orderBy = {prop: 'ghost', dir: 'asc'};
-    suggest.filter = {op: 'eq', prop: 'phantom', value: 1};
-    expect(messages(def)).toEqual(
+  it('keeps the property names the sample data relies on', () => {
+    const names = (t: string) =>
+      objectType(SUPPLY_CHAIN_DEFINITION, t).properties.map(p => p.apiName);
+    expect(names('Supplier')).toEqual(
       expect.arrayContaining([
-        'actionTypes.0.parameters.0.suggest.orderBy.prop: Unknown property of Supplier: ghost',
-        'actionTypes.0.parameters.0.suggest.filter: Unknown property of Supplier: phantom',
+        'supplierId',
+        'name',
+        'country',
+        'riskScore',
+        'capacity',
+        'onTimeRate',
+        'status',
       ]),
     );
-    suggest.objectType = 'Ghost';
-    expect(messages(def)).toContain(
-      'actionTypes.0.parameters.0.suggest.objectType: Object type does not exist: Ghost',
+    expect(names('Material')).toEqual(
+      expect.arrayContaining([
+        'materialId',
+        'name',
+        'category',
+        'safetyStock',
+        'stock',
+      ]),
     );
+    expect(names('Product')).toEqual(
+      expect.arrayContaining(['productId', 'name', 'revenue']),
+    );
+    const links = SUPPLY_CHAIN_DEFINITION.linkTypes;
+    expect(links.map(l => [l.apiName, l.from, l.to])).toEqual([
+      ['supplies', 'Supplier', 'Material'],
+      ['usedIn', 'Material', 'Product'],
+    ]);
+    expect(links.every(l => l.propagation)).toBe(true);
   });
 
-  it('reports objectRef targets that do not exist', () => {
-    const def = base();
-    def.objectTypes[2].properties.push({
-      apiName: 'owner',
-      displayName: 'Owner',
-      dataType: 'objectRef:Ghost',
+  it('offers a deterministic suggestion for switchSupplier.newSupplier', () => {
+    const p = action(SUPPLY_CHAIN_DEFINITION, 'switchSupplier').parameters[0];
+    expect(p.dataType).toBe('objectRef:Supplier');
+    expect(p.suggest).toMatchObject({
+      objectType: 'Supplier',
+      orderBy: {prop: 'riskScore', dir: 'asc'},
+      sharesLinkWithTarget: {link: 'supplies', direction: 'in'},
     });
-    def.actionTypes[0].parameters[0].dataType = 'objectRef:Phantom';
-    const m = messages(def);
-    expect(m).toContain(
-      'objectTypes.2.properties.6.dataType: Referenced object type does not exist: Ghost',
-    );
-    expect(m).toContain(
-      'actionTypes.0.parameters.0.dataType: Referenced object type does not exist: Phantom',
-    );
+    expect(
+      SUPPLY_CHAIN_DEFINITION.actionTypes.map(a => a.apiName).sort(),
+    ).toEqual(['adjustSafetyStock', 'flagSupplier', 'switchSupplier']);
   });
 
-  it('reports unsupported JSONLogic operators', () => {
-    const def = base();
-    def.functions[1].expr = {eval: ['1+1']};
-    def.actionTypes[2].effects[0] = {
-      kind: 'set',
-      prop: 'status',
-      value: {map: [1]},
-    };
-    const m = messages(def);
-    expect(m).toContain('functions.1.expr: Unsupported operator: eval');
-    expect(m).toContain(
-      'actionTypes.2.effects.0.value: Unsupported operator: map',
+  it('ships seeds that reference existing types and properties', () => {
+    const has = (t: string, p: string) =>
+      objectType(SUPPLY_CHAIN_DEFINITION, t).properties.some(
+        x => x.apiName === p,
+      );
+    expect(SUPPLY_CHAIN_SEEDS.kpis.map(k => k.id)).toEqual(
+      expect.arrayContaining([
+        'highRiskSuppliers',
+        'avgRiskScore',
+        'avgOnTimeRate',
+      ]),
     );
-  });
-
-  it('reports simulation KPIs over unknown types or props', () => {
-    const def = base();
-    def.simulationKpis![0].property = 'ghost';
-    def.simulationKpis![1].objectType = 'Ghost';
-    def.simulationKpis!.push({
-      apiName: 'names',
-      displayName: 'Names',
-      objectType: 'Product',
-      property: 'name',
-      agg: 'sum',
-      higherIsBetter: true,
+    for (const k of SUPPLY_CHAIN_SEEDS.kpis) {
+      if (k.aggregate.prop)
+        expect(has(k.objectType, k.aggregate.prop)).toBe(true);
+      for (const p of filterProps(k.filter))
+        expect(has(k.objectType, p)).toBe(true);
+    }
+    const autos = SUPPLY_CHAIN_SEEDS.automations;
+    expect(autos.find(a => a.id === 'supplierRiskHigh')).toMatchObject({
+      trigger: 'threshold',
+      severity: 'HIGH',
+      condition: {op: 'gte', prop: 'riskScore', value: 70},
     });
-    const m = messages(def);
-    expect(m).toContain(
-      'simulationKpis.0.property: Unknown property of Product: ghost',
-    );
-    expect(m).toContain(
-      'simulationKpis.1.objectType: Object type does not exist: Ghost',
-    );
-    expect(m).toContain(
-      'simulationKpis.2.property: Aggregation sum needs a numeric property',
-    );
+    const scheduled = autos.filter(a => a.trigger === 'schedule');
+    expect(scheduled).toHaveLength(1);
+    expect(scheduled[0].everyHours).toBeGreaterThanOrEqual(1);
+    for (const a of autos) {
+      expect(a.cooldownSec).toBeLessThanOrEqual(86_400);
+      for (const p of filterProps(a.condition)) {
+        expect(has(a.objectType, p)).toBe(true);
+      }
+    }
   });
 
-  it('reports impact hints on properties unknown to the schema', () => {
-    const def = base();
-    def.actionTypes[1].impact = [{property: 'ghost', change: 0.1}];
-    expect(messages(def)).toContain(
-      'actionTypes.1.impact.0.property: Unknown property: ghost',
-    );
-  });
-
-  it('reports enum properties without values', () => {
-    const def = base();
-    delete def.objectTypes[0].properties[6].enumValues;
-    expect(messages(def)).toContain(
-      'objectTypes.0.properties.6.enumValues: Enum properties need at least one value',
-    );
+  it('is registered as the default template', () => {
+    expect(DEFAULT_TEMPLATE.id).toBe('supply-chain');
+    expect(findTemplate('supply-chain')).toBe(DEFAULT_TEMPLATE);
+    expect(findTemplate('nope')).toBeNull();
   });
 });
 
-describe('checkCrossSchemaConflicts', () => {
-  it('reports api names defined by another schema of the tenant', () => {
-    const other = base();
-    other.apiName = 'other';
-    const issues = checkCrossSchemaConflicts(base(), [schemaNames(other)]);
-    expect(issues).toContainEqual({
-      path: 'objectTypes.0.apiName',
-      message: 'Object type Supplier is already defined by schema other',
-    });
-    expect(issues.some(i => i.path.startsWith('linkTypes'))).toBe(true);
-    expect(issues.some(i => i.path.startsWith('actionTypes'))).toBe(true);
+describe('validateOntology', () => {
+  it('rejects duplicate api names', () => {
+    const def = clone();
+    def.objectTypes.push(structuredClone(def.objectTypes[0]));
+    def.linkTypes.push(structuredClone(def.linkTypes[0]));
+    const t = objectType(def, 'Material');
+    t.properties.push(structuredClone(t.properties[1]));
+    expect(messages(def)).toEqual(
+      expect.arrayContaining([
+        'Duplicate object type api name: Supplier',
+        'Duplicate link type api name: supplies',
+        'Duplicate property api name: name',
+      ]),
+    );
   });
 
-  it('ignores the schema being replaced', () => {
-    expect(checkCrossSchemaConflicts(base(), [schemaNames(base())])).toEqual(
-      [],
+  it('requires link ends to exist', () => {
+    const def = clone();
+    def.linkTypes[1].to = 'Warehouse';
+    expect(validateOntology(def)).toEqual([
+      {
+        path: 'linkTypes.1.to',
+        message: 'Object type does not exist: Warehouse',
+      },
+    ]);
+  });
+
+  it('requires action target types to exist', () => {
+    const def = clone();
+    action(def, 'flagSupplier').targetType = 'Vendor';
+    expect(messages(def)).toContain('Object type does not exist: Vendor');
+  });
+
+  it(`allows at most ${MAX_INDEXED_PROPS} indexed properties per type`, () => {
+    const def = clone();
+    const t = objectType(def, 'Product');
+    for (
+      let i = 0;
+      t.properties.filter(p => p.indexed).length <= MAX_INDEXED_PROPS;
+      i++
+    ) {
+      t.properties.push({
+        apiName: `extra${i}`,
+        displayName: 'x',
+        dataType: 'double',
+        indexed: true,
+      });
+    }
+    expect(messages(def)).toEqual([
+      `At most ${MAX_INDEXED_PROPS} indexed properties per type (got ${MAX_INDEXED_PROPS + 1})`,
+    ]);
+  });
+
+  it('requires the primary key and title property to exist', () => {
+    const def = clone();
+    const t = objectType(def, 'Supplier');
+    t.primaryKey = 'code';
+    t.titleProperty = 'label';
+    expect(messages(def)).toEqual([
+      'Primary key property does not exist: code',
+      'Title property does not exist: label',
+    ]);
+  });
+
+  it('rejects JSONLogic outside the safe subset', () => {
+    const def = clone();
+    def.functions[0].expr = {eval: ['1+1']};
+    action(def, 'flagSupplier').preconditions[0].expr = {
+      method: [{var: 'target.status'}, 'toString'],
+    };
+    expect(messages(def)).toEqual([
+      'Unsupported operator: method',
+      'Unsupported operator: eval',
+    ]);
+  });
+
+  it('checks action variables, effects, parameters and suggestions', () => {
+    const def = clone();
+    const a = action(def, 'adjustSafetyStock');
+    a.preconditions[0].expr = {'>': [{var: 'params.qty'}, {var: 'other.x'}]};
+    a.effects.push({kind: 'increment', prop: 'category', by: 1});
+    a.effects.push({
+      kind: 'relink',
+      link: 'usedIn',
+      direction: 'in',
+      toParam: 'percent',
+    });
+    const s = action(def, 'switchSupplier').parameters[0].suggest!;
+    s.orderBy = {prop: 'nope', dir: 'asc'};
+    s.sharesLinkWithTarget = {link: 'ghost', direction: 'in'};
+    expect(messages(def)).toEqual(
+      expect.arrayContaining([
+        'Unknown parameter: qty',
+        'Variables must start with target. or params.: other.x',
+        'Increment needs a numeric property: category',
+        'Link usedIn (in) does not attach to Material',
+        'Parameter percent must be objectRef:Material',
+        'Unknown property of Supplier: nope',
+        'Link type does not exist: ghost',
+      ]),
     );
+  });
+
+  it('checks objectRef targets, enums and simulation KPIs', () => {
+    const def = clone();
+    objectType(def, 'Product').properties.push(
+      {apiName: 'owner', displayName: 'o', dataType: 'objectRef:Person'},
+      {apiName: 'grade', displayName: 'g', dataType: 'enum'},
+    );
+    def.simulationKpis.push(
+      {
+        apiName: 'k1',
+        displayName: 'k',
+        objectType: 'Product',
+        agg: 'sum',
+        higherIsBetter: true,
+      },
+      {
+        apiName: 'k2',
+        displayName: 'k',
+        objectType: 'Product',
+        property: 'name',
+        agg: 'avg',
+        higherIsBetter: true,
+      },
+    );
+    expect(messages(def)).toEqual([
+      'Referenced object type does not exist: Person',
+      'Enum properties need at least one value',
+      'Aggregation sum needs a property',
+      'Aggregation avg needs a numeric property',
+    ]);
+  });
+});
+
+describe('referencesTo', () => {
+  it('finds links, actions and KPIs using an object type', () => {
+    const refs = referencesTo(
+      SUPPLY_CHAIN_DEFINITION,
+      'object-types',
+      'Supplier',
+    );
+    expect(refs.map(r => r.path)).toEqual(
+      expect.arrayContaining([
+        'linkTypes.0',
+        'actionTypes.0',
+        'actionTypes.2',
+        'functions.0',
+        'simulationKpis.1',
+      ]),
+    );
+  });
+
+  it('finds actions using a link type', () => {
+    expect(
+      referencesTo(SUPPLY_CHAIN_DEFINITION, 'link-types', 'supplies'),
+    ).toEqual([
+      {
+        path: 'actionTypes.0',
+        message: 'supplies is referenced by action type switchSupplier',
+      },
+    ]);
+    expect(
+      referencesTo(SUPPLY_CHAIN_DEFINITION, 'link-types', 'usedIn'),
+    ).toEqual([]);
+    expect(
+      referencesTo(SUPPLY_CHAIN_DEFINITION, 'action-types', 'flagSupplier'),
+    ).toEqual([]);
+  });
+});
+
+describe('helpers', () => {
+  it('parses objectRef data types and var paths', () => {
+    expect(objectRefTarget('objectRef:Supplier')).toBe('Supplier');
+    expect(objectRefTarget('string')).toBeNull();
+    expect(
+      logicVarPaths({'+': [{var: 'a.b'}, {var: ['c', {var: 'd'}]}]}).sort(),
+    ).toEqual(['a.b', 'c', 'd']);
   });
 });

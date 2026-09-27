@@ -1,79 +1,92 @@
 /**
- * @fileoverview Wizard step 1: choose the connector kind (file, REST pull,
- * webhook) as selectable cards (radio group semantics).
+ * @fileoverview Wizard step 1 (选择来源): file import is the only source in
+ * CE — pick the file format (CSV / XLSX / JSON) and the target object type.
  */
 
-import type {SourceKind} from '@ontodecide/integration/contract';
-import {CheckCircle2, FileSpreadsheet, Globe, Webhook} from 'lucide-react';
+import {Braces, FileSpreadsheet, FileText} from 'lucide-react';
 import type {ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
+import type {UiObjectType} from '../../../entities/schema/model';
 import {cn} from '../../../shared/lib/cn';
+import {Field} from '../../../shared/ui/input';
+import {NativeSelect} from '../../../shared/ui/select';
+import {FILE_FORMATS, type FileFormat} from '../../../workers/parse_core';
 
-const KINDS: {kind: SourceKind; icon: ReactNode}[] = [
-  {kind: 'file', icon: <FileSpreadsheet aria-hidden />},
-  {kind: 'rest', icon: <Globe aria-hidden />},
-  {kind: 'webhook', icon: <Webhook aria-hidden />},
-];
+const ICONS: Record<FileFormat, ReactNode> = {
+  csv: <FileText aria-hidden />,
+  xlsx: <FileSpreadsheet aria-hidden />,
+  json: <Braces aria-hidden />,
+};
 
-/** Kind selection cards. */
-export function SourceKindStep({
-  value,
-  onChange,
+/** Step 1: source format and target type. */
+export function SourceStep({
+  format,
+  onFormat,
+  targetType,
+  onTargetType,
+  types,
 }: {
-  value: SourceKind;
-  onChange: (k: SourceKind) => void;
+  format: FileFormat;
+  onFormat: (f: FileFormat) => void;
+  targetType: string;
+  onTargetType: (t: string) => void;
+  types: readonly UiObjectType[];
 }) {
-  const {t} = useTranslation('sources');
+  const {t} = useTranslation('imports');
   return (
-    <div
-      role="radiogroup"
-      aria-label={t('wizard.steps.kind')}
-      className="grid grid-cols-1 gap-3.5 md:grid-cols-3"
-    >
-      {KINDS.map(({kind, icon}) => {
-        const active = value === kind;
-        return (
-          <button
-            key={kind}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => onChange(kind)}
-            className={cn(
-              'glass relative flex flex-col items-start gap-2 p-4 text-left transition-[border-color,box-shadow]',
-              active
-                ? 'border-cyan! shadow-[0_0_0_1px_var(--cyan)]'
-                : 'hover:border-cyan/40',
-            )}
-          >
-            {active && (
-              <CheckCircle2
-                className="absolute top-3 right-3 size-4 text-cyan"
-                aria-hidden
-              />
-            )}
-            <span
-              className={cn(
-                'flex size-10 items-center justify-center rounded-xl border [&_svg]:size-5',
-                active
-                  ? 'border-cyan/50 bg-cyan/15 text-cyan'
-                  : 'border-line-2 bg-panel-2 text-muted',
-              )}
-            >
-              {icon}
-            </span>
-            <span className="text-sm font-semibold text-text">
-              {t(`kinds.${kind}.title`)}
-            </span>
-            <span className="text-xs text-muted">
-              {t(`kinds.${kind}.desc`)}
-            </span>
-            <span className="mt-auto pt-1 text-[11px] text-dim">
-              {t(`kinds.${kind}.meta`)}
-            </span>
-          </button>
-        );
-      })}
+    <div className="flex flex-col gap-5">
+      <p className="text-sm text-muted">{t('source.onlyFile')}</p>
+      <fieldset>
+        <legend className="mb-2 text-xs font-medium text-muted">
+          {t('source.formatLabel')}
+        </legend>
+        <div className="grid gap-3 sm:grid-cols-3" role="radiogroup">
+          {FILE_FORMATS.map(f => {
+            const active = f === format;
+            return (
+              <button
+                key={f}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => onFormat(f)}
+                className={cn(
+                  'glass flex flex-col items-start gap-1.5 p-4 text-left transition-colors',
+                  active
+                    ? 'border-cyan text-cyan'
+                    : 'text-text hover:border-cyan/50',
+                )}
+              >
+                <span className="flex items-center gap-2 text-sm font-semibold [&_svg]:size-4">
+                  {ICONS[f]}
+                  {t(`source.formats.${f}.title`)}
+                </span>
+                <span className="text-xs text-muted">
+                  {t(`source.formats.${f}.desc`)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+      <Field
+        label={t('source.target')}
+        htmlFor="import-target-type"
+        hint={t('source.targetHint')}
+        required
+        className="max-w-sm"
+      >
+        <NativeSelect
+          id="import-target-type"
+          value={targetType}
+          onChange={e => onTargetType(e.target.value)}
+          placeholder={t('source.targetPlaceholder')}
+          options={types.map(ty => ({
+            value: ty.apiName,
+            label: `${ty.displayName} (${ty.apiName})`,
+          }))}
+        />
+      </Field>
     </div>
   );
 }

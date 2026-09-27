@@ -1,168 +1,198 @@
 {
-  "fields": {
-    "user": "User",
-    "email": "Email",
-    "name": "Name",
-    "role": "Role",
-    "markings": "Markings",
-    "markingsInput": "Add marking",
-    "status": "Status",
-    "lastLogin": "Last sign-in",
-    "createdAt": "Created",
-    "actions": "Actions",
-    "password": "Initial password (optional)"
+  "nav": "Platform admin",
+  "group": "Platform",
+  "badge": "Platform admin · never expires · cannot be deleted",
+  "breadcrumb": "Platform admin · highest privilege, every action is audited",
+  "title": "Platform overview",
+  "done": "Done",
+  "pauseSignup": "Pause sign-ups",
+  "resumeSignup": "Resume sign-ups",
+  "cap": "{value} (adjustable {min}–{max})",
+  "enter": "Enter",
+  "manage": "Manage",
+  "actAsBanner": "Admin view: viewing {tid} ({email})",
+  "actAsAudited": "every action is audited",
+  "exit": "Exit",
+  "confirmPasskey": "Verify with a passkey to continue",
+  "setupCode": "Enter the setup code from operations",
+  "recoveryCodes": "Save these 10 recovery codes; they are shown only once",
+  "kpi": {
+    "activeTrials": "Active trial workspaces",
+    "signupsToday": "Sign-ups today",
+    "archives": "B2 archive ZIPs",
+    "purgeBacklog": "Purge backlog"
   },
-  "errors": {
-    "email": "Enter a valid email address",
-    "name": "Enter a name of 1–100 characters",
-    "password": "At least 10 characters with upper- and lowercase letters and a digit"
+  "quota": {
+    "title": "Free tier today",
+    "autoClose": "80% closes sign-ups",
+    "high": "over 80%",
+    "hardCap": "hard cap {cap}",
+    "analyticsAt": "Account usage read at {time}",
+    "workers": "Worker requests",
+    "d1Writes": "D1 rows written",
+    "neurons": "Workers AI neurons",
+    "queues": "Queue operations",
+    "emailResend": "E-mail · Resend",
+    "emailBrevo": "E-mail · Brevo (overflow)"
   },
-  "users": {
-    "title": "Users & permissions",
-    "description": "Manage accounts, roles and markings: roles grant actions, markings reveal sensitive properties.",
-    "listTitle": "Users",
-    "search": "Filter by name or email",
-    "create": "New user",
-    "created": "Created user {name}",
-    "you": "You",
-    "mustChange": "Must change password",
-    "roleAria": "Role of {name}",
-    "roleChanged": "{name} is now {role}",
-    "updateFailed": "Could not update the user",
-    "selfRole": "You cannot change your own role",
-    "selfDisable": "You cannot disable yourself",
-    "selfDelete": "You cannot delete yourself",
-    "noMarkings": "None",
-    "editMarkings": "Edit markings of {name}",
-    "enabledAria": "Enable {name}",
-    "statusActive": "Active",
-    "statusDisabled": "Disabled",
-    "enabled": "Enabled {name}",
-    "disabled": "Disabled {name}",
-    "never": "Never",
-    "resetAria": "Reset password of {name}",
-    "deleteAria": "Delete {name}"
+  "signup": {
+    "title": "Sign-up control",
+    "state": {
+      "open": "Open",
+      "paused": "Paused",
+      "auto_closed": "Closed by quota"
+    },
+    "daily": "Daily sign-up limit",
+    "active": "Active workspace limit",
+    "trial": "Trial length",
+    "trialValue": "{hours} hours (adjustable per user)",
+    "archive": "Archive retention",
+    "archiveValue": "{days} days (link at most {days} days)",
+    "editLimits": "Adjust limits"
   },
-  "create": {
-    "description": "Without an initial password a one-time temporary password is generated; the user must change it on first sign-in.",
-    "roleHint": "Viewer < Operator < Modeler < Admin",
-    "passwordHint": "Leave empty to generate a temporary password"
+  "settings": {
+    "confirmTitle": "Change platform settings",
+    "confirmBody": "The change applies immediately and is audited.",
+    "confirm": "Verify & save"
   },
-  "secret": {
-    "createdTitle": "User created",
-    "resetTitle": "Password reset",
-    "description": "Temporary password for {email}:",
-    "passwordLabel": "Temporary password",
-    "copy": "Copy temporary password",
-    "warning": "This password is shown only once and cannot be viewed again after closing. Share it through a secure channel.",
-    "done": "I've saved it, close"
-  },
-  "markings": {
-    "title": "Edit markings of {name}",
-    "description": "Saving replaces all of the user's current markings.",
-    "hint": "Users need a marking to see properties tagged with it, e.g. PII, FINANCE",
-    "placeholder": "Type and press Enter",
-    "remove": "Remove marking {value}",
-    "saved": "Updated markings of {name}"
-  },
-  "reset": {
-    "title": "Reset the password of {name}?",
-    "description": "A one-time temporary password is generated and the user's sessions are revoked.",
-    "confirm": "Reset password",
-    "failed": "Could not reset the password"
-  },
-  "delete": {
-    "title": "Delete user {name}?",
-    "description": "The account can no longer sign in. This cannot be undone.",
-    "typeLabel": "Type {email} to confirm",
-    "confirm": "Delete user",
-    "done": "Deleted {name}",
-    "failed": "Could not delete the user"
-  },
-  "health": {
-    "title": "System health",
-    "description": "Free-tier usage, degraded dependencies, dead-letter queues and graph projection maintenance.",
-    "usageTitle": "Today's free-tier usage",
-    "usageSubtitle": "{day} (UTC) · 80% warning line",
-    "usageChartAria": "Bar chart of today's free-tier usage per resource; dashed line marks 80%",
-    "usageTableAria": "Free-tier usage details",
-    "usageOk": "Normal",
-    "warnLine": "80% warning",
-    "resource": "Resource",
-    "usedLimit": "Used / limit",
-    "ratio": "Ratio",
-    "degradedTitle": "Degraded states",
-    "degradedCount": "{count, plural, one {# dependency} other {# dependencies}} degraded",
-    "allHealthy": "All dependencies healthy",
-    "noDegraded": "No dependency status reported",
-    "statusOk": "Healthy",
-    "statusDegraded": "Degraded",
-    "okExplanation": "Operating normally.",
-    "genericDegraded": "This dependency is unavailable; related features run in degraded mode.",
-    "genericFallback": "Switched to the fallback {value}.",
-    "deps": {
-      "neo4j": {
-        "name": "Neo4j graph database",
-        "degraded": "Deep traversal (3+ hops) is unavailable; exploration falls back to D1 (up to 2 hops).",
-        "fallback": "Graph queries fall back to {value}."
-      },
-      "llm": {
-        "name": "LLM provider",
-        "degraded": "AI recommendations are unavailable; rule-based suggestions only.",
-        "fallback": "The primary model is unavailable; AI recommendations use the fallback {value}."
-      },
-      "realtime": {
-        "name": "Realtime stream",
-        "degraded": "Realtime push is unavailable; clients poll instead.",
-        "fallback": "Realtime push uses {value}."
-      },
-      "kv": {
-        "name": "KV cache",
-        "degraded": "Cache unavailable; reads hit the database and may be slower.",
-        "fallback": "Cache uses {value}."
-      },
-      "queues": {
-        "name": "Queues",
-        "degraded": "Queues unavailable; background jobs are delayed.",
-        "fallback": "Queues use {value}."
-      }
+  "recent": {
+    "title": "Recent admin actions",
+    "audited": "All audited",
+    "empty": "No actions yet",
+    "kind": {
+      "modify": "Modify",
+      "delete": "Delete",
+      "enter": "Enter",
+      "view": "View"
     }
   },
-  "dlq": {
-    "title": "Dead-letter queues",
-    "subtitle": "Messages that failed after retries; replay once the cause is fixed",
-    "queueFilter": "Filter by queue",
-    "allQueues": "All queues",
-    "queues": "Dead letters per queue",
-    "replayAll": "Replay all",
-    "replayAllAria": "Replay all of {queue}",
-    "replaySelected": "Replay selected ({count, number})",
-    "selectAll": "Select all",
-    "select": "Select {id}",
+  "users": {
+    "title": "Workspaces",
+    "hint": "Manage: extend / end trial · revoke sessions · delete (optional archive) · ban",
     "id": "ID",
-    "queue": "Queue",
-    "attempts": "Attempts",
-    "receivedAt": "Received",
-    "body": "Body",
-    "replayedAt": "Replayed",
-    "notReplayed": "Not replayed",
-    "empty": "No dead letters",
-    "emptyHint": "All messages were processed successfully.",
-    "confirmSelectedTitle": "Replay {count, plural, one {# selected message} other {# selected messages}}?",
-    "confirmAllTitle": "Replay all {count, plural, one {# message} other {# messages}} in {queue}?",
-    "confirmDescription": "Messages are re-delivered to their original queue; unresolved failures may dead-letter again.",
-    "confirm": "Replay",
-    "replayed": "Replayed {count, plural, one {# message} other {# messages}}",
-    "replayFailed": "Replay failed"
+    "email": "E-mail",
+    "status": "Status",
+    "time": "Time",
+    "sessions": "Sessions",
+    "actions": "Actions",
+    "deleted": "(account deleted)",
+    "banned": "Banned",
+    "left": "{time} left",
+    "archiving": "Archiving",
+    "expired": "Expired, awaiting archive",
+    "zipIn": "ZIP deleted in {days} d",
+    "downloadZip": "Download ZIP",
+    "empty": "No workspaces"
   },
-  "graph": {
-    "title": "Graph projection",
-    "subtitle": "Objects and links mirrored into Neo4j",
-    "description": "If Neo4j diverges from D1 (e.g. after restoring the instance), rebuild the projection from D1. The rebuild runs in the background.",
-    "rebuild": "Rebuild graph projection",
-    "confirmTitle": "Rebuild the graph projection?",
-    "confirmDescription": "All projected objects are re-queued into Neo4j; deep traversal may be incomplete meanwhile.",
-    "queued": "Queued {count, plural, one {# object} other {# objects}} for projection",
-    "failed": "Could not rebuild the projection"
+  "menu": {
+    "trial": "Extend / shorten trial",
+    "end": "End trial",
+    "revoke": "Revoke sessions",
+    "ban": "Ban e-mail",
+    "unban": "Lift ban",
+    "delete": "Delete account"
+  },
+  "confirm": {
+    "workspace": "Target workspace",
+    "email": "E-mail"
+  },
+  "reason": {
+    "label": "Reason",
+    "required": "Required, recorded in the audit log"
+  },
+  "trial": {
+    "title": "Change the trial end",
+    "newExpiry": "New end (local time)",
+    "confirm": "Verify & save",
+    "impactExtend": "The trial ends {hours} h later",
+    "impactShorten": "The trial ends {hours} h earlier",
+    "impactEnds": "The new time is in the past: the trial ends now and archiving starts in {min} min",
+    "impactSlot": "Keeps using 1 active workspace slot while extended (now {used} / {limit})",
+    "impactWrites": "The workspace keeps consuming the daily D1 write budget while extended",
+    "impactSessions": "All of the user's sessions are revoked; they must sign in again"
+  },
+  "end": {
+    "title": "End trial",
+    "body": "The workspace becomes EXPIRED now; archiving and the download e-mail follow in {min} min, then the account is deleted.",
+    "confirm": "Verify & end trial"
+  },
+  "revoke": {
+    "title": "Revoke all sessions",
+    "body": "The user must sign in again on every device.",
+    "confirm": "Revoke sessions"
+  },
+  "ban": {
+    "title": "Ban e-mail",
+    "body": "The e-mail can no longer sign up or sign in.",
+    "confirm": "Verify & ban",
+    "unbanTitle": "Lift ban",
+    "unban": "Verify & lift ban"
+  },
+  "delete": {
+    "title": "Delete account",
+    "archive": "Archive first and e-mail the download link",
+    "bodyArchive": "The data is packed as a ZIP and the link is e-mailed, then the account and business data are deleted.",
+    "bodyNoArchive": "No archive: business data and account are deleted now, no e-mail, no recovery. A reason is required.",
+    "confirm": "Verify & delete"
+  },
+  "archives": {
+    "title": "B2 archive ZIPs",
+    "hint": "Download links are valid for 15 minutes, created on click",
+    "size": "Size",
+    "created": "Created",
+    "expires": "Deleted at",
+    "delete": "Delete archive",
+    "deleteTitle": "Delete archive ZIP",
+    "deleteBody": "The ZIP is deleted now and the e-mailed download link stops working.",
+    "empty": "No archives"
+  },
+  "blocked": {
+    "button": "Disposable e-mail blocklist",
+    "title": "Disposable e-mail blocklist",
+    "body": "One domain per line; e-mails of these domains cannot sign up.",
+    "count": "{count, number} domains",
+    "invalid": "Invalid: {list}",
+    "confirmTitle": "Save blocklist"
+  },
+  "audit": {
+    "button": "Admin audit log",
+    "title": "Admin audit log",
+    "chainOk": "Hash chain verified",
+    "chainBroken": "Hash chain check failed: the log may have been tampered with",
+    "at": "Time",
+    "actionCol": "Action",
+    "target": "Target",
+    "empty": "No entries",
+    "action": {
+      "act_as.enter": "Entered admin view",
+      "tenant.write": "Wrote in admin view",
+      "email.view": "Viewed full e-mail",
+      "user.patch": "Changed account",
+      "user.trial": "Changed trial",
+      "user.end": "Ended trial",
+      "user.ban": "Banned e-mail",
+      "user.delete": "Deleted account",
+      "sessions.revoke": "Revoked sessions",
+      "settings.patch": "Changed platform settings",
+      "archive.download": "Downloaded archive",
+      "archive.delete": "Deleted archive",
+      "blocked_domains.put": "Updated blocklist",
+      "passkey.add": "Bound passkey",
+      "passkey.delete": "Deleted passkey",
+      "login": "Admin sign-in"
+    }
+  },
+  "passkeys": {
+    "button": "Passkeys",
+    "title": "Passkeys",
+    "body": "Keep at least 2 passkeys; adding and deleting require passkey verification.",
+    "add": "Bind a new passkey",
+    "unnamed": "Unnamed passkey",
+    "created": "bound {time}",
+    "lastUsed": "last used {time}",
+    "delete": "Delete passkey",
+    "deleteTitle": "Delete passkey",
+    "minTwo": "At least 2 passkeys must remain",
+    "empty": "No passkeys"
   }
 }

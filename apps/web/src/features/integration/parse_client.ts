@@ -1,189 +1,92 @@
 /**
- * @fileoverview Main-thread facade over the parse Web Worker. Runs the pure
- * parser on the main thread when `Worker` is unavailable (jsdom / very old
- * browsers). Collects the streamed batches into one {@link ParsedFile}.
+ * @fileoverview Main-thread facade over the parse Web Worker. Falls back to
+ * parsing on the main thread when `Worker` is unavailable (jsdom, very old
+ * browsers). The file is read locally only; nothing is uploaded.
  */
 
 import {
-  blobText,
-  DEFAULT_PARSE_LIMITS,
-  detectFormat,
-  parseFile,
-  type FileFormat,
-  type ParseErrorCode,
+  handleParseRequest,
+  ParseError,
+  precheckFile,
+  type ParsedTable,
   type ParseLimits,
-  type ParseMessage,
   type ParseRequest,
-  type SourceRow,
+  type ParseResponse,
 } from '../../workers/parse_core';
 
-export type {FileFormat, ParseErrorCode, SourceRow};
+export {ParseError};
+export type {ParsedTable};
 
-/** Result of parsing one file in the browser. */
-export interface ParsedFile {
+/** A file parsed in the browser. */
+export interface ParsedFile extends ParsedTable {
   name: string;
   size: number;
-  format: FileFormat;
-  fields: string[];
-  rows: SourceRow[];
-  sampleRows: SourceRow[];
-  /** Parse duration in milliseconds. */
-  ms: number;
-  /** The original file (archived to B2 when configured). */
-  file: Blob;
 }
 
-/** A parse failure with a localizable code. */
-export class ParseFailure extends Error {
-  constructor(
-    readonly code: ParseErrorCode,
-    readonly detail?: string,
-  ) {
-    super(detail ? `${code}: ${detail}` : code);
-    this.name = 'ParseFailure';
-  }
-}
-
-/** Options for {@link parseInBrowser}. */
-export interface ParseOptions {
-  /** Called with the number of rows received so far. */
-  onProgress?: (rows: number) => void;
+/** Options for {@link parseFile}. */
+export interface ParseFileOptions {
   limits?: Partial<ParseLimits>;
-  /** Forces the main-thread parser (tests). */
+  /** Forces the main-thread parser. */
   forceMainThread?: boolean;
+  signal?: AbortSignal;
 }
 
-/** A running parse. */
-export interface ParseHandle {
-  promise: Promise<ParsedFile>;
-  cancel(): void;
-}
-
-/** Cheap pre-checks before reading the file (format, size). */
-export function precheckFile(
-  file: {name: string; size: number; type?: string},
-  limits: Partial<ParseLimits> = {},
-): ParseFailure | null {
-  const max = limits.bytesMax ?? DEFAULT_PARSE_LIMITS.bytesMax;
-  if (!detectFormat(file.name, file.type ?? ''))
-    return new ParseFailure('UNSUPPORTED_FORMAT', file.name);
-  if (file.size > max)
-    return new ParseFailure('FILE_TOO_LARGE', String(file.size));
-  if (file.size === 0) return new ParseFailure('EMPTY_FILE');
-  return null;
-}
-
-/** Parses `file` (in the Worker when available) and collects every row. */
-export function parseInBrowser(
-  file: File,
-  opts: ParseOptions = {},
-): ParseHandle {
-  let cancel = () => {};
-  const promise = new Promise<ParsedFile>((resolve, reject) => {
-    const pre = precheckFile(file, opts.limits);
-    if (pre) {
-      reject(pre);
-      return;
-    }
-    const format = detectFormat(file.name, file.type)!;
-    let fields: string[] = [];
-    let sampleRows: SourceRow[] = [];
-    const rows: SourceRow[] = [];
-    let settled = false;
-    const handle = (m: ParseMessage) => {
-      if (settled) return;
-      switch (m.type) {
-        case 'meta':
-          fields = m.fields;
-          sampleRows = m.sampleRows;
-          break;
-        case 'batch':
-          for (const r of m.rows) rows.push(r);
-          opts.onProgress?.(rows.length);
-          break;
-        case 'done':
-          settled = true;
-          resolve({
-            name: file.name,
-            size: file.size,
-            format,
-            fields,
-            rows,
-            sampleRows,
-            ms: m.ms,
-            file,
-          });
-          break;
-        case 'error':
-          settled = true;
-          reject(new ParseFailure(m.code, m.detail));
-          break;
-      }
+function runInWorker(req: ParseRequest, signal?: AbortSignal) {
+  return new Promise<ParseResponse>((resolve, reject) => {
+    const worker = new Worker(
+      new URL('../../workers/parse_worker.ts', import.meta.url),
+      {type: 'module'},
+    );
+    const done = () => {
+      worker.terminate();
+      signal?.removeEventListener('abort', onAbort);
     };
-
-    const useWorker = !opts.forceMainThread && typeof Worker !== 'undefined';
-    if (useWorker) {
-      let worker: Worker;
-      try {
-        worker = new Worker(
-          new URL('../../workers/parse_worker.ts', import.meta.url),
-          {type: 'module'},
-        );
-      } catch (e) {
-        reject(
-          new ParseFailure(
-            'PARSE_FAILED',
-            e instanceof Error ? e.message : String(e),
-          ),
-        );
-        return;
-      }
-      const finish = () => worker.terminate();
-      worker.onmessage = (e: MessageEvent<ParseMessage>) => {
-        handle(e.data);
-        if (settled) finish();
-      };
-      worker.onerror = e => {
-        handle({type: 'error', code: 'PARSE_FAILED', detail: e.message});
-        finish();
-      };
-      cancel = () => {
-        settled = true;
-        finish();
-        reject(new ParseFailure('PARSE_FAILED', 'cancelled'));
-      };
-      const req: ParseRequest = {
-        name: file.name,
-        size: file.size,
-        data: file,
-        limits: opts.limits,
-      };
-      worker.postMessage(req);
-      return;
-    }
-
-    cancel = () => {
-      if (settled) return;
-      settled = true;
-      reject(new ParseFailure('PARSE_FAILED', 'cancelled'));
+    const onAbort = () => {
+      done();
+      reject(new ParseError('PARSE_FAILED', 'aborted'));
     };
-    void (async () => {
-      try {
-        // Text formats are read up front on the main thread (jsdom's File
-        // streaming is incomplete); XLSX needs the binary Blob.
-        const data = format === 'xlsx' ? file : await blobText(file);
-        await parseFile(
-          {name: file.name, size: file.size, data, limits: opts.limits},
-          handle,
-        );
-      } catch (e) {
-        handle({
-          type: 'error',
-          code: 'PARSE_FAILED',
-          detail: e instanceof Error ? e.message : String(e),
-        });
-      }
-    })();
+    signal?.addEventListener('abort', onAbort);
+    worker.onmessage = (e: MessageEvent<ParseResponse>) => {
+      done();
+      resolve(e.data);
+    };
+    worker.onerror = e => {
+      done();
+      resolve({ok: false, code: 'PARSE_FAILED', detail: e.message});
+    };
+    worker.postMessage(req);
   });
-  return {promise, cancel: () => cancel()};
+}
+
+/**
+ * Parses `file` (in the Worker when available). Rejects with a
+ * {@link ParseError}; size and format are checked before reading.
+ */
+export async function parseFile(
+  file: File,
+  opts: ParseFileOptions = {},
+): Promise<ParsedFile> {
+  const pre = precheckFile(file, opts.limits);
+  if (pre) throw pre;
+  const req: ParseRequest = {
+    name: file.name,
+    size: file.size,
+    type: file.type,
+    data: file,
+    limits: opts.limits,
+  };
+  const useWorker = !opts.forceMainThread && typeof Worker !== 'undefined';
+  let res: ParseResponse;
+  if (useWorker) {
+    try {
+      res = await runInWorker(req, opts.signal);
+    } catch (e) {
+      if (opts.signal?.aborted) throw e;
+      res = await handleParseRequest(req);
+    }
+  } else {
+    res = await handleParseRequest(req);
+  }
+  if (!res.ok) throw new ParseError(res.code, res.detail);
+  return {...res.table, name: file.name, size: file.size};
 }

@@ -1,201 +1,248 @@
+/**
+ * @fileoverview Tests of action parameters, preconditions and effects.
+ */
+
 import {describe, expect, it} from 'vitest';
-import type {ActionTypeDef} from '@ontodecide/ontology/contract';
+import {AppError} from '@ontodecide/shared-kernel';
 import type {Rid} from '@ontodecide/shared-kernel';
+import type {
+  ActionTypeDef,
+  CompiledSchema,
+} from '@ontodecide/ontology/contract';
 import {
+  actionData,
   applyEffects,
-  evaluatePreconditions,
-  normalizeParams,
-  objectRefParams,
-  planLinkChanges,
+  pick,
+  resolveParams,
+  touchedLinkTypes,
+  unmetPreconditions,
 } from './action_execution';
+import type {StoredObject} from './stored_object';
 
-const increaseSafetyStock: ActionTypeDef = {
-  apiName: 'increaseSafetyStock',
-  displayName: 'Increase safety stock',
-  targetType: 'Product',
-  parameters: [
+const supplierType = {
+  apiName: 'Supplier',
+  displayName: 'S',
+  primaryKey: 'id',
+  titleProperty: 'id',
+  properties: [
+    {apiName: 'id', displayName: 'id', dataType: 'string', required: true},
+    {apiName: 'score', displayName: 'score', dataType: 'double'},
+    {apiName: 'count', displayName: 'count', dataType: 'integer'},
     {
-      apiName: 'days',
-      displayName: 'Days',
-      dataType: 'integer',
-      required: true,
-      defaultValue: 7,
+      apiName: 'status',
+      displayName: 'status',
+      dataType: 'enum',
+      enumValues: ['A', 'B'],
     },
   ],
-  preconditions: [
-    {
-      expr: {
-        and: [
-          {'>': [{var: 'params.days'}, 0]},
-          {'<=': [{var: 'params.days'}, 30]},
-        ],
-      },
-      message: {
-        'zh-CN': '增加天数须在 1–30 之间',
-        'en-US': 'Extra days must be between 1 and 30',
-      },
+  indexedProps: [],
+  sensitiveProps: [],
+} as unknown as CompiledSchema['objectTypes'][string];
+supplierType.propsByName = Object.fromEntries(
+  supplierType.properties.map(p => [p.apiName, p]),
+);
+
+const schema = {
+  objectTypes: {
+    Supplier: supplierType,
+    Part: {...supplierType, apiName: 'Part'},
+  },
+  linkTypes: {
+    supplies: {
+      apiName: 'supplies',
+      displayName: 's',
+      from: 'Supplier',
+      to: 'Part',
+      cardinality: 'many',
     },
-  ],
-  effects: [
-    {kind: 'increment', prop: 'inventoryDays', by: {var: 'params.days'}},
-    {kind: 'increment', prop: 'safetyStockDays', by: {var: 'params.days'}},
-  ],
-  requiresApproval: true,
+  },
+} as unknown as CompiledSchema;
+
+const S = 'ri.Supplier.0000000000000000000000000S' as Rid;
+const S2 = 'ri.Supplier.000000000000000000000000S2' as Rid;
+const P = 'ri.Part.00000000000000000000000000P' as Rid;
+
+const target: StoredObject = {
+  rid: P,
+  type: 'Part',
+  primaryKey: 'P',
+  title: 'P',
+  props: {id: 'P', score: 0.5, count: 2, status: 'A'},
+  provenance: {score: {jobId: 'j', row: 1, at: 1}},
+  propsHash: 'h',
+  version: 1,
+  updatedAt: 0,
 };
 
-const switchSupplier: ActionTypeDef = {
-  apiName: 'switchSupplier',
-  displayName: 'Switch supplier',
-  targetType: 'Material',
-  parameters: [
-    {
-      apiName: 'newSupplier',
-      displayName: 'New',
-      dataType: 'objectRef:Supplier',
-      required: true,
-    },
-  ],
-  preconditions: [],
-  effects: [
-    {kind: 'relink', link: 'supplies', direction: 'in', toParam: 'newSupplier'},
-  ],
-  requiresApproval: true,
-};
+function action(over: Partial<ActionTypeDef>): ActionTypeDef {
+  return {
+    apiName: 'a',
+    displayName: 'a',
+    targetType: 'Part',
+    parameters: [],
+    preconditions: [],
+    effects: [],
+    ...over,
+  };
+}
 
-const flagSupplier: ActionTypeDef = {
-  apiName: 'flagSupplier',
-  displayName: 'Flag supplier',
-  targetType: 'Supplier',
-  parameters: [{apiName: 'reason', displayName: 'Reason', dataType: 'string'}],
-  preconditions: [
-    {
-      expr: {'!==': [{var: 'target.status'}, 'suspended']},
-      message: {'en-US': 'Suspended suppliers cannot be flagged'},
-    },
-  ],
-  effects: [{kind: 'set', prop: 'status', value: 'watch'}],
-  requiresApproval: false,
-};
-
-const r = (s: string) => s as Rid;
-
-describe('action execution', () => {
-  it('increaseSafetyStock: defaults, preconditions and increments', () => {
-    const n = normalizeParams(increaseSafetyStock, {});
-    expect(n).toEqual({params: {days: 7}, errors: []});
-    expect(normalizeParams(increaseSafetyStock, {days: '12'}).params.days).toBe(
-      12,
-    );
-    expect(
-      normalizeParams(increaseSafetyStock, {days: 'x'}).errors[0].param,
-    ).toBe('days');
-
-    const target = {inventoryDays: 10, safetyStockDays: 5};
-    expect(
-      evaluatePreconditions(increaseSafetyStock, target, {days: 7}),
-    ).toEqual([]);
-    expect(
-      evaluatePreconditions(increaseSafetyStock, target, {days: 40}),
-    ).toEqual(['Extra days must be between 1 and 30']);
-    expect(
-      evaluatePreconditions(increaseSafetyStock, target, {days: 40}, 'zh-CN'),
-    ).toEqual(['增加天数须在 1–30 之间']);
-    const out = applyEffects(increaseSafetyStock, target, {days: 7});
-    expect(out.updates).toEqual({inventoryDays: 17, safetyStockDays: 12});
-    expect(
-      applyEffects(increaseSafetyStock, {}, {days: 3}).updates.inventoryDays,
-    ).toBe(3);
+describe('resolveParams', () => {
+  const a = action({
+    parameters: [
+      {apiName: 'n', displayName: 'n', dataType: 'integer', required: true},
+      {apiName: 'd', displayName: 'd', dataType: 'double', defaultValue: 0.5},
+      {apiName: 'who', displayName: 'w', dataType: 'objectRef:Supplier'},
+    ],
   });
 
-  it('flagSupplier: set effect and precondition on target', () => {
-    expect(
-      evaluatePreconditions(flagSupplier, {status: 'suspended'}, {}),
-    ).toHaveLength(1);
-    expect(evaluatePreconditions(flagSupplier, {status: 'active'}, {})).toEqual(
-      [],
-    );
-    expect(applyEffects(flagSupplier, {status: 'active'}, {}).updates).toEqual({
-      status: 'watch',
-    });
+  it('coerces, applies defaults and collects object refs', () => {
+    const r = resolveParams(a, {n: '3', who: S});
+    expect(r.params).toEqual({n: 3, d: 0.5, who: S});
+    expect(r.refs).toEqual([{param: 'who', objectType: 'Supplier', rid: S}]);
   });
 
-  it('switchSupplier: relink replaces incoming supplies links', () => {
-    expect(objectRefParams(switchSupplier)).toEqual([
-      {param: 'newSupplier', objectType: 'Supplier'},
-    ]);
-    expect(normalizeParams(switchSupplier, {}).errors[0].detail).toMatch(
-      /required/,
-    );
-    const eff = applyEffects(
-      switchSupplier,
-      {},
-      {newSupplier: 'ri.t.Supplier.S2'},
-    );
-    expect(eff.linkEffects).toEqual([
-      {
-        kind: 'relink',
-        link: 'supplies',
-        direction: 'in',
-        to: 'ri.t.Supplier.S2',
-      },
-    ]);
-    const existing = [
-      {
-        type: 'supplies',
-        src: r('ri.t.Supplier.S1'),
-        dst: r('ri.t.Material.M1'),
-        weight: 0.6,
-      },
-      {type: 'usedIn', src: r('ri.t.Material.M1'), dst: r('ri.t.Product.P1')},
-    ];
-    const plan = planLinkChanges(
-      r('ri.t.Material.M1'),
-      eff.linkEffects,
-      existing,
-    );
-    expect(plan.remove).toEqual([existing[0]]);
-    expect(plan.add).toEqual([
-      {
-        type: 'supplies',
-        src: 'ri.t.Supplier.S2',
-        dst: 'ri.t.Material.M1',
-        weight: 0.6,
-      },
-    ]);
-    // Relinking to the current supplier changes nothing.
-    const same = planLinkChanges(
-      r('ri.t.Material.M1'),
-      [
+  it('rejects unknown, missing and invalid parameters', () => {
+    for (const bad of [{}, {n: 'x'}, {n: 1, extra: true}]) {
+      expect(() => resolveParams(a, bad)).toThrow(AppError);
+    }
+  });
+});
+
+describe('preconditions', () => {
+  it('returns messages of falsy expressions in the locale', () => {
+    const a = action({
+      preconditions: [
+        {expr: {'>': [{var: 'target.score'}, 0.1]}, message: 'ok'},
         {
-          kind: 'relink',
-          link: 'supplies',
-          direction: 'in',
-          to: r('ri.t.Supplier.S1'),
+          expr: {'==': [{var: 'params.x'}, 1]},
+          message: {'en-US': 'x must be 1', 'zh-CN': 'x 必须为 1'},
         },
       ],
-      existing,
+    });
+    const data = actionData(target, {x: 2});
+    expect(unmetPreconditions(a, data, 'en-US')).toEqual(['x must be 1']);
+    expect(unmetPreconditions(a, data, 'zh-CN')).toEqual(['x 必须为 1']);
+    expect(unmetPreconditions(a, actionData(target, {x: 1}), 'en-US')).toEqual(
+      [],
     );
-    expect(same).toEqual({remove: [], add: []});
+  });
+});
+
+describe('applyEffects', () => {
+  const base = {
+    schema,
+    type: schema.objectTypes.Part,
+    target,
+    refTypes: new Map<string, string>(),
+    links: [],
+  };
+
+  it('sets and increments properties, coercing by type', () => {
+    const a = action({
+      effects: [
+        {kind: 'set', prop: 'status', value: 'B'},
+        {kind: 'increment', prop: 'count', by: {'*': [{var: 'params.k'}, 1.5]}},
+        {kind: 'increment', prop: 'score', by: 0.25},
+      ],
+    });
+    const r = applyEffects({...base, action: a, params: {k: 2}});
+    expect(r.after.props).toMatchObject({status: 'B', count: 5, score: 0.75});
+    expect(r.changed.sort()).toEqual(['count', 'score', 'status']);
+    expect(r.after.provenance.score).toBeUndefined();
+    expect(pick(r.after.props, ['count'])).toEqual({count: 5});
   });
 
-  it('unlink removes all or one link on the side', () => {
-    const existing = [
-      {type: 'supplies', src: r('A'), dst: r('M')},
-      {type: 'supplies', src: r('B'), dst: r('M')},
-    ];
+  it('clears a property set to null and rejects invalid results', () => {
+    const clear = action({
+      effects: [{kind: 'set', prop: 'score', value: null}],
+    });
     expect(
-      planLinkChanges(
-        r('M'),
-        [{kind: 'unlink', link: 'supplies', direction: 'in'}],
-        existing,
-      ).remove,
-    ).toHaveLength(2);
-    expect(
-      planLinkChanges(
-        r('M'),
-        [{kind: 'unlink', link: 'supplies', direction: 'in', to: r('B')}],
-        existing,
-      ).remove,
-    ).toEqual([existing[1]]);
+      applyEffects({...base, action: clear, params: {}}).after.props.score,
+    ).toBeUndefined();
+    const bad = action({effects: [{kind: 'set', prop: 'status', value: 'Z'}]});
+    expect(() => applyEffects({...base, action: bad, params: {}})).toThrow(
+      AppError,
+    );
+    const req = action({effects: [{kind: 'set', prop: 'id', value: null}]});
+    expect(() => applyEffects({...base, action: req, params: {}})).toThrow(
+      AppError,
+    );
+    const unknown = action({effects: [{kind: 'set', prop: 'ghost', value: 1}]});
+    expect(() => applyEffects({...base, action: unknown, params: {}})).toThrow(
+      AppError,
+    );
+  });
+
+  it('relinks and unlinks incoming links of the target', () => {
+    const links = [{src: S, type: 'supplies', dst: P, weight: 0.4}];
+    const refTypes = new Map([
+      [S2, 'Supplier'],
+      [S, 'Supplier'],
+    ]);
+    const relink = action({
+      effects: [
+        {kind: 'relink', link: 'supplies', direction: 'in', toParam: 'to'},
+      ],
+    });
+    expect(touchedLinkTypes(relink)).toEqual(['supplies']);
+    const r = applyEffects({
+      ...base,
+      action: relink,
+      params: {to: S2},
+      links,
+      refTypes,
+    });
+    expect(r.removeLinks).toEqual(links);
+    expect(r.addLinks).toEqual([
+      {src: S2, type: 'supplies', dst: P, weight: null},
+    ]);
+    expect(r.changed).toEqual([]);
+
+    const unlink = action({
+      effects: [
+        {kind: 'unlink', link: 'supplies', direction: 'in', toParam: 'from'},
+      ],
+    });
+    const u = applyEffects({
+      ...base,
+      action: unlink,
+      params: {from: S2},
+      links,
+      refTypes,
+    });
+    expect(u.removeLinks).toEqual([]);
+    const u2 = applyEffects({
+      ...base,
+      action: unlink,
+      params: {from: S},
+      links,
+      refTypes,
+    });
+    expect(u2.removeLinks).toEqual(links);
+
+    const wrongType = new Map([[S2, 'Part']]);
+    expect(() =>
+      applyEffects({
+        ...base,
+        action: relink,
+        params: {to: S2},
+        links,
+        refTypes: wrongType,
+      }),
+    ).toThrow(AppError);
+    const outward = action({
+      effects: [
+        {kind: 'relink', link: 'supplies', direction: 'out', toParam: 'to'},
+      ],
+    });
+    expect(() =>
+      applyEffects({
+        ...base,
+        action: outward,
+        params: {to: S2},
+        links,
+        refTypes,
+      }),
+    ).toThrow(AppError);
   });
 });

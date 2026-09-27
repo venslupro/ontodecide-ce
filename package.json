@@ -1,6 +1,6 @@
 {
   "name": "ontodecide-ce",
-  "version": "1.3.0",
+  "version": "2.4.0",
   "private": true,
   "description": "OntoDecide CE — ontology-driven decision intelligence on the Cloudflare free tier.",
   "type": "module",
@@ -11,14 +11,16 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --filter @ontodecide/web typecheck",
-    "lint": "eslint . && depcruise --config .dependency-cruiser.cjs apps packages",
+    "lint": "eslint . && depcruise --config .dependency-cruiser.cjs apps packages && node scripts/check_sql.mjs",
     "fix": "eslint . --fix",
     "format": "prettier --write .",
-    "test": "vitest run",
+    "test": "vitest run && pnpm test:scripts",
+    "test:scripts": "node --test 'scripts/*_test.mjs'",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "pnpm --filter @ontodecide/web test:e2e",
     "build:web": "pnpm --filter @ontodecide/web build",
     "gen:wrangler": "node scripts/gen_wrangler.mjs",
+    "gen:secrets": "node scripts/gen_secrets.mjs",
     "dev": "bash scripts/dev.sh",
     "smoke": "node scripts/smoke.mjs"
   },

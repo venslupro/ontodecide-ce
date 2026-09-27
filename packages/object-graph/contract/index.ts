@@ -1,8 +1,7 @@
 /**
- * @fileoverview Public contract of the ObjectGraph context.
+ * @fileoverview Public contract of the object-graph context.
  */
 
-export type * from './rpc';
+export * from './rpc';
 export * from './schemas';
 export * from './types';
-export * from './voucher';

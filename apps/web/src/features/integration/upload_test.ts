@@ -1,247 +1,271 @@
 /**
- * @fileoverview Upload orchestration against the backend contract: seq
- * contiguous from 0, `last` only on the final batch, same jobId,
- * Idempotency-Key `jobId:seq`, ≤ 3 in flight, retries after 2/4/8 s,
- * no retry on 4xx (except 429), presign url '' skips the archive PUT.
+ * @fileoverview Upload runner: batches ≤ 100 rows, sequential seq with
+ * `last`, 512 KB body halving (planned and after a 413), idempotent retry
+ * of the same seq (2 s / 4 s / 8 s), no retry of other 4xx, QUOTA_EXCEEDED
+ * stops, job reuse, resume and abort.
  */
 
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import type {
+  BatchInput,
+  BatchResult,
+  JobDto,
+  MappingSpec,
+  Row,
+} from '@ontodecide/integration/contract';
+import {describe, expect, it, vi} from 'vitest';
 import {ApiError} from '../../shared/api/errors';
-import type {BatchInput} from './api';
 import {
-  estimateSeconds,
+  batchBodyBytes,
+  newUploadState,
   planBatches,
+  RETRY_DELAYS_MS,
+  RowTooLargeError,
   runUpload,
-  sleep,
+  UploadAbortedError,
   type UploadDeps,
-  type UploadProgress,
 } from './upload';
 
-interface Call {
-  batch: BatchInput;
-  key: string;
+const MAPPING: MappingSpec = {
+  targetType: 'Supplier',
+  primaryKey: {from: 'k'},
+  fields: [{to: 'supplierId', from: 'k'}],
+};
+
+function rows(n: number, pad = 0): Row[] {
+  return Array.from({length: n}, (_, i) => ({k: `S-${i}`, p: 'x'.repeat(pad)}));
 }
 
-function rows(n: number) {
-  return Array.from({length: n}, (_, i) => ({id: `K-${i}`}));
-}
+const JOB: JobDto = {
+  id: 'imp-1',
+  kind: 'file',
+  fileName: 'a.csv',
+  targetType: 'Supplier',
+  mapping: null,
+  status: 'RECEIVING',
+  totalRows: 0,
+  received: 0,
+  upserted: 0,
+  skipped: 0,
+  rejected: 0,
+  createdAt: '',
+  updatedAt: '',
+};
 
-function makeDeps(
-  opts: {
-    url?: string;
-    fail?: (seq: number, attempt: number) => unknown;
-    delayMs?: number;
-  } = {},
+function fakeDeps(
+  onBatch?: (b: BatchInput, call: number) => BatchResult | Error,
 ) {
-  const calls: Call[] = [];
-  const attempts = new Map<number, number>();
-  let inFlight = 0;
-  let maxInFlight = 0;
-  const putFile = vi.fn(
-    async (
-      _url: string,
-      file: Blob,
-      onProgress: (l: number, t: number) => void,
-    ) => {
-      onProgress(file.size / 2, file.size);
-      onProgress(file.size, file.size);
-    },
-  );
+  const batches: BatchInput[] = [];
   const sleeps: number[] = [];
+  let call = 0;
   const deps: UploadDeps = {
-    presign: vi.fn(async () => ({
-      url: opts.url ?? '',
-      key: 'raw/t1/x.csv',
-      jobId: 'job-7',
-    })),
-    putFile,
+    createImport: vi.fn(async input => ({...JOB, totalRows: input.totalRows})),
+    putMapping: vi.fn(async () => JOB),
     submitBatch: vi.fn(
-      async (_sourceId: string, batch: BatchInput, key: string) => {
-        inFlight++;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        try {
-          await new Promise(r => setTimeout(r, opts.delayMs ?? 5));
-          const attempt = attempts.get(batch.seq) ?? 0;
-          attempts.set(batch.seq, attempt + 1);
-          calls.push({batch, key});
-          const err = opts.fail?.(batch.seq, attempt);
-          if (err) throw err;
-          return {jobId: batch.jobId ?? '', queuedMessages: 1};
-        } finally {
-          inFlight--;
-        }
+      async (_id: string, b: BatchInput): Promise<BatchResult> => {
+        batches.push(b);
+        const out = onBatch?.(b, call++);
+        if (out instanceof Error) throw out;
+        return (
+          out ?? {
+            seq: b.seq,
+            upserted: b.rows.length - 1,
+            skipped: 0,
+            rejected: [{row: 1, code: 'REQUIRED'}],
+            job: {
+              status: 'RECEIVING' as const,
+              received: 0,
+              upserted: 0,
+              skipped: 0,
+              rejected: 0,
+            },
+          }
+        );
       },
     ),
-    sleep: vi.fn((ms: number, signal?: AbortSignal) => {
+    getImport: vi.fn(async () => ({...JOB, status: 'DONE' as const})),
+    sleep: vi.fn(async (ms: number) => {
       sleeps.push(ms);
-      return sleep(ms, signal);
     }),
   };
-  return {deps, calls, sleeps, putFile, max: () => maxInFlight};
+  return {deps, batches, sleeps};
 }
 
-const file = new Blob(['id\nK-0\n'], {type: 'text/csv'});
-
-describe('runUpload', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('sends contiguous seqs from 0 with the presigned jobId, last only on the final batch', async () => {
-    const {deps, calls, max, putFile} = makeDeps();
-    const progress: UploadProgress[] = [];
-    const p = runUpload(
-      {
-        sourceId: 'src-1',
-        fileName: 'x.csv',
-        file,
-        batches: planBatches(rows(2345)),
-        txnType: 'APPEND',
-      },
-      deps,
-      s => progress.push(s),
-    );
-    await vi.runAllTimersAsync();
-    const res = await p;
-    expect(res).toEqual({jobId: 'job-7', archived: false, key: 'raw/t1/x.csv'});
-    const seqs = calls.map(c => c.batch.seq).sort((a, b) => a - b);
-    expect(seqs).toEqual([0, 1, 2, 3, 4]);
-    expect(calls.every(c => c.batch.jobId === 'job-7')).toBe(true);
-    expect(calls.every(c => c.key === `job-7:${c.batch.seq}`)).toBe(true);
-    expect(calls.filter(c => c.batch.last).map(c => c.batch.seq)).toEqual([4]);
-    expect(calls.every(c => c.batch.records.length <= 500)).toBe(true);
-    expect(calls.find(c => c.batch.seq === 4)?.batch.records).toHaveLength(345);
-    expect(calls.every(c => c.batch.txnType === 'APPEND')).toBe(true);
-    expect(max()).toBeLessThanOrEqual(3);
-    expect(max()).toBe(3);
-    // presign url '' → no archive PUT.
-    expect(putFile).not.toHaveBeenCalled();
-    expect(progress.at(-1)).toMatchObject({
-      phase: 'done',
-      batchesDone: 5,
-      batchesTotal: 5,
-      archiveSkipped: true,
-    });
-  });
-
-  it('PUTs the raw file when presign returns a URL', async () => {
-    const {deps, putFile} = makeDeps({url: 'https://b2.example/put?sig=1'});
-    const progress: UploadProgress[] = [];
-    const p = runUpload(
-      {sourceId: 'src-1', fileName: 'x.csv', file, batches: [rows(3)]},
-      deps,
-      s => progress.push(s),
-    );
-    await vi.runAllTimersAsync();
-    expect((await p).archived).toBe(true);
-    expect(putFile).toHaveBeenCalledWith(
-      'https://b2.example/put?sig=1',
-      file,
-      expect.any(Function),
-      undefined,
-    );
-    expect(progress.some(s => s.phase === 'archive' && s.archive === 0.5)).toBe(
-      true,
-    );
-    expect(deps.presign).toHaveBeenCalledWith('src-1', 'x.csv', file.size);
-  });
-
-  it('retries a failing batch after 2 s, 4 s and 8 s with the same key', async () => {
-    const {deps, calls, sleeps} = makeDeps({
-      fail: (seq, attempt) =>
-        seq === 1 && attempt < 3
-          ? new ApiError({code: 'INTERNAL', status: 500})
-          : null,
-    });
-    const p = runUpload(
-      {
-        sourceId: 's',
-        fileName: 'x.csv',
-        file,
-        batches: planBatches(rows(1200)),
-      },
-      deps,
-    );
-    await vi.advanceTimersByTimeAsync(10);
-    expect(calls.filter(c => c.batch.seq === 1)).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1990);
-    expect(calls.filter(c => c.batch.seq === 1)).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(20);
-    expect(calls.filter(c => c.batch.seq === 1)).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(4000);
-    expect(calls.filter(c => c.batch.seq === 1)).toHaveLength(3);
-    await vi.advanceTimersByTimeAsync(8000);
-    expect(calls.filter(c => c.batch.seq === 1)).toHaveLength(4);
-    await vi.runAllTimersAsync();
-    await expect(p).resolves.toMatchObject({jobId: 'job-7'});
-    expect(sleeps).toEqual([2000, 4000, 8000]);
+describe('planBatches', () => {
+  it('chunks by 100 rows', () => {
     expect(
-      new Set(calls.filter(c => c.batch.seq === 1).map(c => c.key)),
-    ).toEqual(new Set(['job-7:1']));
+      planBatches(rows(212)).map(b => [b.firstRow, b.rows.length]),
+    ).toEqual([
+      [1, 100],
+      [101, 100],
+      [201, 12],
+    ]);
   });
 
-  it('gives up after 3 retries', async () => {
-    const {deps, calls} = makeDeps({
-      fail: seq =>
-        seq === 0 ? new ApiError({code: 'NETWORK', status: 0}) : null,
-    });
-    const p = runUpload(
-      {sourceId: 's', fileName: 'x.csv', file, batches: planBatches(rows(10))},
-      deps,
-    );
-    const assertion = expect(p).rejects.toMatchObject({code: 'NETWORK'});
-    await vi.runAllTimersAsync();
-    await assertion;
-    expect(calls).toHaveLength(4);
+  it('halves recursively until each body is ≤ the byte limit', () => {
+    const r = rows(100, 6000); // ≈ 600 KB per 100 rows
+    const plan = planBatches(r);
+    expect(plan.map(b => b.rows.length)).toEqual([50, 50]);
+    for (const b of plan)
+      expect(batchBodyBytes(b.rows)).toBeLessThanOrEqual(512 * 1024);
+    const tight = planBatches(rows(8, 100), {maxRows: 100, maxBytes: 400});
+    expect(tight.map(b => b.rows.length)).toEqual([2, 2, 2, 2]);
+    expect(tight.map(b => b.firstRow)).toEqual([1, 3, 5, 7]);
   });
 
-  it('does not retry 4xx errors other than 429', async () => {
-    const {deps, calls, sleeps} = makeDeps({
-      fail: seq =>
-        seq === 0
-          ? new ApiError({code: 'VALIDATION_FAILED', status: 422})
-          : null,
-    });
-    const p = runUpload(
-      {sourceId: 's', fileName: 'x.csv', file, batches: [rows(2)]},
-      deps,
-    );
-    const assertion = expect(p).rejects.toMatchObject({status: 422});
-    await vi.runAllTimersAsync();
-    await assertion;
-    expect(calls).toHaveLength(1);
-    expect(sleeps).toEqual([]);
-  });
-
-  it('honours retryAfter on 429', async () => {
-    const {deps, calls, sleeps} = makeDeps({
-      fail: (seq, attempt) =>
-        seq === 0 && attempt === 0
-          ? new ApiError({code: 'RATE_LIMITED', status: 429, retryAfter: 7})
-          : null,
-    });
-    const p = runUpload(
-      {sourceId: 's', fileName: 'x.csv', file, batches: [rows(2)]},
-      deps,
-    );
-    await vi.runAllTimersAsync();
-    await p;
-    expect(sleeps).toEqual([7000]);
-    expect(calls).toHaveLength(2);
+  it('fails when a single row cannot fit', () => {
+    expect(() =>
+      planBatches(rows(1, 1000), {maxRows: 100, maxBytes: 100}),
+    ).toThrow(RowTooLargeError);
   });
 });
 
-describe('planning helpers', () => {
-  it('splits into ≤ 500-record batches', () => {
-    expect(planBatches(rows(1001)).map(b => b.length)).toEqual([500, 500, 1]);
-    expect(planBatches([])).toEqual([]);
+describe('runUpload', () => {
+  it('creates the job, sets the mapping and sends batches in order', async () => {
+    const {deps, batches} = fakeDeps();
+    const progress: number[] = [];
+    const job = await runUpload(
+      {fileName: 'a.csv', mapping: MAPPING, rows: rows(250)},
+      deps,
+      newUploadState(),
+      {onProgress: p => progress.push(p.batchesDone)},
+    );
+    expect(deps.createImport).toHaveBeenCalledWith({
+      fileName: 'a.csv',
+      targetType: 'Supplier',
+      totalRows: 250,
+    });
+    expect(deps.putMapping).toHaveBeenCalledWith('imp-1', MAPPING);
+    expect(batches.map(b => [b.seq, b.last, b.rows.length])).toEqual([
+      [0, false, 100],
+      [1, false, 100],
+      [2, true, 50],
+    ]);
+    expect(progress.at(-1)).toBe(3);
+    expect(job.status).toBe('DONE');
   });
 
-  it('estimates time from waves of 3 batches', () => {
-    expect(estimateSeconds(3, 0, false)).toBe(1);
-    expect(estimateSeconds(20, 0, false)).toBe(7);
+  it('reuses the job created for the AI draft and accumulates progress', async () => {
+    const {deps} = fakeDeps();
+    const state = newUploadState('imp-draft');
+    await runUpload(
+      {fileName: 'a.csv', mapping: MAPPING, rows: rows(120)},
+      deps,
+      state,
+    );
+    expect(deps.createImport).not.toHaveBeenCalled();
+    expect(deps.putMapping).toHaveBeenCalledWith('imp-draft', MAPPING);
+    expect(state.progress).toMatchObject({
+      batchesDone: 2,
+      rowsSent: 120,
+      upserted: 118,
+      rejected: 2,
+    });
+  });
+
+  it('retries the same seq after 2 s and 4 s', async () => {
+    const {deps, batches, sleeps} = fakeDeps((b, call) =>
+      b.seq === 1 && call < 3
+        ? new ApiError({code: 'INTERNAL', status: 503})
+        : undefined!,
+    );
+    await runUpload(
+      {fileName: 'a', mapping: MAPPING, rows: rows(250)},
+      deps,
+      newUploadState(),
+    );
+    expect(batches.map(b => b.seq)).toEqual([0, 1, 1, 1, 2]);
+    expect(sleeps).toEqual([2000, 4000]);
+  });
+
+  it('gives up after 3 retries and resumes from the failed seq', async () => {
+    let fail = true;
+    const {deps, batches, sleeps} = fakeDeps(b =>
+      fail && b.seq === 1
+        ? new ApiError({code: 'NETWORK', status: 0})
+        : undefined!,
+    );
+    const state = newUploadState();
+    const input = {fileName: 'a', mapping: MAPPING, rows: rows(250)};
+    await expect(runUpload(input, deps, state)).rejects.toMatchObject({
+      code: 'NETWORK',
+    });
+    expect(sleeps).toEqual([...RETRY_DELAYS_MS]);
+    expect(state.next).toBe(1);
+    fail = false;
+    await runUpload(input, deps, state);
+    expect(deps.createImport).toHaveBeenCalledTimes(1);
+    expect(deps.putMapping).toHaveBeenCalledTimes(1);
+    expect(batches.map(b => b.seq)).toEqual([0, 1, 1, 1, 1, 1, 2]);
+  });
+
+  it('waits Retry-After for RATE_LIMITED', async () => {
+    const {deps, sleeps} = fakeDeps((_b, call) =>
+      call === 0
+        ? new ApiError({code: 'RATE_LIMITED', status: 429, retryAfter: 5})
+        : undefined!,
+    );
+    await runUpload(
+      {fileName: 'a', mapping: MAPPING, rows: rows(10)},
+      deps,
+      newUploadState(),
+    );
+    expect(sleeps).toEqual([5000]);
+  });
+
+  it('stops on QUOTA_EXCEEDED and on other 4xx without retrying', async () => {
+    for (const err of [
+      new ApiError({code: 'QUOTA_EXCEEDED', status: 429}),
+      new ApiError({code: 'VALIDATION_FAILED', status: 400}),
+    ]) {
+      const {deps, batches, sleeps} = fakeDeps(() => err);
+      await expect(
+        runUpload(
+          {fileName: 'a', mapping: MAPPING, rows: rows(150)},
+          deps,
+          newUploadState(),
+        ),
+      ).rejects.toBe(err);
+      expect(batches).toHaveLength(1);
+      expect(sleeps).toEqual([]);
+    }
+  });
+
+  it('halves a batch after a 413, renumbering later seqs', async () => {
+    const {deps, batches} = fakeDeps(b =>
+      b.seq === 0 && b.rows.length === 100
+        ? new ApiError({code: 'VALIDATION_FAILED', status: 413})
+        : undefined!,
+    );
+    await runUpload(
+      {fileName: 'a', mapping: MAPPING, rows: rows(150)},
+      deps,
+      newUploadState(),
+    );
+    expect(batches.map(b => [b.seq, b.rows.length, b.last])).toEqual([
+      [0, 100, false],
+      [0, 50, false],
+      [1, 50, false],
+      [2, 50, true],
+    ]);
+  });
+
+  it('aborts between batches', async () => {
+    const ctrl = new AbortController();
+    const {deps, batches} = fakeDeps(b => {
+      if (b.seq === 0) ctrl.abort();
+      return undefined!;
+    });
+    await expect(
+      runUpload(
+        {fileName: 'a', mapping: MAPPING, rows: rows(250)},
+        deps,
+        newUploadState(),
+        {
+          signal: ctrl.signal,
+        },
+      ),
+    ).rejects.toBeInstanceOf(UploadAbortedError);
+    expect(batches).toHaveLength(1);
+    expect(deps.getImport).not.toHaveBeenCalled();
   });
 });

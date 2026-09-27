@@ -13,6 +13,7 @@ terraform {
       source  = "Backblaze/b2"
       version = "~> 0.14"
     }
+    # Only to read the forgotten V1.3 instance (legacy.tf); remove with it.
     neo4jaura = {
       source  = "neo4j-labs/neo4jaura"
       version = "~> 1.1"
@@ -20,9 +21,11 @@ terraform {
   }
 
   # State lives in the private B2 bucket ontodecide-ce-tfstate (S3 API,
-  # SSE-B2, versioning; kept outside the {project}-{env}-{service} naming). There is a single environment (production).
-  # No secrets are ever written to state except the bucket-scoped B2 worker
-  # key and the Neo4j password, which are marked sensitive.
+  # SSE-B2, versioning; kept outside the {project}-{env}-{service} naming).
+  # There is a single environment (production).
+  # The only secrets in state are the bucket-scoped B2 archive keys and the
+  # Turnstile secret, all marked sensitive. JWT, pepper and mail keys never
+  # pass through Terraform.
   backend "s3" {
     bucket = "ontodecide-ce-tfstate"
     key    = "terraform.tfstate"
@@ -51,5 +54,5 @@ provider "b2" {
 }
 
 provider "neo4jaura" {
-  # AURA_CLIENT_ID / AURA_CLIENT_SECRET from the environment.
+  # Legacy (legacy.tf). AURA_CLIENT_ID / AURA_CLIENT_SECRET from the environment.
 }

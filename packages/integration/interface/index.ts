@@ -1,8 +1,7 @@
 /**
- * @fileoverview Integration interface layer: RPC handler, queue and cron
- * dispatchers.
+ * @fileoverview Interface layer of data-integration: the IntegrationRpc
+ * handler object and the TenantLifecycle entry point.
  */
 
-export * from './cron_dispatcher';
 export * from './integration_rpc';
-export * from './queue_dispatcher';
+export * from './tenant_lifecycle';

@@ -1,462 +1,429 @@
 /**
- * @fileoverview Integration tests of the ontology use cases over D1
- * (node:sqlite) and an in-memory KV.
+ * @fileoverview Use-case tests against the real ontology-manager migrations:
+ * template seeding, copy-on-write, If-Match / etag concurrency, structural
+ * validation, tenant isolation and tombstoned workspaces.
  */
 
 import {AppError, FixedClock, silentLogger} from '@ontodecide/shared-kernel';
-import {
-  createTestD1,
-  MemoryKV,
-  testCtx,
-  type SqliteD1,
-} from '@ontodecide/testing';
+import {writeTombstone} from '@ontodecide/shared-kernel/d1';
+import {createTestD1, TEST_TID, testCtx} from '@ontodecide/testing';
 import {beforeEach, describe, expect, it} from 'vitest';
-import type {OntologyPack, SchemaDef} from '../contract';
-import {SUPPLY_CHAIN_PACK} from '../domain';
+import {SUPPLY_CHAIN_TEMPLATE_ID} from '../contract';
+import type {LinkTypeDef, ObjectTypeDef} from '../contract';
 import {
-  D1SchemaRepository,
-  TieredSchemaCache,
-  modelKvKey,
-  schemaKvKey,
+  SUPPLY_CHAIN_DEFINITION,
+  SUPPLY_CHAIN_TEMPLATE_VERSION,
+} from '../domain';
+import {
+  D1TemplateRepository,
+  D1WorkspaceSchemaRepository,
+  MemoryCompiledCache,
 } from '../infrastructure';
 import {createOntologyHandlers, type OntologyHandlers} from './handlers';
 
-const ctx = testCtx({role: 'Modeler'});
-const other = testCtx({tenantId: 't2', role: 'Modeler'});
+const OTHER_TID = '01K6A000000000000000000T02';
 
-function schema(): SchemaDef {
-  return {
-    apiName: 'plant',
-    displayName: {'zh-CN': '工厂', 'en-US': 'Plant'},
-    objectTypes: [
-      {
-        apiName: 'Machine',
-        displayName: 'Machine',
-        primaryKey: 'machineId',
-        titleProperty: 'name',
-        properties: [
-          {
-            apiName: 'machineId',
-            displayName: 'ID',
-            dataType: 'string',
-            required: true,
-          },
-          {
-            apiName: 'name',
-            displayName: 'Name',
-            dataType: 'string',
-            indexed: true,
-          },
-          {
-            apiName: 'temperature',
-            displayName: 'Temperature',
-            dataType: 'double',
-            indexed: true,
-          },
-        ],
-      },
-    ],
-    linkTypes: [],
-    actionTypes: [],
-    functions: [
-      {
-        apiName: 'overheated',
-        objectType: 'Machine',
-        expr: {'>': [{var: 'temperature'}, 90]},
-        returns: 'boolean',
-      },
-    ],
-  };
-}
+const WAREHOUSE: ObjectTypeDef = {
+  apiName: 'Warehouse',
+  displayName: {'zh-CN': '仓库', 'en-US': 'Warehouse'},
+  primaryKey: 'warehouseId',
+  titleProperty: 'name',
+  properties: [
+    {
+      apiName: 'warehouseId',
+      displayName: 'ID',
+      dataType: 'string',
+      required: true,
+    },
+    {apiName: 'name', displayName: 'Name', dataType: 'string', indexed: true},
+  ],
+};
 
-async function expectCode(
-  p: Promise<unknown>,
-  code: string,
-): Promise<AppError> {
+const STORED_IN: LinkTypeDef = {
+  apiName: 'storedIn',
+  displayName: 'Stored in',
+  from: 'Material',
+  to: 'Warehouse',
+  cardinality: 'many',
+};
+
+async function codeOf(p: Promise<unknown>): Promise<string> {
   try {
     await p;
   } catch (e) {
-    const err = AppError.from(e);
-    expect(err.code).toBe(code);
-    return err;
+    return AppError.from(e).code;
   }
-  throw new Error(`Expected ${code}`);
+  return 'OK';
 }
 
 describe('ontology use cases', () => {
   let db: D1Database;
-  let kv: MemoryKV;
+  let cache: MemoryCompiledCache;
   let clock: FixedClock;
   let h: OntologyHandlers;
+  const ctx = testCtx();
+  const other = testCtx({tid: OTHER_TID});
 
-  const build = (): OntologyHandlers => {
-    const cache = new TieredSchemaCache(kv.asKV(), clock, silentLogger);
-    return createOntologyHandlers({
-      repo: new D1SchemaRepository(db),
+  beforeEach(() => {
+    db = createTestD1('ontology-manager');
+    cache = new MemoryCompiledCache();
+    clock = new FixedClock('2026-09-24T00:00:00Z');
+    h = createOntologyHandlers({
+      schemas: tid => new D1WorkspaceSchemaRepository(db, tid),
+      templates: new D1TemplateRepository(db),
       cache,
       clock,
       logger: silentLogger,
     });
-  };
-  const queries = () => (db as unknown as SqliteD1).queries;
-
-  beforeEach(() => {
-    db = createTestD1('ontology');
-    kv = new MemoryKV();
-    clock = new FixedClock('2026-09-24T00:00:00Z');
-    h = build();
   });
 
-  it('draft → diff → publish → getSchema current/draft/semver', async () => {
-    const draft = await h.saveDraft.execute(ctx, 'plant', schema());
-    expect(draft).toEqual({
-      apiName: 'plant',
-      version: 'draft',
-      savedAt: '2026-09-24T00:00:00.000Z',
-      validation: [],
-    });
-    const diff = await h.diff.execute(ctx, 'plant');
-    expect(diff).toMatchObject({
-      fromVersion: null,
-      toVersion: '1.0.0',
-      breaking: false,
-    });
+  const workspaceRows = async () =>
+    (
+      await db
+        .prepare(
+          'SELECT tenant_id, etag FROM ont_workspace_schema ORDER BY tenant_id',
+        )
+        .all<{tenant_id: string; etag: number}>()
+    ).results;
 
-    const report = await h.publish.execute(ctx, 'plant');
-    expect(report.version).toBe('1.0.0');
-    expect(report.indexChanges).toEqual([
-      {objectType: 'Machine', prop: 'name', kind: 'str'},
-      {objectType: 'Machine', prop: 'temperature', kind: 'num'},
-    ]);
-
-    const current = await h.getSchema.execute(ctx, 'plant');
-    expect(current).toMatchObject({
-      version: '1.0.0',
-      status: 'PUBLISHED',
-      publishedBy: 'u1',
-      publishedAt: '2026-09-24T00:00:00.000Z',
+  it('seeds ont_template from code on first use, once', async () => {
+    await h.getCompiledSchema(ctx);
+    await h.getOntology(ctx);
+    const rows = (
+      await db
+        .prepare('SELECT * FROM ont_template')
+        .all<Record<string, string>>()
+    ).results;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      template_id: SUPPLY_CHAIN_TEMPLATE_ID,
+      version: SUPPLY_CHAIN_TEMPLATE_VERSION,
     });
-    expect(current.definition.version).toBe('1.0.0');
-    expect((await h.getSchema.execute(ctx, 'plant', '1.0.0')).status).toBe(
-      'PUBLISHED',
-    );
-    await expectCode(h.getSchema.execute(ctx, 'plant', 'draft'), 'NOT_FOUND');
-    await expectCode(
-      h.getSchema.execute(ctx, 'plant', 'latest'),
-      'VALIDATION_FAILED',
-    );
-    await expectCode(h.diff.execute(ctx, 'plant'), 'NOT_FOUND');
-
-    // A new draft coexists with the published version.
-    const next = schema();
-    next.objectTypes[0].properties.push({
-      apiName: 'site',
-      displayName: 'Site',
-      dataType: 'string',
-    });
-    await h.saveDraft.execute(ctx, 'plant', next);
-    expect((await h.getSchema.execute(ctx, 'plant', 'draft')).status).toBe(
-      'DRAFT',
-    );
-    expect((await h.diff.execute(ctx, 'plant')).suggestedVersion).toBe('1.1.0');
-    expect(await h.listSchemas.execute(ctx)).toEqual([
-      {
-        apiName: 'plant',
-        displayName: {'zh-CN': '工厂', 'en-US': 'Plant'},
-        currentVersion: '1.0.0',
-        hasDraft: true,
-        objectTypeCount: 1,
-        publishedAt: '2026-09-24T00:00:00.000Z',
-      },
-    ]);
-    clock.advance(1000);
-    expect((await h.publish.execute(ctx, 'plant')).version).toBe('1.1.0');
-    expect((await h.getSchema.execute(ctx, 'plant')).version).toBe('1.1.0');
+    expect(JSON.parse(rows[0].definition)).toEqual(SUPPLY_CHAIN_DEFINITION);
     expect(
-      (await h.getSchema.execute(ctx, 'plant', '1.0.0')).definition
-        .objectTypes[0].properties,
-    ).toHaveLength(3);
-  });
+      JSON.parse(rows[0].compiled).objectTypes.Supplier.indexedProps,
+    ).toContain('riskScore');
+    expect(JSON.parse(rows[0].kpi_seed).length).toBeGreaterThanOrEqual(3);
+    expect(JSON.parse(rows[0].automation_seed).length).toBe(2);
 
-  it('rejects zod-invalid drafts and saves structurally invalid ones with issues', async () => {
-    await expectCode(
-      h.saveDraft.execute(ctx, 'plant', {
-        ...schema(),
-        objectTypes: 'nope',
-      } as never),
-      'VALIDATION_FAILED',
-    );
-    await expectCode(
-      h.saveDraft.execute(ctx, 'other', schema()),
-      'VALIDATION_FAILED',
-    );
-
-    const broken = schema();
-    broken.objectTypes[0].primaryKey = 'ghost';
-    const saved = await h.saveDraft.execute(ctx, 'plant', broken);
-    expect(saved.validation).toEqual([
-      {
-        path: 'objectTypes.0.primaryKey',
-        message: 'Primary key property does not exist: ghost',
-      },
-    ]);
-    expect(
-      (await h.getSchema.execute(ctx, 'plant', 'draft')).definition
-        .objectTypes[0].primaryKey,
-    ).toBe('ghost');
-    const err = await expectCode(
-      h.publish.execute(ctx, 'plant'),
-      'ONTOLOGY_INVALID',
-    );
-    expect(err.extras.issues).toHaveLength(1);
-    // The draft is left untouched.
-    expect((await h.getSchema.execute(ctx, 'plant', 'draft')).status).toBe(
-      'DRAFT',
-    );
-  });
-
-  it('rejects breaking changes until the major is bumped and confirmed', async () => {
-    await h.saveDraft.execute(ctx, 'plant', schema());
-    await h.publish.execute(ctx, 'plant');
-
-    const breaking = schema();
-    breaking.objectTypes[0].properties.pop();
-    breaking.functions = [];
-    await h.saveDraft.execute(ctx, 'plant', {...breaking, version: '1.1.0'});
-    let err = await expectCode(
-      h.publish.execute(ctx, 'plant'),
-      'ONTOLOGY_BREAKING_CHANGE',
-    );
-    expect(err.extras.diff).toMatchObject({
-      breaking: true,
-      suggestedVersion: '2.0.0',
+    // A second isolate seeding the same template is a no-op.
+    const again = createOntologyHandlers({
+      schemas: tid => new D1WorkspaceSchemaRepository(db, tid),
+      templates: new D1TemplateRepository(db),
+      cache,
+      clock,
+      logger: silentLogger,
     });
-
-    // Suggested major bump but not confirmed.
-    await h.saveDraft.execute(ctx, 'plant', breaking);
-    err = await expectCode(
-      h.publish.execute(ctx, 'plant'),
-      'ONTOLOGY_BREAKING_CHANGE',
-    );
-    await expectCode(
-      h.publish.execute(ctx, 'plant', {confirmVersion: '3.0.0'}),
-      'ONTOLOGY_BREAKING_CHANGE',
-    );
-    expect((await h.getSchema.execute(ctx, 'plant', 'draft')).status).toBe(
-      'DRAFT',
-    );
-    expect((await h.getSchema.execute(ctx, 'plant')).version).toBe('1.0.0');
-
-    const report = await h.publish.execute(ctx, 'plant', {
-      confirmVersion: '2.0.0',
-    });
-    expect(report).toMatchObject({version: '2.0.0', diff: {breaking: true}});
-    expect((await h.getSchema.execute(ctx, 'plant')).version).toBe('2.0.0');
+    await again.getTemplateSeeds(SUPPLY_CHAIN_TEMPLATE_ID);
+    const n = await db
+      .prepare('SELECT COUNT(*) AS n FROM ont_template')
+      .first('n');
+    expect(n).toBe(1);
   });
 
-  it('published versions are immutable', async () => {
-    await h.saveDraft.execute(ctx, 'plant', schema());
-    await h.publish.execute(ctx, 'plant');
-    const changed = schema();
-    changed.displayName = 'Changed';
-    await h.saveDraft.execute(ctx, 'plant', {...changed, version: '1.0.0'});
-    const report = await h.publish.execute(ctx, 'plant');
-    expect(report.version).toBe('1.0.1');
-    expect(
-      (await h.getSchema.execute(ctx, 'plant', '1.0.0')).definition.displayName,
-    ).toEqual({
-      'zh-CN': '工厂',
-      'en-US': 'Plant',
+  it('serves the shared template until the first change', async () => {
+    const a = await h.getCompiledSchema(ctx);
+    const b = await h.getCompiledSchema(other);
+    expect(a).toMatchObject({
+      custom: false,
+      etag: 0,
+      templateId: 'supply-chain',
     });
-  });
-
-  it('imports the supply chain pack (idempotently) and exports it back', async () => {
-    const packs = await h.listPacks.execute(ctx);
-    expect(packs).toEqual([
-      expect.objectContaining({id: 'supply-chain', builtIn: true}),
-    ]);
-
-    const {report, pack} = await h.importPack.execute(ctx, {
-      packId: 'supply-chain',
-    });
-    expect(report).toMatchObject({apiName: 'supplyChain', version: '1.0.0'});
-    expect(pack.automations).toHaveLength(2);
-    const writes = kv.writes;
-    expect(writes).toBe(2);
-
-    const again = await h.importPack.execute(ctx, {packId: 'supply-chain'});
-    expect(again.report).toMatchObject({
-      version: '1.0.0',
-      diff: {changes: [], fromVersion: '1.0.0'},
-      publishedAt: report.publishedAt,
-    });
-    expect(kv.writes).toBe(writes);
-
-    const exported = await h.exportPack.execute(ctx, 'supplyChain');
-    expect(exported).toMatchObject({id: 'supply-chain', version: '1.0.0'});
-    expect(exported.kpis).toHaveLength(4);
-    expect(exported.schema.objectTypes).toHaveLength(3);
-    await expectCode(h.importPack.execute(ctx, {packId: 'nope'}), 'NOT_FOUND');
-    await expectCode(h.importPack.execute(ctx, {}), 'VALIDATION_FAILED');
-  });
-
-  it('imports inline packs and lists them for the tenant only', async () => {
-    const inline: OntologyPack = {
-      id: 'plant-pack',
-      name: 'Plant',
-      version: '0.2.0',
-      schema: schema(),
-    };
-    const {report} = await h.importPack.execute(ctx, {pack: inline});
-    expect(report.version).toBe('0.2.0');
-    expect(
-      (await h.listPacks.execute(ctx)).map(p => [p.id, p.builtIn]),
-    ).toEqual([
-      ['supply-chain', true],
-      ['plant-pack', false],
-    ]);
-    expect((await h.getPack.execute(ctx, 'plant-pack')).version).toBe('0.2.0');
-    expect(await h.listPacks.execute(other)).toHaveLength(1);
-    await expectCode(h.getPack.execute(other, 'plant-pack'), 'NOT_FOUND');
-    await expectCode(
-      h.importPack.execute(ctx, {pack: {...SUPPLY_CHAIN_PACK}}),
-      'CONFLICT',
-    );
-  });
-
-  it('enforces cross-schema api name uniqueness at publish', async () => {
-    await h.importPack.execute(ctx, {packId: 'supply-chain'});
-    const clash = schema();
-    clash.objectTypes.push(
-      structuredClone(SUPPLY_CHAIN_PACK.schema.objectTypes[0]),
-    );
-    const saved = await h.saveDraft.execute(ctx, 'plant', clash);
-    expect(saved.validation).toEqual([
-      {
-        path: 'objectTypes.1.apiName',
-        message:
-          'Object type Supplier is already defined by schema supplyChain',
-      },
-    ]);
-    await expectCode(h.publish.execute(ctx, 'plant'), 'ONTOLOGY_INVALID');
-  });
-
-  it('getActiveModel: empty tenant, after import and merged across schemas', async () => {
-    const empty = await h.getActiveModel.execute(ctx);
-    expect(empty).toMatchObject({
-      tenantId: 't1',
-      version: '0',
-      schemas: [],
-      objectTypes: {},
-    });
-
-    await h.importPack.execute(ctx, {packId: 'supply-chain'});
-    const model = await h.getActiveModel.execute(ctx);
-    expect(model.version).toBe('supplyChain@1.0.0');
-    expect(Object.keys(model.objectTypes)).toEqual([
+    expect(a).toBe(b); // shared compiled template
+    const dto = await h.getOntology(ctx);
+    expect(dto).toMatchObject({custom: false, etag: 0, updatedAt: null});
+    expect(dto.definition).toEqual(SUPPLY_CHAIN_DEFINITION);
+    const list = await h.listDefinitions(ctx, 'object-types');
+    expect(list).toMatchObject({etag: 0, custom: false});
+    expect(list.items.map(t => t.apiName)).toEqual([
       'Supplier',
       'Material',
       'Product',
     ]);
-    expect(JSON.parse(kv.data.get(modelKvKey('t1'))!.value).version).toBe(
-      'supplyChain@1.0.0',
+    expect((await h.getDefinition(ctx, 'link-types', 'supplies')).etag).toBe(0);
+    expect(await codeOf(h.getDefinition(ctx, 'link-types', 'nope'))).toBe(
+      'NOT_FOUND',
     );
-    expect(kv.data.has(schemaKvKey('t1', 'supplyChain'))).toBe(true);
-
-    await h.saveDraft.execute(ctx, 'plant', schema());
-    await h.publish.execute(ctx, 'plant');
-    expect((await h.getActiveModel.execute(ctx)).version).toBe(
-      'plant@1.0.0+supplyChain@1.0.0',
-    );
+    expect(await workspaceRows()).toEqual([]);
   });
 
-  it('serves the model and compiled schema from cache without D1', async () => {
-    await h.importPack.execute(ctx, {packId: 'supply-chain'});
+  it('copies the template on the first change (copy-on-write)', async () => {
+    expect(
+      await h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 0),
+    ).toEqual({
+      etag: 1,
+    });
+    expect(await workspaceRows()).toEqual([{tenant_id: TEST_TID, etag: 1}]);
 
-    // Same isolate: memory tier.
-    let before = queries();
-    await h.getActiveModel.execute(ctx);
-    await h.getCompiledSchema.execute(ctx, 'supplyChain');
-    expect(queries()).toBe(before);
-
-    // New isolate: KV tier.
-    h = build();
-    before = queries();
-    const model = await h.getActiveModel.execute(ctx);
-    const compiled = await h.getCompiledSchema.execute(ctx, 'supplyChain');
-    expect(model.version).toBe('supplyChain@1.0.0');
-    expect(compiled.objectTypes.Supplier.sensitiveProps).toEqual([
-      'contactEmail',
+    const compiled = await h.getCompiledSchema(ctx);
+    expect(compiled).toMatchObject({
+      custom: true,
+      etag: 1,
+      templateId: 'supply-chain',
+    });
+    expect(Object.keys(compiled.objectTypes)).toEqual([
+      'Supplier',
+      'Material',
+      'Product',
+      'Warehouse',
     ]);
-    expect(queries()).toBe(before);
+    expect(compiled.indexPlan).toContainEqual({
+      objectType: 'Warehouse',
+      prop: 'name',
+    });
 
-    // Specific versions are not in KV: first read hits D1, second is memory.
-    before = queries();
-    await h.getCompiledSchema.execute(ctx, 'supplyChain', '1.0.0');
-    const afterFirst = queries();
-    expect(afterFirst).toBeGreaterThan(before);
-    await h.getCompiledSchema.execute(ctx, 'supplyChain', '1.0.0');
-    expect(queries()).toBe(afterFirst);
-
-    // Empty tenant with no KV entry: D1 once, then memory for 30 s.
-    before = queries();
-    await h.getActiveModel.execute(other);
-    const afterEmpty = queries();
-    await h.getActiveModel.execute(other);
-    expect(queries()).toBe(afterEmpty);
-    clock.advance(31_000);
-    await h.getActiveModel.execute(other);
-    expect(queries()).toBeGreaterThan(afterEmpty);
-    expect(afterEmpty).toBeGreaterThan(before);
-  });
-
-  it('isolates tenants', async () => {
-    await h.importPack.execute(ctx, {packId: 'supply-chain'});
-    await h.saveDraft.execute(ctx, 'plant', schema());
-    expect(await h.listSchemas.execute(other)).toEqual([]);
-    await expectCode(h.getSchema.execute(other, 'supplyChain'), 'NOT_FOUND');
-    await expectCode(
-      h.getCompiledSchema.execute(other, 'supplyChain'),
-      'NOT_FOUND',
-    );
-    await expectCode(h.diff.execute(other, 'plant'), 'NOT_FOUND');
-    expect((await h.getActiveModel.execute(other)).version).toBe('0');
-
-    await h.saveDraft.execute(other, 'plant', schema());
-    await h.publish.execute(other, 'plant');
-    expect((await h.getActiveModel.execute(other)).version).toBe('plant@1.0.0');
-    expect((await h.getActiveModel.execute(ctx)).version).toBe(
-      'supplyChain@1.0.0',
-    );
-  });
-
-  it('evaluates functions of the active model', async () => {
-    await expectCode(
-      h.evaluateFunction.execute(ctx, 'supplierRiskLevel', {}),
-      'NOT_FOUND',
-    );
-    await h.importPack.execute(ctx, {packId: 'supply-chain'});
+    clock.advance(1000);
     expect(
-      await h.evaluateFunction.execute(ctx, 'supplierRiskLevel', {
-        riskScore: 72,
-      }),
-    ).toBe('HIGH');
-    expect(
-      await h.evaluateFunction.execute(ctx, 'coverageDays', {
-        inventoryDays: 10,
-        safetyStockDays: 4,
-      }),
-    ).toBe(6);
-    await expectCode(
-      h.evaluateFunction.execute(ctx, 'toString', {}),
-      'NOT_FOUND',
+      await h.putDefinition(ctx, 'link-types', 'storedIn', STORED_IN, 1),
+    ).toEqual({
+      etag: 2,
+    });
+    const dto = await h.getOntology(ctx);
+    expect(dto).toMatchObject({
+      custom: true,
+      etag: 2,
+      updatedAt: '2026-09-24T00:00:01.000Z',
+    });
+    expect(dto.definition.linkTypes.map(l => l.apiName)).toContain('storedIn');
+    // The template itself is untouched.
+    expect(SUPPLY_CHAIN_DEFINITION.objectTypes).toHaveLength(3);
+  });
+
+  it('replaces an existing definition in place', async () => {
+    const supplier = (await h.getDefinition(ctx, 'object-types', 'Supplier'))
+      .item;
+    const changed = {...supplier, icon: 'truck'};
+    await h.putDefinition(ctx, 'object-types', 'Supplier', changed, 0);
+    const {item, etag} = await h.getDefinition(ctx, 'object-types', 'Supplier');
+    expect(item.icon).toBe('truck');
+    expect(etag).toBe(1);
+    expect((await h.listDefinitions(ctx, 'object-types')).items).toHaveLength(
+      3,
     );
   });
 
-  it('compiles drafts on demand', async () => {
-    await h.saveDraft.execute(ctx, 'plant', schema());
-    const c = await h.getCompiledSchema.execute(ctx, 'plant', 'draft');
-    expect(c.version).toBe('draft');
-    await expectCode(h.getCompiledSchema.execute(ctx, 'plant'), 'NOT_FOUND');
+  it('requires If-Match to be 0 while the template is referenced', async () => {
+    expect(
+      await codeOf(
+        h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 1),
+      ),
+    ).toBe('PRECONDITION_FAILED');
+    expect(await workspaceRows()).toEqual([]);
+  });
+
+  it('lets exactly one of two concurrent first changes win', async () => {
+    const results = await Promise.all([
+      codeOf(h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 0)),
+      codeOf(
+        h.putDefinition(
+          ctx,
+          'object-types',
+          'Depot',
+          {...WAREHOUSE, apiName: 'Depot'},
+          0,
+        ),
+      ),
+    ]);
+    expect(results.sort()).toEqual(['OK', 'PRECONDITION_FAILED']);
+    expect(await workspaceRows()).toEqual([{tenant_id: TEST_TID, etag: 1}]);
+  });
+
+  it('lets exactly one of two puts with the same If-Match win', async () => {
+    await h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 0);
+    const results = await Promise.all([
+      codeOf(h.putDefinition(ctx, 'link-types', 'storedIn', STORED_IN, 1)),
+      codeOf(
+        h.putDefinition(
+          ctx,
+          'object-types',
+          'Depot',
+          {...WAREHOUSE, apiName: 'Depot'},
+          1,
+        ),
+      ),
+    ]);
+    expect(results.sort()).toEqual(['OK', 'PRECONDITION_FAILED']);
+    expect((await h.getOntology(ctx)).etag).toBe(2);
+    // A stale If-Match is rejected with the current etag in the problem.
+    try {
+      await h.putDefinition(ctx, 'link-types', 'storedIn', STORED_IN, 1);
+      expect.unreachable();
+    } catch (e) {
+      const err = AppError.from(e);
+      expect(err.code).toBe('PRECONDITION_FAILED');
+      expect(err.extras).toEqual({etag: 2});
+    }
+  });
+
+  it('rejects structurally invalid changes with issues and keeps the copy', async () => {
+    const bad = {...STORED_IN, to: 'Nowhere'};
+    try {
+      await h.putDefinition(ctx, 'link-types', 'storedIn', bad, 0);
+      expect.unreachable();
+    } catch (e) {
+      const err = AppError.from(e);
+      expect(err.code).toBe('VALIDATION_FAILED');
+      expect(err.extras.issues).toEqual([
+        {
+          path: 'linkTypes.2.to',
+          message: 'Object type does not exist: Nowhere',
+        },
+      ]);
+    }
+    expect(await workspaceRows()).toEqual([]);
+
+    const tooMany: ObjectTypeDef = {
+      ...WAREHOUSE,
+      properties: Array.from({length: 9}, (_, i) => ({
+        apiName: i === 0 ? 'warehouseId' : i === 1 ? 'name' : `p${i}`,
+        displayName: 'p',
+        dataType: 'string' as const,
+        indexed: true,
+      })),
+    };
+    expect(
+      await codeOf(
+        h.putDefinition(ctx, 'object-types', 'Warehouse', tooMany, 0),
+      ),
+    ).toBe('VALIDATION_FAILED');
+    // Body shape errors (zod) and id / apiName mismatch.
+    expect(
+      await codeOf(
+        h.putDefinition(
+          ctx,
+          'object-types',
+          'Warehouse',
+          {apiName: 'Warehouse'} as ObjectTypeDef,
+          0,
+        ),
+      ),
+    ).toBe('VALIDATION_FAILED');
+    expect(
+      await codeOf(h.putDefinition(ctx, 'object-types', 'Depot', WAREHOUSE, 0)),
+    ).toBe('VALIDATION_FAILED');
+    expect(
+      await codeOf(
+        h.putDefinition(ctx, 'functions' as 'object-types', 'x', WAREHOUSE, 0),
+      ),
+    ).toBe('VALIDATION_FAILED');
+    expect(await workspaceRows()).toEqual([]);
+  });
+
+  it('deletes definitions but rejects deleting referenced ones', async () => {
+    try {
+      await h.deleteDefinition(ctx, 'object-types', 'Supplier', 0);
+      expect.unreachable();
+    } catch (e) {
+      const err = AppError.from(e);
+      expect(err.code).toBe('VALIDATION_FAILED');
+      expect(JSON.stringify(err.extras.issues)).toContain('link type supplies');
+    }
+    expect(
+      await codeOf(h.deleteDefinition(ctx, 'link-types', 'supplies', 0)),
+    ).toBe('VALIDATION_FAILED');
+    expect(
+      await codeOf(h.deleteDefinition(ctx, 'link-types', 'ghost', 0)),
+    ).toBe('NOT_FOUND');
+    expect(await workspaceRows()).toEqual([]);
+
+    // Deleting an unreferenced definition copies the template first.
+    expect(
+      await h.deleteDefinition(ctx, 'action-types', 'flagSupplier', 0),
+    ).toEqual({etag: 1});
+    expect(
+      (await h.listDefinitions(ctx, 'action-types')).items.map(a => a.apiName),
+    ).toEqual(['switchSupplier', 'adjustSafetyStock']);
+    expect(
+      await codeOf(
+        h.deleteDefinition(ctx, 'action-types', 'switchSupplier', 0),
+      ),
+    ).toBe('PRECONDITION_FAILED');
+    await h.deleteDefinition(ctx, 'action-types', 'switchSupplier', 1);
+    expect(await h.deleteDefinition(ctx, 'link-types', 'supplies', 2)).toEqual({
+      etag: 3,
+    });
+  });
+
+  it('isolates workspaces', async () => {
+    await h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 0);
+    expect(
+      (await h.getCompiledSchema(other)).objectTypes.Warehouse,
+    ).toBeUndefined();
+    expect((await h.getOntology(other)).custom).toBe(false);
+    expect(
+      await codeOf(h.getDefinition(other, 'object-types', 'Warehouse')),
+    ).toBe('NOT_FOUND');
+    // The other workspace starts its own copy from the template at etag 0.
+    await h.putDefinition(
+      other,
+      'link-types',
+      'storedIn',
+      {...STORED_IN, to: 'Product'},
+      0,
+    );
+    expect(await workspaceRows()).toEqual(
+      expect.arrayContaining([
+        {tenant_id: TEST_TID, etag: 1},
+        {tenant_id: OTHER_TID, etag: 1},
+      ]),
+    );
+    expect(await workspaceRows()).toHaveLength(2);
+    expect((await h.getCompiledSchema(ctx)).linkTypes.storedIn).toBeUndefined();
+  });
+
+  it('caches compiled copies by (tid, etag)', async () => {
+    await h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 0);
+    const first = await h.getCompiledSchema(ctx);
+    expect(await h.getCompiledSchema(ctx)).toBe(first);
+    // A cold isolate rebuilds from the stored compiled form.
+    const cold = createOntologyHandlers({
+      schemas: tid => new D1WorkspaceSchemaRepository(db, tid),
+      templates: new D1TemplateRepository(db),
+      cache: new MemoryCompiledCache(),
+      clock,
+      logger: silentLogger,
+    });
+    const rebuilt = await cold.getCompiledSchema(ctx);
+    expect(rebuilt).toEqual(first);
+    expect(rebuilt).not.toBe(first);
+  });
+
+  it('treats a tombstoned workspace as empty / not found', async () => {
+    await h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 0);
+    await db
+      .prepare('DELETE FROM ont_workspace_schema WHERE tenant_id = ?1')
+      .bind(TEST_TID)
+      .run();
+    await writeTombstone(db, TEST_TID, clock.now().getTime()).run();
+
+    const compiled = await h.getCompiledSchema(ctx);
+    expect(compiled.objectTypes).toEqual({});
+    expect(compiled.indexPlan).toEqual([]);
+    const dto = await h.getOntology(ctx);
+    expect(dto.definition.objectTypes).toEqual([]);
+    expect((await h.listDefinitions(ctx, 'object-types')).items).toEqual([]);
+    expect(await codeOf(h.getDefinition(ctx, 'object-types', 'Supplier'))).toBe(
+      'NOT_FOUND',
+    );
+    expect(
+      await codeOf(
+        h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 0),
+      ),
+    ).toBe('NOT_FOUND');
+    expect(await workspaceRows()).toEqual([]);
+  });
+
+  it('returns template seeds and NOT_FOUND for unknown templates', async () => {
+    const seeds = await h.getTemplateSeeds(SUPPLY_CHAIN_TEMPLATE_ID);
+    expect(seeds.kpis.find(k => k.id === 'highRiskSuppliers')).toMatchObject({
+      objectType: 'Supplier',
+      aggregate: {fn: 'count'},
+      filter: {op: 'gte', prop: 'riskScore', value: 70},
+    });
+    expect(seeds.automations.map(a => a.trigger).sort()).toEqual([
+      'schedule',
+      'threshold',
+    ]);
+    expect(await codeOf(h.getTemplateSeeds('retail'))).toBe('NOT_FOUND');
   });
 });

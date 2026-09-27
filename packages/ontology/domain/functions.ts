@@ -1,19 +1,18 @@
 /**
- * @fileoverview Evaluation of declarative (JSONLogic) ontology functions.
+ * @fileoverview Declarative function evaluation (JSONLogic safe subset,
+ * bounded to 1,000 steps by the shared kernel; no eval).
  */
 
-import {evalLogic} from '@ontodecide/shared-kernel';
-import type {FunctionDef} from '../contract';
+import {AppError, evalLogic} from '@ontodecide/shared-kernel';
+import type {CompiledSchema} from '../contract';
 
-/**
- * Evaluates a function against an object's properties. The data context is
- * the property map itself (`{"var": "riskScore"}`). Evaluation is bounded to
- * 1,000 steps and throws VALIDATION_FAILED on unsupported operators.
- */
+/** Evaluates function `name` of a compiled ontology against properties. */
 export function evaluateFunction(
-  fn: FunctionDef,
+  schema: CompiledSchema,
+  name: string,
   props: Record<string, unknown>,
 ): unknown {
-  const result = evalLogic(fn.expr, props);
-  return result === undefined ? null : result;
+  const fn = schema.functions[name];
+  if (!fn) throw new AppError('NOT_FOUND', `Unknown function: ${name}`);
+  return evalLogic(fn.expr, props);
 }

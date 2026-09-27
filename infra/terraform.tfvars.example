@@ -1,6 +1,30 @@
 # Copy to terraform.tfvars (gitignored) or pass TF_VAR_* in CI.
 account_id = "your-cloudflare-account-id"
 b2_region  = "us-east-005"
+
 # Resource names are {project}-{environment}-{service}; defaults shown.
 # project     = "ontodecide"
 # environment = "prd"
+
+# Custom domain (CI: GitHub variable APP_DOMAIN → TF_VAR_domain). Empty keeps
+# the app on https://ontodecide-ce.pages.dev with the Pages Functions proxy.
+# domain = "example.com"
+
+# DMARC: observe with "none" for two weeks, then "quarantine".
+# dmarc_policy = "none"
+
+# Resend / Brevo sender-domain records (values from their dashboards).
+# mail_dns_records = [
+#   { name = "resend._domainkey.mail", type = "TXT", content = "p=MIGfMA0…" },
+#   { name = "send.mail", type = "MX", content = "feedback-smtp.us-east-1.amazonses.com", priority = 10 },
+#   { name = "send.mail", type = "TXT", content = "v=spf1 include:amazonses.com include:spf.brevo.com ~all" },
+#   { name = "brevo1._domainkey.mail", type = "CNAME", content = "b1.mail-example-com.dkim.brevo.com" },
+#   { name = "mail", type = "TXT", content = "brevo-code:0123456789abcdef" },
+# ]
+
+# Set false when the apex already has DNS records of its own.
+# manage_apex_record = true
+
+# Archive signing key slot used for new links (monthly rotation, see
+# variables.tf).
+# archive_sign_active = "a"

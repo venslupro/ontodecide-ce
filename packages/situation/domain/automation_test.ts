@@ -1,153 +1,152 @@
 /**
- * @fileoverview Tests for automation matching and the rule index.
+ * @fileoverview Tests of automation validation, schedule arithmetic and the
+ * inverted rule index.
  */
 
 import {describe, expect, it} from 'vitest';
-import type {AutomationDto} from '../contract';
-import {AutomationIndex, countCrosses, thresholdMatches} from './automation';
+import {AppError, HOUR_MS} from '@ontodecide/shared-kernel';
+import type {AutomationDef} from '../contract/types';
+import {
+  type AutomationRule,
+  RuleIndex,
+  advanceRun,
+  earliest,
+  firstRunAt,
+  validateAutomation,
+} from './automation';
 
-function rule(over: Partial<AutomationDto> = {}): AutomationDto {
-  return {
-    id: 'a1',
-    name: 'Supplier risk high',
-    trigger: {kind: 'threshold', objectType: 'Supplier'},
-    condition: {op: 'gte', prop: 'riskScore', value: 70},
-    effects: [{kind: 'alert'}],
-    severity: 'HIGH',
-    cooldownSec: 3600,
-    enabled: true,
-    createdAt: '2026-09-24T00:00:00.000Z',
-    ...over,
-  };
+const threshold: AutomationDef = {
+  name: 'High risk',
+  trigger: 'threshold',
+  objectType: 'Supplier',
+  condition: {op: 'gte', prop: 'risk', value: 80},
+  severity: 'HIGH',
+  cooldownSec: 3600,
+  enabled: true,
+};
+const schedule: AutomationDef = {
+  ...threshold,
+  trigger: 'schedule',
+  everyHours: 6,
+};
+
+function code(fn: () => unknown): string | null {
+  try {
+    fn();
+    return null;
+  } catch (e) {
+    return AppError.from(e).code;
+  }
 }
 
-describe('thresholdMatches', () => {
-  const cond = {op: 'gte', prop: 'riskScore', value: 70} as const;
-
-  it('fires when a condition prop changed and matches', () => {
-    expect(
-      thresholdMatches(cond, {
-        type: 'Supplier',
-        changed: ['riskScore'],
-        after: {riskScore: 82},
-      }),
-    ).toBe(true);
+describe('validateAutomation', () => {
+  it('accepts up to three scheduled rules', () => {
+    expect(validateAutomation(schedule, 2)).toEqual(schedule);
+    expect(code(() => validateAutomation(schedule, 3))).toBe(
+      'VALIDATION_FAILED',
+    );
   });
 
-  it('does not fire when the value does not match', () => {
-    expect(
-      thresholdMatches(cond, {
-        type: 'Supplier',
-        changed: ['riskScore'],
-        after: {riskScore: 20},
-      }),
-    ).toBe(false);
+  it('does not count threshold rules against the schedule limit', () => {
+    expect(code(() => validateAutomation(threshold, 3))).toBeNull();
   });
 
-  it('skips when none of the condition props changed', () => {
+  it('requires an interval of 1..24 hours', () => {
+    for (const everyHours of [0, 0.5, 25, undefined]) {
+      expect(code(() => validateAutomation({...schedule, everyHours}, 0))).toBe(
+        'VALIDATION_FAILED',
+      );
+    }
     expect(
-      thresholdMatches(cond, {
-        type: 'Supplier',
-        changed: ['name'],
-        after: {riskScore: 90, name: 'x'},
-      }),
-    ).toBe(false);
+      code(() => validateAutomation({...schedule, everyHours: 1}, 0)),
+    ).toBeNull();
   });
 
-  it('evaluates on first sight (every prop in changed)', () => {
+  it('bounds the cooldown and strips everyHours from threshold rules', () => {
     expect(
-      thresholdMatches(cond, {
-        type: 'Supplier',
-        changed: ['name', 'riskScore'],
-        after: {riskScore: 90, name: 'x'},
-      }),
-    ).toBe(true);
-  });
-
-  it('always evaluates rules without condition', () => {
+      code(() => validateAutomation({...threshold, cooldownSec: -1}, 0)),
+    ).toBe('VALIDATION_FAILED');
     expect(
-      thresholdMatches(undefined, {type: 'S', changed: ['x'], after: {}}),
-    ).toBe(true);
+      code(() => validateAutomation({...threshold, cooldownSec: 86_401}, 0)),
+    ).toBe('VALIDATION_FAILED');
+    expect(
+      validateAutomation({...threshold, everyHours: 3}, 0).everyHours,
+    ).toBeUndefined();
   });
 });
 
-describe('AutomationIndex', () => {
-  const idx = new AutomationIndex([
-    rule(),
-    rule({id: 'a2', condition: undefined}),
-    rule({
-      id: 'a3',
-      trigger: {kind: 'threshold', objectType: 'Product'},
-      condition: {op: 'lt', prop: 'inventoryDays', value: 5},
-    }),
-    rule({id: 'a4', enabled: false}),
-    rule({
-      id: 'a5',
+describe('schedule arithmetic', () => {
+  it('keeps the phase and skips missed slots', () => {
+    const t0 = 1_000 * HOUR_MS;
+    expect(firstRunAt(t0, 2)).toBe(t0 + 2 * HOUR_MS);
+    expect(advanceRun(t0, 2, t0)).toBe(t0 + 2 * HOUR_MS);
+    expect(advanceRun(t0, 2, t0 + 5 * HOUR_MS)).toBe(t0 + 6 * HOUR_MS);
+    expect(advanceRun(t0, 2, t0 + 6 * HOUR_MS)).toBe(t0 + 8 * HOUR_MS);
+  });
+
+  it('picks the earliest instant', () => {
+    expect(earliest(null, 5, undefined, 3)).toBe(3);
+    expect(earliest(null, undefined)).toBeNull();
+  });
+});
+
+describe('RuleIndex', () => {
+  const rule = (
+    id: string,
+    extra: Partial<AutomationRule>,
+  ): AutomationRule => ({
+    id,
+    trigger: 'threshold',
+    objectType: 'Supplier',
+    condition: {op: 'gte', prop: 'risk', value: 80},
+    everyHours: null,
+    enabled: true,
+    cooldownSec: 0,
+    ...extra,
+  });
+  const index = new RuleIndex([
+    rule('risk', {}),
+    rule('stock', {
       condition: {
         op: 'and',
         args: [
-          {op: 'gte', prop: 'riskScore', value: 50},
+          {op: 'lt', prop: 'stock', value: 5},
           {op: 'eq', prop: 'status', value: 'active'},
         ],
       },
     }),
-    rule({
-      id: 'c1',
-      trigger: {
-        kind: 'objectSetCount',
-        objectSet: {objectType: 'Supplier'},
-        op: 'gt',
-        value: 3,
-      },
-    }),
-    rule({
-      id: 's1',
-      trigger: {kind: 'schedule', objectSet: {objectType: 'Product'}},
-    }),
+    rule('always', {condition: {op: 'and', args: []}}),
+    rule('part', {objectType: 'Part'}),
+    rule('off', {enabled: false}),
+    rule('sched', {trigger: 'schedule', everyHours: 1}),
   ]);
+  const ids = (rs: AutomationRule[]) => rs.map(r => r.id).sort();
 
-  it('returns candidates by type and changed prop, without duplicates', () => {
-    const ids = idx
-      .candidates({
-        type: 'Supplier',
-        changed: ['riskScore', 'status'],
-        after: {},
-      })
-      .map(a => a.id)
-      .sort();
-    expect(ids).toEqual(['a1', 'a2', 'a5']);
-  });
-
-  it('matches by condition and ignores disabled rules', () => {
-    const ids = idx
-      .matching({
-        type: 'Supplier',
-        changed: ['riskScore'],
-        after: {riskScore: 60, status: 'active'},
-      })
-      .map(a => a.id)
-      .sort();
-    expect(ids).toEqual(['a2', 'a5']);
-  });
-
-  it('only returns rules for unrelated props when unconditional', () => {
-    const ids = idx
-      .matching({type: 'Supplier', changed: ['name'], after: {riskScore: 99}})
-      .map(a => a.id);
-    expect(ids).toEqual(['a2']);
-  });
-
-  it('exposes count and schedule rules', () => {
-    expect(idx.countRulesFor(new Set(['Supplier'])).map(a => a.id)).toEqual([
-      'c1',
+  it('returns rules referencing a changed property', () => {
+    expect(ids(index.candidates('Supplier', ['risk'], false))).toEqual([
+      'always',
+      'risk',
     ]);
-    expect(idx.countRulesFor(new Set(['Product']))).toEqual([]);
-    expect(idx.schedules().map(a => a.id)).toEqual(['s1']);
+    expect(ids(index.candidates('Supplier', ['status'], false))).toEqual([
+      'always',
+      'stock',
+    ]);
+    expect(ids(index.candidates('Supplier', ['name'], false))).toEqual([
+      'always',
+    ]);
   });
 
-  it('countCrosses', () => {
-    expect(countCrosses(4, 'gt', 3)).toBe(true);
-    expect(countCrosses(3, 'gt', 3)).toBe(false);
-    expect(countCrosses(2, 'lt', 3)).toBe(true);
+  it('returns all rules of the type for whole-object changes', () => {
+    expect(ids(index.candidates('Supplier', [], true))).toEqual([
+      'always',
+      'risk',
+      'stock',
+    ]);
+    expect(ids(index.forType('Part'))).toEqual(['part']);
+  });
+
+  it('skips disabled and scheduled rules', () => {
+    expect(ids(index.forType('Supplier'))).not.toContain('off');
+    expect(ids(index.forType('Supplier'))).not.toContain('sched');
   });
 });

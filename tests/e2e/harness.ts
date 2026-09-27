@@ -1,280 +1,346 @@
 /**
- * @fileoverview In-process wiring of all seven Workers for end-to-end tests.
- *
- * Every service is built with its real `createService` composition root over
- * Node fakes: D1 on node:sqlite (real migrations), a shared QueueBus with
- * the production batch/retry/DLQ settings, Durable Object cores over
- * in-memory SQLite, and service bindings that structured-clone arguments and
- * strip error properties like Workers RPC does. Requests enter through the
- * gateway's `createApp`, exactly as the Pages Function would forward them.
+ * @fileoverview In-process full system: the seven Workers built with their
+ * real `createService` / `createApp` composition roots over node:sqlite D1,
+ * in-memory Durable Object storage and an in-memory queue bus, wired through
+ * RPC-emulating bindings exactly as in docs/ARCHITECTURE.md 2.2. Only the
+ * outside world is faked: Workers AI (absent → rule ranking), e-mail
+ * providers, Turnstile, WebAuthn, and B2.
  */
 
-import {join} from 'node:path';
-import {createApp} from '../../apps/api-gateway/src/app';
-import {EdgeGuardCore} from '../../apps/api-gateway/src/edge_guard_core';
-import {createService as createDecision} from '../../apps/decision-engine/src/service';
-import {createService as createIdentity} from '../../apps/identity-access/src/service';
-import {createService as createIntegration} from '../../apps/data-integration/src/service';
-import {createService as createObjects} from '../../apps/object-graph/src/service';
-import {createService as createOntology} from '../../apps/ontology-manager/src/service';
-import {createService as createSituation} from '../../apps/situation-awareness/src/service';
 import {
-  FakeDoNamespace,
-  FetchMock,
-  MemoryKV,
-  MemorySqlStorage,
-  QueueBus,
-  REPO_ROOT,
-  SqliteD1,
-  fetcherBinding,
-  rpcBinding,
-  type ConsumerConfig,
-} from '../../packages/testing/index';
-import {SituationRoomCore} from '../../packages/situation/infrastructure/situation_room_core';
-import {UsageGuardCore} from '../../packages/situation/infrastructure/usage_guard_core';
+  FakeEmailSender,
+  FakeTurnstile,
+} from '../../packages/identity/interface/test_fixtures';
+import {
+  FakeLinkSigner,
+  FakeWebAuthn,
+  InMemoryBlobStore,
+} from '../../packages/identity/infrastructure';
+import type {SituationRoomCore} from '../../packages/situation/application';
+import {
+  InMemoryRoomStorage,
+  MemorySocketHub,
+} from '../../packages/situation/infrastructure';
 import {
   FixedClock,
+  generateSigningKey,
+  publicJwkOf,
   silentLogger,
-  type ServiceModule,
-} from '../../packages/shared-kernel/index';
+  type TenantLifecycleRpc,
+} from '../../packages/shared-kernel';
+import {
+  FakeDoNamespace,
+  FakeRateLimiter,
+  MemorySqlStorage,
+  QueueBus,
+  createTestD1,
+  fetcherBinding,
+  rpcBinding,
+} from '../../packages/testing';
+import {createApp} from '../../apps/api-gateway/src/app';
+import type {Env as GatewayEnv} from '../../apps/api-gateway/src/env';
+import {createService as createDecision} from '../../apps/decision-engine/src/service';
+import type {Env as DecisionEnv} from '../../apps/decision-engine/src/env';
+import {createService as createIdentity} from '../../apps/identity-access/src/service';
+import type {Env as IdentityEnv} from '../../apps/identity-access/src/env';
+import {createService as createIntegration} from '../../apps/data-integration/src/service';
+import type {Env as IntegrationEnv} from '../../apps/data-integration/src/env';
+import {createService as createObjects} from '../../apps/object-graph/src/service';
+import type {Env as ObjectsEnv} from '../../apps/object-graph/src/env';
+import {createService as createOntology} from '../../apps/ontology-manager/src/service';
+import type {Env as OntologyEnv} from '../../apps/ontology-manager/src/env';
+import {
+  createRoomCore,
+  createService as createSituation,
+} from '../../apps/situation-awareness/src/service';
+import type {Env as SituationEnv} from '../../apps/situation-awareness/src/env';
 
-export const ADMIN_EMAIL = 'admin@ontodecide.local';
-export const ADMIN_PASSWORD = 'Admin12345!';
-const JWT_SECRET = 'k1:e2e-jwt-secret-0123456789abcdef';
-const APPROVAL_SECRET = 'e2e-approval-secret';
+/** Web origin of the test deployment. */
+export const ORIGIN = 'https://app.ontodecide.test';
 
-function d1(db: string): SqliteD1 {
-  return new SqliteD1().migrate(join(REPO_ROOT, 'migrations', db));
+/** Bootstrap admin of the test deployment. */
+export const ADMIN_EMAIL = 'root@ontodecide.test';
+export const SETUP_CODE = 'setup-code-0123456789';
+
+/** Deployed queue name (prefix as in production). */
+const DOMAIN_EVENTS = 'ontodecide-test-domain-events';
+const DEAD_LETTER = 'ontodecide-test-dead-letter';
+
+/** A response with its parsed JSON body. */
+export interface ApiResponse<T = Record<string, unknown>> {
+  status: number;
+  headers: Headers;
+  body: T;
 }
 
-/** Options for {@link createHarness}. */
-export interface HarnessOptions {
-  /** Extra overrides for decision-engine (e.g. a fake LLM). */
-  decisionOverrides?: Record<string, unknown>;
+/** Request options of {@link System.api}. */
+export interface ApiOptions {
+  token?: string;
+  body?: unknown;
+  headers?: Record<string, string>;
+  cookie?: string;
+  ip?: string;
 }
 
-/** Builds the whole system in-process. */
-export function createHarness(opts: HarnessOptions = {}) {
+/** The running system. */
+export type System = Awaited<ReturnType<typeof createSystem>>;
+
+/** Builds every service and the gateway. */
+export async function createSystem() {
   const clock = new FixedClock('2026-09-24T08:00:00Z');
+  const opts = {clock, logger: silentLogger};
   const bus = new QueueBus();
-  const fetchMock = new FetchMock();
-  const dbs = {
-    identity: d1('identity'),
-    ontology: d1('ontology'),
-    integration: d1('integration'),
-    object: d1('object'),
-    situation: d1('situation'),
-    decision: d1('decision'),
-  };
-  const common = {clock, logger: silentLogger};
-  const svc: Record<string, ServiceModule<object>> = {};
-  const bind = <T extends object>(name: string): T =>
-    rpcBinding(() => svc[name].rpc as T);
+  const signingKey = await generateSigningKey('e2e-1');
 
-  const rooms = new FakeDoNamespace(
-    () => new SituationRoomCore(new MemorySqlStorage(), undefined, clock),
-  );
-  const usageGuard = new FakeDoNamespace(
-    () => new UsageGuardCore(new MemorySqlStorage(), {clock}),
-  );
-  const edgeGuard = new FakeDoNamespace(
-    () =>
-      new EdgeGuardCore(new MemorySqlStorage(), () => clock.now().getTime()),
-  );
+  const ontologyEnv: OntologyEnv = {
+    ONTOLOGY_DB: createTestD1('ontology-manager'),
+    ENVIRONMENT: 'test',
+  } as OntologyEnv;
+  const ontology = createOntology(ontologyEnv, opts);
 
-  svc.identity = createIdentity(
-    {
-      IDENTITY_DB: dbs.identity.asD1(),
-      JWT_SECRET,
-      BOOTSTRAP_ADMIN_EMAIL: ADMIN_EMAIL,
-      BOOTSTRAP_ADMIN_PASSWORD: ADMIN_PASSWORD,
-      BOOTSTRAP_TENANT_NAME: 'E2E',
-    },
-    {...common, pbkdf2Iterations: 1000},
-  );
-  svc.ontology = createOntology(
-    {ONTOLOGY_DB: dbs.ontology.asD1(), SCHEMA_CACHE: new MemoryKV().asKV()},
-    common,
-  );
-  svc.integration = createIntegration(
-    {
-      INTEGRATION_DB: dbs.integration.asD1(),
-      ONTOLOGY: bind('ontology'),
-      INGEST_QUEUE: bus.sender('ingest'),
-      OBJECT_WRITES_QUEUE: bus.sender('object-writes'),
-      CONNECTOR_ENC_KEY: 'e2e-connector-key',
-    },
-    {...common, fetch: fetchMock.fetch},
-  );
-  svc.objects = createObjects(
-    {
-      OBJECT_DB: dbs.object.asD1(),
-      ONTOLOGY: bind('ontology'),
-      INTEGRATION: bind('integration'),
-      GRAPH_SYNC_QUEUE: bus.sender('graph-sync'),
-      SITUATION_EVENTS_QUEUE: bus.sender('situation-events'),
-      APPROVAL_SECRET,
-      WRITEBACK_SECRET: 'e2e-writeback',
-    },
-    {...common, fetch: fetchMock.fetch},
-  );
-  svc.situation = createSituation(
-    {
-      SITUATION_DB: dbs.situation.asD1(),
-      SITUATION_ROOM: rooms.asNamespace(),
-      USAGE_GUARD: usageGuard.asNamespace(),
-      OBJECTS: bind('objects'),
-      DECISION_JOBS_QUEUE: bus.sender('decision-jobs'),
-      INGEST_QUEUE: bus.sender('ingest'),
-      OBJECT_WRITES_QUEUE: bus.sender('object-writes'),
-      GRAPH_SYNC_QUEUE: bus.sender('graph-sync'),
-      SITUATION_EVENTS_QUEUE: bus.sender('situation-events'),
-    },
-    common,
-  );
-  svc.decision = createDecision(
-    {
-      DECISION_DB: dbs.decision.asD1(),
-      OBJECTS: bind('objects'),
-      SITUATION: bind('situation'),
-      ONTOLOGY: bind('ontology'),
-      DECISION_JOBS_QUEUE: bus.sender('decision-jobs'),
-      APPROVAL_SECRET,
-      LLM_CHAIN: 'workers-ai,gemini,groq',
-    },
-    {...common, fetch: fetchMock.fetch, ...(opts.decisionOverrides ?? {})},
-  );
+  const objectsEnv = {
+    OBJECT_DB: createTestD1('object-graph'),
+    ONTOLOGY: rpcBinding(ontology.rpc),
+    DOMAIN_EVENTS: bus.sender(DOMAIN_EVENTS),
+    MAX_OBJECTS: '300',
+    MAX_LINKS: '900',
+    ENVIRONMENT: 'test',
+  } as unknown as ObjectsEnv;
+  const objects = createObjects(objectsEnv, opts);
 
-  const gateway = createApp(
-    {
-      IDENTITY: bind('identity'),
-      ONTOLOGY: bind('ontology'),
-      INTEGRATION: bind('integration'),
-      OBJECTS: bind('objects'),
-      SITUATION: fetcherBinding(
-        req => svc.situation.fetch!(req),
-        rpcBinding(() => svc.situation.rpc),
-      ),
-      DECISION: bind('decision'),
-      EDGE_GUARD: edgeGuard.asNamespace(),
-      CONFIG: new MemoryKV().asKV(),
-      JWT_SECRET,
-      ENVIRONMENT: 'test',
-      APP_VERSION: 'e2e',
-      COOKIE_SECURE: 'false',
-    } as never,
-    common,
-  );
-
-  const consumer = (
-    name: string,
-    batch: number,
-    retries: number,
-  ): ConsumerConfig => ({
-    handler: b => svc[name].queue!(b),
-    maxBatchSize: batch,
-    maxRetries: retries,
-    deadLetterQueue: undefined,
+  const situationEnv = {
+    OBJECTS: rpcBinding(objects.rpc),
+    ONTOLOGY: rpcBinding(ontology.rpc),
+    APP_ORIGIN: ORIGIN,
+    ENVIRONMENT: 'test',
+  } as unknown as SituationEnv;
+  const hubs = new Map<string, MemorySocketHub>();
+  const rooms = new FakeDoNamespace<SituationRoomCore>(name => {
+    const sql = new MemorySqlStorage();
+    const hub = new MemorySocketHub();
+    hubs.set(name, hub);
+    return createRoomCore(
+      situationEnv,
+      {sql, storage: new InMemoryRoomStorage(sql), sockets: hub},
+      opts,
+    );
   });
-  const dlq = (): ConsumerConfig => consumer('situation', 10, 1);
-  const consumers: Record<string, ConsumerConfig> = {
-    ingest: {...consumer('integration', 4, 3), deadLetterQueue: 'ingest-dlq'},
-    'object-writes': {
-      ...consumer('objects', 4, 3),
-      deadLetterQueue: 'object-writes-dlq',
-    },
-    'graph-sync': {
-      ...consumer('objects', 10, 5),
-      deadLetterQueue: 'graph-sync-dlq',
-    },
-    'situation-events': {
-      ...consumer('situation', 10, 3),
-      deadLetterQueue: 'situation-events-dlq',
-    },
-    'decision-jobs': {
-      ...consumer('decision', 5, 3),
-      deadLetterQueue: 'decision-jobs-dlq',
-    },
-    'ingest-dlq': dlq(),
-    'object-writes-dlq': dlq(),
-    'graph-sync-dlq': dlq(),
-    'situation-events-dlq': dlq(),
-    'decision-jobs-dlq': dlq(),
+  Object.assign(situationEnv, {SITUATION_ROOM: rooms.asNamespace()});
+  const situation = createSituation(situationEnv, opts);
+
+  const decisionEnv = {
+    DECISION_DB: createTestD1('decision-engine'),
+    OBJECTS: rpcBinding(objects.rpc),
+    SITUATION: rpcBinding(situation.rpc),
+    ONTOLOGY: rpcBinding(ontology.rpc),
+    ENVIRONMENT: 'test',
+  } as unknown as DecisionEnv;
+  const decision = createDecision(decisionEnv, {...opts, ai: null});
+
+  const integrationEnv = {
+    INTEGRATION_DB: createTestD1('data-integration'),
+    ONTOLOGY: rpcBinding(ontology.rpc),
+    OBJECTS: rpcBinding(objects.rpc),
+    ENVIRONMENT: 'test',
+  } as unknown as IntegrationEnv;
+  const integration = createIntegration(integrationEnv, {...opts, ai: null});
+
+  const lc = (m: {lifecycle?: TenantLifecycleRpc}) => {
+    if (!m.lifecycle) throw new Error('service without TenantLifecycle');
+    return rpcBinding(m.lifecycle);
   };
+  const identityDb = createTestD1('identity-access');
+  const identityEnv = {
+    IDENTITY_DB: identityDb,
+    LC_ONTOLOGY: lc(ontology),
+    LC_INTEGRATION: lc(integration),
+    LC_OBJECTS: lc(objects),
+    LC_SITUATION: lc(situation),
+    LC_DECISION: lc(decision),
+    APP_ORIGIN: ORIGIN,
+    MAIL_FROM: 'OntoDecide <noreply@mail.ontodecide.test>',
+    EMAIL_MODE: 'live',
+    B2_ARCHIVE_BUCKET: 'ontodecide-test-archive',
+    B2_ENDPOINT: 's3.us-west-004.backblazeb2.com',
+    B2_REGION: 'us-west-004',
+    WEBAUTHN_RP_ID: 'app.ontodecide.test',
+    ENVIRONMENT: 'test',
+    JWT_SIGNING_KEY: JSON.stringify(signingKey),
+    EMAIL_PEPPER: 'e2e-pepper',
+    EMAIL_ENC_KEY: 'e2e-enc-key',
+    TURNSTILE_SECRET: 'unused',
+    B2_WRITE_KEY_ID: 'w',
+    B2_WRITE_APP_KEY: 'w',
+    B2_SIGN_KEY_ID: 's',
+    B2_SIGN_APP_KEY: 's',
+    BOOTSTRAP_ADMIN_EMAIL: ADMIN_EMAIL,
+    BOOTSTRAP_ADMIN_SETUP_CODE: SETUP_CODE,
+  } as unknown as IdentityEnv;
+  const blobs = new InMemoryBlobStore();
+  const resend = new FakeEmailSender('resend');
+  const brevo = new FakeEmailSender('brevo');
+  const identity = createIdentity(identityEnv, {
+    ...opts,
+    blobs,
+    signer: new FakeLinkSigner(),
+    webauthn: new FakeWebAuthn(),
+    turnstile: new FakeTurnstile(),
+    mail: {mode: 'live', resend, brevo},
+    analytics: null,
+  });
 
-  let token = '';
-  let cookie = '';
+  const limiter = () => new FakeRateLimiter(10_000).asRateLimit();
+  const gatewayEnv: GatewayEnv = {
+    IDENTITY: rpcBinding(identity.rpc),
+    ONTOLOGY: rpcBinding(ontology.rpc),
+    INTEGRATION: rpcBinding(integration.rpc),
+    OBJECTS: rpcBinding(objects.rpc),
+    SITUATION: fetcherBinding(req => situation.fetch!(req), situation.rpc),
+    DECISION: rpcBinding(decision.rpc),
+    RL_USER_READ: limiter(),
+    RL_USER_WRITE: limiter(),
+    RL_EMAIL: limiter(),
+    RL_IP_AUTH: limiter(),
+    APP_ORIGIN: ORIGIN,
+    JWT_PUBLIC_KEYS: JSON.stringify({keys: [publicJwkOf(signingKey)]}),
+    ENVIRONMENT: 'test',
+  };
+  const gateway = createApp(gatewayEnv, opts);
 
-  /** Calls the public API through the gateway. */
-  async function api<T = unknown>(
+  /** Sends a request through the gateway (same-origin browser defaults). */
+  async function api<T = Record<string, unknown>>(
     method: string,
     path: string,
-    body?: unknown,
-    headers: Record<string, string> = {},
-  ): Promise<{status: number; body: T; headers: Headers}> {
-    const res = await gateway.fetch(
-      new Request(`http://ontodecide-ce.pages.dev/api/v1${path}`, {
-        method,
-        headers: {
-          'content-type': 'application/json',
-          'accept-language': 'en-US',
-          ...(token ? {authorization: `Bearer ${token}`} : {}),
-          ...(cookie ? {cookie} : {}),
-          ...headers,
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      }),
-    );
-    const setCookie = res.headers.get('set-cookie');
-    if (setCookie) cookie = setCookie.split(';')[0];
-    const text = await res.text();
-    return {
-      status: res.status,
-      body: (text ? JSON.parse(text) : null) as T,
-      headers: res.headers,
+    o: ApiOptions = {},
+  ): Promise<ApiResponse<T>> {
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      origin: ORIGIN,
+      'cf-connecting-ip': o.ip ?? '198.51.100.7',
+      'user-agent': 'Mozilla/5.0 (Macintosh) Chrome/140.0 Safari/537.36',
+      ...o.headers,
     };
+    if (o.token) headers.authorization = `Bearer ${o.token}`;
+    if (o.cookie) headers.cookie = o.cookie;
+    let body: string | undefined;
+    if (o.body !== undefined) {
+      headers['content-type'] ??= 'application/json';
+      body = JSON.stringify(o.body);
+    }
+    const res = await gateway.fetch(
+      new Request(`${ORIGIN}/api/v1${path}`, {method, headers, body}),
+    );
+    const text = await res.text();
+    let parsed: unknown = text;
+    try {
+      parsed = text ? JSON.parse(text) : undefined;
+    } catch {
+      // Non-JSON body (e.g. JSON Lines export).
+    }
+    return {status: res.status, headers: res.headers, body: parsed as T};
   }
 
-  /** Like {@link api} but throws on non-2xx. */
-  async function ok<T = unknown>(
-    method: string,
-    path: string,
-    body?: unknown,
-    headers?: Record<string, string>,
-  ): Promise<T> {
-    const r = await api<T>(method, path, body, headers);
-    if (r.status >= 400) {
-      throw new Error(
-        `${method} ${path} → ${r.status} ${JSON.stringify(r.body)}`,
-      );
-    }
-    return r.body;
+  /** Delivers queued domain events to situation-awareness. */
+  async function drain(): Promise<void> {
+    await bus.drain({
+      [DOMAIN_EVENTS]: {
+        handler: b => situation.queue!(b),
+        maxBatchSize: 10,
+        maxRetries: 3,
+        deadLetterQueue: DEAD_LETTER,
+      },
+    });
+  }
+
+  /** Runs one tick of both crons at the current clock. */
+  async function cronTick(): Promise<void> {
+    await identity.scheduled!('*/2 * * * *', clock.now());
+    await objects.scheduled!('*/15 * * * *', clock.now());
+  }
+
+  /** Captured e-mails of both providers, oldest first. */
+  function mails() {
+    return [...resend.sent, ...brevo.sent];
+  }
+
+  /** The last 6-digit code mailed to an address. */
+  function lastCode(to: string): string {
+    const m = mails()
+      .filter(x => x.to === to && x.template.startsWith('code_'))
+      .pop();
+    const code = m && /\b(\d{6})\b/.exec(`${m.subject} ${m.text}`)?.[1];
+    if (!code) throw new Error(`no code mailed to ${to}`);
+    return code;
   }
 
   return {
     clock,
     bus,
-    dbs,
-    svc,
+    blobs,
+    hubs,
     rooms,
-    fetchMock,
-    gateway,
+    dbs: {
+      identity: identityDb,
+      ontology: ontologyEnv.ONTOLOGY_DB,
+      objects: objectsEnv.OBJECT_DB,
+      integration: integrationEnv.INTEGRATION_DB,
+      decision: decisionEnv.DECISION_DB,
+    },
+    services: {ontology, objects, situation, decision, integration, identity},
     api,
-    ok,
-    /** Delivers queued messages until every queue is empty. */
-    drain: () => bus.drain(consumers),
-    /** Runs a service's cron handler. */
-    cron: (service: string, cronExpr: string) =>
-      svc[service].scheduled!(cronExpr, clock.now()),
-    setToken: (t: string) => {
-      token = t;
-    },
-    clearAuth: () => {
-      token = '';
-      cookie = '';
-    },
+    drain,
+    cronTick,
+    mails,
+    lastCode,
+    deadLetters: () => bus.size(DEAD_LETTER),
   };
 }
 
-/** A running harness. */
-export type Harness = ReturnType<typeof createHarness>;
+/** Extracts the refresh cookie pair (`name=value`) from a response. */
+export function refreshCookie(res: ApiResponse<unknown>): string {
+  const raw = res.headers.get('set-cookie') ?? '';
+  const m = /(__Host-od_rt=[^;]*)/.exec(raw);
+  if (!m) throw new Error(`no refresh cookie in: ${raw}`);
+  return m[1];
+}
+
+/** Signs an owner up end to end; returns the access token and cookie. */
+export async function signUp(
+  sys: System,
+  email: string,
+  ip = '198.51.100.20',
+): Promise<{token: string; cookie: string; tid: string}> {
+  const send = await sys.api('POST', '/auth/codes', {
+    ip,
+    body: {email, purpose: 'signup', turnstileToken: 'ok', locale: 'zh-CN'},
+  });
+  if (send.status !== 202) throw new Error(`sendCode ${send.status}`);
+  const res = await sys.api<{
+    accessToken: string;
+    me: {workspace: {tenantId: string}};
+  }>('POST', '/auth/sessions', {
+    ip,
+    body: {email, code: sys.lastCode(email), purpose: 'signup'},
+  });
+  if (res.status !== 201) {
+    throw new Error(`createSession ${res.status} ${JSON.stringify(res.body)}`);
+  }
+  return {
+    token: res.body.accessToken,
+    cookie: refreshCookie(res),
+    tid: res.body.me.workspace.tenantId,
+  };
+}
+
+/** Counts rows of a table for one tenant. */
+export async function rowsOf(
+  db: D1Database,
+  table: string,
+  tid: string,
+): Promise<number> {
+  const r = await db
+    .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE tenant_id = ?1`)
+    .bind(tid)
+    .first<{n: number}>();
+  return r?.n ?? 0;
+}

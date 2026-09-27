@@ -1,153 +1,92 @@
-import {describe, expect, it} from 'vitest';
+/**
+ * @fileoverview Integration tests of object-graph against the real
+ * migrations (node:sqlite D1): upsert merge / hash skip / limits /
+ * REF_MISSING, outbox delivery and redelivery, reads and queries, PATCH with
+ * If-Match, actions (idempotency, preconditions, effects, actors), graph
+ * traversal, tenant isolation and the TenantLifecycle entry point.
+ */
+
+import {join} from 'node:path';
+import {beforeEach, describe, expect, it} from 'vitest';
 import type {
-  IntegrationRpc,
-  WriteResult,
-} from '@ontodecide/integration/contract';
-import {signVoucher} from '@ontodecide/object-graph/contract';
-import type {
-  GraphSyncMsg,
   ObjectGraphRpc,
-  SituationEventMsg,
+  UpsertCmd,
 } from '@ontodecide/object-graph/contract';
-import type {CompiledModel, OntologyRpc} from '@ontodecide/ontology/contract';
+import type {CompiledSchema, OntologyRpc} from '@ontodecide/ontology/contract';
 import {
   AppError,
   FixedClock,
-  hmacSha256Hex,
+  HOUR_MS,
+  MINUTE_MS,
+  serviceCtx,
   silentLogger,
 } from '@ontodecide/shared-kernel';
-import type {CallCtx, Rid, Role} from '@ontodecide/shared-kernel';
+import type {CallCtx, DomainEventMsg, Rid} from '@ontodecide/shared-kernel';
 import {
-  FetchMock,
   QueueBus,
+  REPO_ROOT,
   SqliteD1,
-  createTestD1,
+  TEST_TID,
   rpcBinding,
   testCtx,
 } from '@ontodecide/testing';
-import type {Env} from './env';
+import {createTenantLifecycle} from '@ontodecide/object-graph/application';
+import {D1LifecycleStore} from '@ontodecide/object-graph/infrastructure';
 import {createService} from './service';
-import {
-  cmd,
-  materialCmds,
-  productCmds,
-  supplierCmds,
-  supplyChainModel,
-  writeMsg,
-} from './test_fixtures';
-import type {ModelOptions} from './test_fixtures';
+import {testSchema} from './test_fixtures';
 
-const SECRET = 'approval-secret';
+const OTHER_TID = '01K6A000000000000000000T02';
+const Q = 'domain-events';
 
 interface Harness {
-  env: Env;
   db: SqliteD1;
   bus: QueueBus;
   clock: FixedClock;
-  fetchMock: FetchMock;
   rpc: ObjectGraphRpc;
   svc: ReturnType<typeof createService>;
-  reports: {jobId: string; seq: number; last: boolean; r: WriteResult}[];
-  integration: {failNext: number};
-  setModel(opts: ModelOptions): void;
-  send(msg: unknown): Promise<void>;
-  sit(): SituationEventMsg[];
-  sync(): GraphSyncMsg[];
-  rid(type: string, pk: string, tenant?: string): Promise<Rid>;
-  ctx(role?: Role, extra?: Partial<CallCtx>): CallCtx;
+  setSchema(s: CompiledSchema): void;
+  failQueue(fail: boolean): void;
+  messages(): DomainEventMsg[];
 }
 
-function harness(envExtra: Partial<Env> = {}): Harness {
-  const d1 = createTestD1('object');
-  const db = d1 as unknown as SqliteD1;
+function setup(
+  opts: {maxObjects?: number; maxLinks?: number; maxEventBytes?: number} = {},
+): Harness {
+  const db = new SqliteD1().migrate(
+    join(REPO_ROOT, 'migrations', 'object-graph'),
+  );
   const bus = new QueueBus();
   const clock = new FixedClock('2026-09-24T00:00:00Z');
-  const fetchMock = new FetchMock();
-  const reports: Harness['reports'] = [];
-  const integrationState = {failNext: 0};
-  let modelOpts: ModelOptions = {};
-  const ontology = {
-    getActiveModel: async (ctx: CallCtx): Promise<CompiledModel> =>
-      supplyChainModel(ctx.tenantId, modelOpts),
-  };
-  const integration = {
-    reportWriteResult: async (
-      _ctx: CallCtx,
-      jobId: string,
-      seq: number,
-      last: boolean,
-      r: WriteResult,
-    ) => {
-      if (integrationState.failNext > 0) {
-        integrationState.failNext--;
-        throw new AppError('UPSTREAM_FAILED', 'integration down');
-      }
-      reports.push({jobId, seq, last, r});
+  let schema = testSchema();
+  let failing = false;
+  const sender = bus.sender<DomainEventMsg>(Q);
+  const queue = {
+    send: async (m: DomainEventMsg) => {
+      if (failing) throw new Error('queue unavailable');
+      await sender.send(m);
     },
   };
-  const env: Env = {
-    OBJECT_DB: d1,
-    ONTOLOGY: rpcBinding(ontology as unknown as OntologyRpc),
-    INTEGRATION: rpcBinding(integration as unknown as IntegrationRpc),
-    GRAPH_SYNC_QUEUE: bus.sender('graph-sync'),
-    SITUATION_EVENTS_QUEUE: bus.sender('situation-events'),
-    APPROVAL_SECRET: SECRET,
-    WRITEBACK_SECRET: 'wb-secret',
-    ...envExtra,
-  };
-  const svc = createService(env, {
-    clock,
-    logger: silentLogger,
-    fetch: fetchMock.fetch,
-  });
-  const rpc = rpcBinding(svc.rpc);
-  const writes = bus.sender('object-writes');
-  const h: Harness = {
-    env,
+  const ontology = rpcBinding({getCompiledSchema: async () => schema});
+  const svc = createService(
+    {
+      OBJECT_DB: db.asD1(),
+      ONTOLOGY: ontology as unknown as OntologyRpc,
+      DOMAIN_EVENTS: sender,
+      MAX_OBJECTS: opts.maxObjects ? String(opts.maxObjects) : undefined,
+      MAX_LINKS: opts.maxLinks ? String(opts.maxLinks) : undefined,
+    },
+    {clock, logger: silentLogger, queue, maxEventBytes: opts.maxEventBytes},
+  );
+  return {
     db,
     bus,
     clock,
-    fetchMock,
-    rpc,
     svc,
-    reports,
-    integration: integrationState,
-    setModel: opts => {
-      modelOpts = opts;
-    },
-    send: async msg => {
-      await writes.send(msg);
-      await bus.drain({
-        'object-writes': {
-          handler: b => svc.queue!(b),
-          maxBatchSize: 4,
-          maxRetries: 3,
-        },
-      });
-    },
-    sit: () => bus.peek('situation-events') as SituationEventMsg[],
-    sync: () => bus.peek('graph-sync') as GraphSyncMsg[],
-    rid: async (type, pk, tenant = 't1') => {
-      const row = db.raw
-        .prepare(
-          'SELECT rid FROM og_object WHERE tenant_id = ? AND object_type = ? AND primary_key = ?',
-        )
-        .get(tenant, type, pk) as {rid: string} | undefined;
-      if (!row) throw new Error(`missing ${type}/${pk}`);
-      return row.rid as Rid;
-    },
-    ctx: (role = 'Admin', extra = {}) => testCtx({role, ...extra}),
+    rpc: rpcBinding(svc.rpc),
+    setSchema: s => (schema = s),
+    failQueue: f => (failing = f),
+    messages: () => bus.peek(Q) as DomainEventMsg[],
   };
-  return h;
-}
-
-async function seeded(envExtra: Partial<Env> = {}): Promise<Harness> {
-  const h = harness(envExtra);
-  const ctx = h.ctx();
-  await h.send(writeMsg(ctx, 'job-sup', supplierCmds()));
-  await h.send(writeMsg(ctx, 'job-mat', materialCmds()));
-  await h.send(writeMsg(ctx, 'job-prod', productCmds()));
-  return h;
 }
 
 async function codeOf(p: Promise<unknown>): Promise<AppError> {
@@ -156,1353 +95,1222 @@ async function codeOf(p: Promise<unknown>): Promise<AppError> {
   } catch (e) {
     return AppError.from(e);
   }
-  throw new Error('expected rejection');
+  throw new Error('expected a rejection');
 }
 
-function count(
-  db: SqliteD1,
-  sql: string,
-  ...params: (string | number)[]
-): number {
-  return Number((db.raw.prepare(sql).get(...params) as {n: number}).n);
+function supplier(
+  pk: string,
+  props: Record<string, unknown> = {},
+  row = 1,
+  links: UpsertCmd['links'] = [],
+): UpsertCmd {
+  return {
+    type: 'Supplier',
+    primaryKey: pk,
+    props: {name: `Supplier ${pk}`, active: true, riskScore: 0.2, ...props},
+    row,
+    links,
+  };
 }
 
-describe('object-graph service: upsert (object-writes)', () => {
-  it('creates stub objects for link targets and fills them later', async () => {
-    const h = harness();
-    const ctx = h.ctx();
-    await h.send(writeMsg(ctx, 'job-sup', supplierCmds()));
-    // Reads + one bulked batch + inbox/outbox bookkeeping.
-    expect(h.db.queries).toBeLessThanOrEqual(15);
-    expect(h.reports[0]).toMatchObject({
-      jobId: 'job-sup',
-      seq: 0,
-      last: true,
-      r: {upserted: 3, merged: 0, skipped: 0, rejected: []},
-    });
-    const m1 = await h.rpc.getObject(ctx, await h.rid('Material', 'M1'));
-    expect(m1).toMatchObject({
-      title: 'M1',
-      props: {materialId: 'M1'},
-      provenance: {},
-    });
-    expect(
-      count(
-        h.db,
-        "SELECT COUNT(*) AS n FROM og_link WHERE link_type = 'supplies'",
-      ),
-    ).toBe(3);
+function part(
+  pk: string,
+  props: Record<string, unknown> = {},
+  row = 1,
+  links: UpsertCmd['links'] = [],
+): UpsertCmd {
+  return {
+    type: 'Part',
+    primaryKey: pk,
+    props: {name: pk, ...props},
+    row,
+    links,
+  };
+}
 
-    await h.send(writeMsg(ctx, 'job-mat', materialCmds()));
-    expect(h.reports[1].r).toEqual({
+function supplies(toKey: string, weight?: number) {
+  return {type: 'supplies', toType: 'Part', toKey, weight};
+}
+
+async function ridOf(
+  h: Harness,
+  type: string,
+  pk: string,
+  ctx: CallCtx = testCtx(),
+): Promise<Rid> {
+  const page = await h.rpc.listObjects(ctx, {type, q: pk}, {limit: 100});
+  const o = page.items.find(i => i.primaryKey === pk);
+  if (!o) throw new Error(`no ${type} ${pk}`);
+  return o.rid;
+}
+
+function count(h: Harness, sql: string, ...args: unknown[]): number {
+  const r = h.db.raw.prepare(sql).get(...(args as string[])) as {n: number};
+  return Number(r.n);
+}
+
+describe('upsertBatch', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  it('writes objects, index rows, links and provenance in one batch', async () => {
+    const res = await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'job-1',
+      seq: 1,
+      cmds: [
+        supplier('S1', {country: 'CN', tier: 1}, 1, [supplies('P1', 0.7)]),
+        part('P1', {stock: 10}, 2),
+      ],
+    });
+    expect(res).toEqual({
       upserted: 2,
-      merged: 0,
       skipped: 0,
+      linksWritten: 1,
       rejected: [],
     });
-    const filled = await h.rpc.getObject(ctx, await h.rid('Material', 'M1'));
-    expect(filled).toMatchObject({
-      title: 'Steel',
-      version: 2,
-      props: {name: 'Steel'},
+    const s1 = await ridOf(h, 'Supplier', 'S1');
+    const dto = (await h.rpc.getObject(testCtx(), s1))!;
+    expect(dto.title).toBe('Supplier S1');
+    expect(dto.version).toBe(1);
+    expect(dto.props).toMatchObject({supplierId: 'S1', country: 'CN', tier: 1});
+    expect(dto.provenance.country).toEqual({
+      jobId: 'job-1',
+      row: 1,
+      at: h.clock.now().getTime(),
     });
-    // Products are stubs until the product source arrives.
+    // Indexed props only: country, riskScore, tier (+ status unset).
     expect(
-      (await h.rpc.getObject(ctx, await h.rid('Product', 'P2')))?.title,
-    ).toBe('P2');
-    await h.send(writeMsg(ctx, 'job-prod', productCmds()));
-    expect(
-      (await h.rpc.getObject(ctx, await h.rid('Product', 'P2')))?.title,
-    ).toBe('Gadget');
-    expect(count(h.db, 'SELECT COUNT(*) AS n FROM og_object')).toBe(7);
-  });
-
-  it('rejects invalid records and reports them', async () => {
-    const h = harness();
-    const ctx = h.ctx();
-    await h.send(
-      writeMsg(ctx, 'job-bad', [
-        cmd('Nope', 'X', {}, {row: 1}),
-        cmd('Supplier', 'S9', {riskScore: 'abc', name: 'Z'}, {row: 2}),
-        cmd('Supplier', 'S8', {riskScore: 1}, {row: 3}),
-        cmd(
-          'Supplier',
-          'S7',
-          {name: 'Ok'},
-          {row: 4, links: [{type: 'usedIn', toType: 'Product', toKey: 'P'}]},
-        ),
-        cmd('Supplier', 'S6', {name: 'Fine'}, {row: 5}),
-      ]),
-    );
-    expect(h.reports[0].r.upserted).toBe(1);
-    expect(h.reports[0].r.rejected.map(r => [r.row, r.code])).toEqual([
-      [1, 'UNKNOWN_TYPE'],
-      [2, 'VALIDATION_FAILED'],
-      [4, 'LINK_INVALID'],
-      [3, 'VALIDATION_FAILED'],
-    ]);
-  });
-
-  it('re-sending the same message is a no-op (inbox)', async () => {
-    const h = await seeded();
-    const events = count(h.db, 'SELECT COUNT(*) AS n FROM domain_event');
-    const sent = h.bus.size('situation-events');
-    await h.send(writeMsg(h.ctx(), 'job-sup', supplierCmds()));
-    expect(h.reports).toHaveLength(3);
-    expect(count(h.db, 'SELECT COUNT(*) AS n FROM domain_event')).toBe(events);
-    expect(h.bus.size('situation-events')).toBe(sent);
-  });
-
-  it('a reportWriteResult failure is retried without re-writing data', async () => {
-    const h = harness();
-    h.integration.failNext = 1;
-    await h.send(writeMsg(h.ctx(), 'job-sup', supplierCmds()));
-    expect(h.reports).toHaveLength(1);
-    expect(h.reports[0].r.upserted).toBe(3);
-    expect(count(h.db, 'SELECT COUNT(*) AS n FROM og_object')).toBe(5);
-    expect(
-      count(h.db, 'SELECT COUNT(*) AS n FROM og_object WHERE version > 1'),
-    ).toBe(0);
-    expect(
-      count(
-        h.db,
-        "SELECT COUNT(*) AS n FROM domain_event WHERE type = 'ObjectsUpserted'",
-      ),
-    ).toBe(1);
-  });
-
-  it('skips unchanged records and merges changed ones with provenance history', async () => {
-    const h = await seeded();
-    const ctx = h.ctx();
-    const before = h.bus.size('situation-events');
-    await h.send(writeMsg(ctx, 'job-sup-2', supplierCmds()));
-    expect(h.reports[3].r).toEqual({
-      upserted: 0,
-      merged: 0,
-      skipped: 3,
-      rejected: [],
-    });
-    const newEvents = h.sit().slice(before);
-    expect(newEvents.map(e => e.kind)).toEqual(['JobFinished']);
-
-    const changed = supplierCmds()[0];
-    changed.props.riskScore = 90;
-    changed.provenance = {
-      ...changed.provenance,
-      ingestedAt: '2026-09-25T00:00:00.000Z',
-      recordRef: 'row-9',
-    };
-    await h.send(writeMsg(ctx, 'job-sup-3', [changed]));
-    expect(h.reports[4].r).toEqual({
-      upserted: 0,
-      merged: 1,
-      skipped: 0,
-      rejected: [],
-    });
-    const s1 = await h.rid('Supplier', 'S1');
-    const obj = await h.rpc.getObject(ctx, s1);
-    expect(obj).toMatchObject({version: 2, props: {riskScore: 90}});
-    const lineage = await h.rpc.lineage(ctx, s1);
-    expect(lineage.props.riskScore.value).toBe(90);
-    expect(lineage.props.riskScore.current?.recordRef).toBe('row-9');
-    expect(lineage.props.riskScore.history).toEqual([
-      expect.objectContaining({value: 80, recordRef: 'row-1'}),
-    ]);
-    const evt = h
-      .sit()
-      .filter(e => e.kind === 'ObjectsUpserted')
-      .at(-1);
-    expect(evt?.changes).toEqual([
-      expect.objectContaining({
-        rid: s1,
-        changed: ['riskScore'],
-        after: expect.objectContaining({riskScore: 90}),
-      }),
-    ]);
-    // Index follows the change.
-    const top = await h.rpc.listObjects(ctx, 'Supplier', {
-      filter: {op: 'gte', prop: 'riskScore', value: 85},
-    });
-    expect(top.items.map(i => i.primaryKey)).toEqual(['S1']);
-  });
-
-  it('dispatches the outbox to situation-events and graph-sync', async () => {
-    const h = harness();
-    await h.send(writeMsg(h.ctx(), 'job-sup', supplierCmds(), {last: true}));
-    const sit = h.sit();
-    expect(sit.map(e => e.kind)).toEqual(['ObjectsUpserted', 'JobFinished']);
-    const up = sit[0];
-    expect(up.tenantId).toBe('t1');
-    expect(up.correlationId).toBe('corr-1');
-    expect(up.changes).toHaveLength(5);
-    expect(up.changes.find(c => c.title === 'Acme Metals')).toMatchObject({
-      type: 'Supplier',
-      after: expect.objectContaining({
-        riskScore: 80,
-        contactEmail: 'acme@example.com',
-      }),
-    });
-    expect(up.usage?.[0].resource).toBe('d1.rowsWritten');
-    expect(up.usage?.[0].n).toBeGreaterThan(10);
-    expect(sit[1].job).toEqual({jobId: 'job-sup'});
-
-    const [sync] = h.sync();
-    expect(sync.tenantId).toBe('t1');
-    expect(sync.upserts).toHaveLength(5);
-    const s1 = sync.upserts.find(u => u.title === 'Acme Metals')!;
-    expect(s1.idx).toEqual({
-      name: 'Acme Metals',
-      country: 'CN',
-      riskScore: 80,
-      capacity: 100,
-      status: 'active',
-    });
-    expect(sync.links).toHaveLength(3);
-    expect(sync.links.every(l => l.op === 'merge')).toBe(true);
-    expect(
-      sync.links.find(l => l.src === s1.rid && l.weight === 0.6),
-    ).toBeDefined();
-    expect(
-      count(
-        h.db,
-        'SELECT COUNT(*) AS n FROM domain_event WHERE dispatched_at IS NULL',
-      ),
-    ).toBe(0);
-  });
-
-  it('cron re-dispatches undispatched outbox rows and purges old ones', async () => {
-    const h = harness();
-    const failing = {
-      send: async () => {
-        throw new Error('queue down');
-      },
-      sendBatch: async () => {
-        throw new Error('queue down');
-      },
-    };
-    h.env.SITUATION_EVENTS_QUEUE = failing;
-    const svc = createService(h.env, {clock: h.clock, logger: silentLogger});
-    const writes = h.bus.sender('object-writes');
-    await writes.send(writeMsg(h.ctx(), 'job-sup', supplierCmds()));
-    await h.bus.drain({'object-writes': {handler: b => svc.queue!(b)}});
-    expect(
-      count(
-        h.db,
-        'SELECT COUNT(*) AS n FROM domain_event WHERE dispatched_at IS NULL',
-      ),
+      count(h, 'SELECT COUNT(*) AS n FROM og_prop_index WHERE rid = ?', s1),
     ).toBe(3);
-    // Too recent: nothing re-dispatched yet.
-    await h.svc.scheduled!('*/15 * * * *', h.clock.now());
-    expect(
-      count(
-        h.db,
-        'SELECT COUNT(*) AS n FROM domain_event WHERE dispatched_at IS NULL',
-      ),
-    ).toBe(3);
-    h.clock.advance(2 * 60_000);
-    await h.svc.scheduled!('*/15 * * * *', h.clock.now());
-    expect(
-      count(
-        h.db,
-        'SELECT COUNT(*) AS n FROM domain_event WHERE dispatched_at IS NULL',
-      ),
-    ).toBe(0);
-    expect(h.sit().map(e => e.kind)).toEqual([
-      'ObjectsUpserted',
-      'JobFinished',
+    const links = await h.rpc.getLinks(testCtx(), s1, {depth: 1});
+    expect(links.edges).toEqual([
+      {type: 'supplies', src: s1, dst: expect.any(String), weight: 0.7},
     ]);
-    h.clock.advance(8 * 86_400_000);
-    await h.svc.scheduled!('*/15 * * * *', h.clock.now());
-    expect(count(h.db, 'SELECT COUNT(*) AS n FROM domain_event')).toBe(0);
-  });
-});
-
-describe('object-graph service: reads', () => {
-  it('lists with indexed filter, sort and cursor; non-indexed filters in memory', async () => {
-    const h = await seeded();
-    const ctx = h.ctx('Viewer');
-    const q = {
-      filter: {op: 'gte' as const, prop: 'riskScore', value: 40},
-      orderBy: [{prop: 'riskScore', dir: 'desc' as const}],
-      limit: 1,
-    };
-    const p1 = await h.rpc.listObjects(ctx, 'Supplier', q);
-    expect(p1.items.map(i => i.primaryKey)).toEqual(['S1']);
-    expect(p1.nextCursor).toBeTruthy();
-    const p2 = await h.rpc.listObjects(ctx, 'Supplier', {
-      ...q,
-      cursor: p1.nextCursor!,
-    });
-    expect(p2.items.map(i => i.primaryKey)).toEqual(['S3']);
-    expect(p2.nextCursor).toBeNull();
-
-    const all = await h.rpc.listObjects(ctx, 'Supplier', {
-      orderBy: [{prop: 'name', dir: 'asc'}],
-    });
-    expect(all.items.map(i => i.title)).toEqual([
-      'Acme Metals',
-      'Beta Parts',
-      'Gamma Supply',
-    ]);
-
-    const mem = await h.rpc.listObjects(ctx, 'Supplier', {
-      filter: {
-        op: 'and',
-        args: [
-          {op: 'gt', prop: 'onTimeRate', value: 0.8},
-          {op: 'eq', prop: 'status', value: 'active'},
-        ],
-      },
-      orderBy: [{prop: 'onTimeRate', dir: 'desc'}],
-    });
-    expect(mem.items.map(i => i.primaryKey)).toEqual(['S2', 'S3']);
-
-    const strs = await h.rpc.listObjects(ctx, 'Supplier', {
-      filter: {
-        op: 'or',
-        args: [
-          {op: 'in', prop: 'country', values: ['CN', 'DE']},
-          {op: 'contains', prop: 'name', value: 'gamma'},
-        ],
-      },
-    });
-    expect(strs.items.map(i => i.primaryKey).sort()).toEqual([
-      'S1',
-      'S2',
-      'S3',
-    ]);
-    const neq = await h.rpc.listObjects(ctx, 'Supplier', {
-      filter: {op: 'neq', prop: 'country', value: 'CN'},
-    });
-    expect(neq.items.map(i => i.primaryKey).sort()).toEqual(['S2', 'S3']);
-
-    expect(
-      (
-        await codeOf(
-          h.rpc.listObjects(ctx, 'Supplier', {
-            filter: {op: 'eq', prop: 'contactEmail', value: 'x'},
-          }),
-        )
-      ).code,
-    ).toBe('FORBIDDEN');
-    expect((await codeOf(h.rpc.listObjects(ctx, 'Nope'))).code).toBe(
-      'OBJECT_SET_INVALID',
-    );
-    expect(
-      (
-        await codeOf(
-          h.rpc.listObjects(ctx, 'Supplier', {
-            filter: {op: 'eq', prop: 'bogus', value: 1},
-          }),
-        )
-      ).code,
-    ).toBe('OBJECT_SET_INVALID');
-    expect(
-      (await codeOf(h.rpc.listObjects(ctx, 'Supplier', {cursor: '%%%'}))).code,
-    ).toBe('OBJECT_SET_INVALID');
   });
 
-  it('refuses in-memory filtering above 200 candidates', async () => {
-    const h = harness();
-    const cmds = Array.from({length: 201}, (_, i) =>
-      cmd(
-        'Supplier',
-        `X${i}`,
-        {name: `Supplier ${i}`, onTimeRate: i / 201},
-        {row: i},
-      ),
+  it('delivers one aggregated ObjectsUpserted message and deletes the outbox row', async () => {
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'job-1',
+      seq: 1,
+      cmds: [supplier('S1'), supplier('S2', {}, 2)],
+    });
+    const msgs = h.messages();
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]).toMatchObject({
+      tid: TEST_TID,
+      kind: 'ObjectsUpserted',
+      jobId: 'job-1',
+    });
+    expect(msgs[0].changes).toHaveLength(2);
+    expect(msgs[0].changes[0].changed).toEqual(
+      expect.arrayContaining(['name', 'active', 'riskScore', 'supplierId']),
     );
-    for (let i = 0; i < cmds.length; i += 50) {
-      await h.send(
-        writeMsg(h.ctx(), 'job-many', cmds.slice(i, i + 50), {seq: i}),
+    expect(JSON.stringify(msgs[0])).not.toContain('Supplier S1');
+    expect(count(h, 'SELECT COUNT(*) AS n FROM domain_event')).toBe(0);
+  });
+
+  it('merges latest-wins: non-empty values overwrite, empty ones are ignored', async () => {
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'job-1',
+      seq: 1,
+      cmds: [supplier('S1', {country: 'CN', tier: 2, notes: 'old'})],
+    });
+    h.clock.advance(1000);
+    const res = await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'job-2',
+      seq: 1,
+      cmds: [
+        {
+          type: 'Supplier',
+          primaryKey: 'S1',
+          props: {country: 'DE', tier: '', notes: null},
+          row: 7,
+        },
+      ],
+    });
+    expect(res.upserted).toBe(1);
+    const dto = (await h.rpc.getObject(
+      testCtx(),
+      await ridOf(h, 'Supplier', 'S1'),
+    ))!;
+    expect(dto.props).toMatchObject({country: 'DE', tier: 2, notes: 'old'});
+    expect(dto.version).toBe(2);
+    expect(dto.provenance.country).toMatchObject({jobId: 'job-2', row: 7});
+    expect(dto.provenance.tier).toMatchObject({jobId: 'job-1', row: 1});
+    const last = h.messages().at(-1)!;
+    expect(last.changes).toEqual([
+      {rid: dto.rid, type: 'Supplier', changed: ['country']},
+    ]);
+  });
+
+  it('skips unchanged rows (props_hash) without writing or publishing', async () => {
+    const cmds = [supplier('S1'), supplier('S2', {}, 2)];
+    await h.rpc.upsertBatch(testCtx(), {jobId: 'j', seq: 1, cmds});
+    const written = h.db.rowsWritten;
+    const sent = h.messages().length;
+    const res = await h.rpc.upsertBatch(testCtx(), {jobId: 'j', seq: 2, cmds});
+    expect(res).toEqual({
+      upserted: 0,
+      skipped: 2,
+      linksWritten: 0,
+      rejected: [],
+    });
+    expect(h.db.rowsWritten).toBe(written);
+    expect(h.messages()).toHaveLength(sent);
+    const dto = await h.rpc.getObject(
+      testCtx(),
+      await ridOf(h, 'Supplier', 'S1'),
+    );
+    expect(dto!.version).toBe(1);
+  });
+
+  it('rejects unknown types and invalid rows', async () => {
+    const res = await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [
+        {type: 'Ghost', primaryKey: 'G', props: {}, row: 1},
+        supplier('S1', {tier: 'many'}, 2),
+        {type: 'Supplier', primaryKey: 'S2', props: {active: true}, row: 3},
+        supplier('S3', {status: 'NOPE'}, 4),
+        supplier('S4', {}, 5),
+      ],
+    });
+    expect(res.upserted).toBe(1);
+    expect(res.rejected).toEqual([
+      {row: 1, code: 'UNKNOWN_TYPE'},
+      {row: 2, code: 'VALIDATION', detail: 'tier:TYPE'},
+      {row: 3, code: 'VALIDATION', detail: 'name:REQUIRED'},
+      {row: 4, code: 'VALIDATION', detail: 'status:ENUM'},
+    ]);
+  });
+
+  it('rejects more than 100 commands', async () => {
+    const cmds = Array.from({length: 101}, (_, i) => supplier(`S${i}`, {}, i));
+    const err = await codeOf(
+      h.rpc.upsertBatch(testCtx(), {jobId: 'j', seq: 1, cmds}),
+    );
+    expect(err.code).toBe('VALIDATION_FAILED');
+  });
+
+  it('resolves links within the batch and rejects missing targets (REF_MISSING)', async () => {
+    const res = await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [
+        supplier('S1', {}, 1, [supplies('P1'), supplies('P404')]),
+        part('P1', {}, 2),
+        supplier('S2', {}, 3, [
+          {type: 'supplies', toType: 'Supplier', toKey: 'S1'},
+        ]),
+      ],
+    });
+    expect(res.upserted).toBe(3);
+    expect(res.linksWritten).toBe(1);
+    expect(res.rejected).toEqual([
+      {row: 1, code: 'REF_MISSING', detail: 'supplies->Part'},
+      {row: 3, code: 'VALIDATION', detail: 'link:supplies'},
+    ]);
+    // A later batch can reference objects written earlier.
+    const res2 = await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 2,
+      cmds: [
+        part('P2', {}, 1, [{type: 'dependsOn', toType: 'Part', toKey: 'P1'}]),
+      ],
+    });
+    expect(res2.linksWritten).toBe(1);
+    expect((await h.rpc.stats(testCtx())).links).toBe(2);
+  });
+
+  it('updates link weights and does not rewrite unchanged links', async () => {
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [part('P1'), supplier('S1', {}, 2, [supplies('P1', 0.3)])],
+    });
+    const same = await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 2,
+      cmds: [supplier('S1', {}, 1, [supplies('P1', 0.3)])],
+    });
+    expect(same).toMatchObject({skipped: 1, linksWritten: 0});
+    const changed = await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 3,
+      cmds: [supplier('S1', {}, 1, [supplies('P1', 0.9)])],
+    });
+    expect(changed).toMatchObject({skipped: 1, linksWritten: 1});
+    const last = h.messages().at(-1)!;
+    expect(last.changes).toEqual([
+      {rid: await ridOf(h, 'Supplier', 'S1'), type: 'Supplier', changed: []},
+    ]);
+  });
+
+  it('keeps each call well under 50 D1 statements', async () => {
+    const cmds: UpsertCmd[] = [];
+    for (let i = 0; i < 50; i++) cmds.push(part(`P${i}`, {stock: i}, i));
+    for (let i = 0; i < 50; i++) {
+      cmds.push(
+        supplier(`S${i}`, {tier: i}, 50 + i, [
+          supplies(`P${i}`),
+          supplies(`P${(i + 1) % 50}`),
+        ]),
       );
     }
-    expect(count(h.db, 'SELECT COUNT(*) AS n FROM og_object')).toBe(201);
-    const err = await codeOf(
-      h.rpc.listObjects(h.ctx(), 'Supplier', {
-        filter: {op: 'gt', prop: 'onTimeRate', value: 0.5},
-      }),
-    );
-    expect(err.code).toBe('OBJECT_SET_INVALID');
-    const page = await h.rpc.listObjects(h.ctx(), 'Supplier', {limit: 200});
-    expect(page.items).toHaveLength(200);
-    expect(page.nextCursor).toBeTruthy();
-    expect(
-      await h.rpc.aggregate(h.ctx(), {
-        objectSet: {objectType: 'Supplier'},
-        fn: 'count',
-      }),
-    ).toBe(201);
-  });
-
-  it('evaluates object sets with Search Around and saved sets', async () => {
-    const h = await seeded();
-    const ctx = h.ctx();
-    const def = {
-      objectType: 'Supplier',
-      filter: {op: 'eq' as const, prop: 'name', value: 'Acme Metals'},
-      searchAround: [
-        {link: 'supplies', direction: 'out' as const},
-        {link: 'usedIn', direction: 'out' as const},
-      ],
-      orderBy: [{prop: 'dailyDemand', dir: 'desc' as const}],
-    };
-    const res = await h.rpc.evaluateObjectSet(ctx, def);
-    expect(res.items.map(i => i.title)).toEqual(['Widget', 'Gadget']);
-    const back = await h.rpc.evaluateObjectSet(ctx, {
-      objectType: 'Product',
-      filter: {op: 'eq', prop: 'name', value: 'Gadget'},
-      searchAround: [{link: 'usedIn', direction: 'in'}],
-    });
-    expect(back.items.map(i => i.primaryKey)).toEqual(['M2']);
-    expect(
-      (
-        await codeOf(
-          h.rpc.evaluateObjectSet(ctx, {
-            ...def,
-            searchAround: [
-              ...def.searchAround,
-              {link: 'usedIn', direction: 'out'},
-            ],
-          }),
-        )
-      ).code,
-    ).toBe('OBJECT_SET_INVALID');
-    expect(
-      (
-        await codeOf(
-          h.rpc.evaluateObjectSet(ctx, {
-            objectType: 'Supplier',
-            searchAround: [{link: 'usedIn', direction: 'out'}],
-          }),
-        )
-      ).code,
-    ).toBe('OBJECT_SET_INVALID');
-
-    expect(
-      (
-        await codeOf(
-          h.rpc.saveObjectSet(h.ctx('Viewer'), {name: 'x', definition: def}),
-        )
-      ).code,
-    ).toBe('FORBIDDEN');
-    const saved = await h.rpc.saveObjectSet(h.ctx('Operator'), {
-      name: 'Acme products',
-      definition: def,
-    });
-    expect(saved).toMatchObject({name: 'Acme products', createdBy: 'u1'});
-    const updated = await h.rpc.saveObjectSet(h.ctx('Operator'), {
-      id: saved.id,
-      name: 'Renamed',
-      definition: def,
-    });
-    expect(updated.id).toBe(saved.id);
-    expect((await h.rpc.listObjectSets(ctx)).map(s => s.name)).toEqual([
-      'Renamed',
-    ]);
-    const evaluated = await h.rpc.evaluateSavedObjectSet(ctx, saved.id, {
-      limit: 1,
-    });
-    expect(evaluated.items.map(i => i.title)).toEqual(['Widget']);
-    expect(evaluated.nextCursor).toBeTruthy();
-    expect(
-      (await codeOf(h.rpc.evaluateSavedObjectSet(ctx, 'missing'))).code,
-    ).toBe('NOT_FOUND');
-  });
-
-  it('aggregates for KPIs', async () => {
-    const h = await seeded();
-    const ctx = h.ctx();
-    const agg = (
-      objectSet: object,
-      fn: 'count' | 'sum' | 'avg' | 'min' | 'max',
-      prop?: string,
-    ) => h.rpc.aggregate(ctx, {objectSet: objectSet as never, fn, prop});
-    expect(
-      await agg(
-        {
-          objectType: 'Supplier',
-          filter: {op: 'gte', prop: 'riskScore', value: 70},
-        },
-        'count',
-      ),
-    ).toBe(1);
-    expect(await agg({objectType: 'Supplier'}, 'avg', 'riskScore')).toBeCloseTo(
-      (80 + 30 + 45) / 3,
-    );
-    expect(await agg({objectType: 'Product'}, 'sum', 'dailyDemand')).toBe(150);
-    expect(
-      await agg(
-        {
-          objectType: 'Product',
-          filter: {op: 'lt', prop: 'inventoryDays', value: 7},
-        },
-        'count',
-      ),
-    ).toBe(1);
-    expect(await agg({objectType: 'Supplier'}, 'max', 'onTimeRate')).toBe(0.95);
-    expect(
-      await agg(
-        {
-          objectType: 'Supplier',
-          searchAround: [{link: 'supplies', direction: 'out'}],
-        },
-        'count',
-      ),
-    ).toBe(2);
-    expect((await codeOf(agg({objectType: 'Supplier'}, 'sum'))).code).toBe(
-      'VALIDATION_FAILED',
-    );
-    expect(
-      (
-        await codeOf(
-          h.rpc.aggregate(h.ctx('Viewer'), {
-            objectSet: {objectType: 'Material'},
-            fn: 'sum',
-            prop: 'unitCost',
-          }),
-        )
-      ).code,
-    ).toBe('FORBIDDEN');
-  });
-
-  it('getObject expands links (depth 2) and hides marked properties', async () => {
-    const h = await seeded();
-    const s1 = await h.rid('Supplier', 'S1');
-    const viewer = h.ctx('Viewer');
-    const plain = await h.rpc.getObject(viewer, s1);
-    expect(plain?.props.contactEmail).toBeUndefined();
-    expect(plain?.provenance.contactEmail).toBeUndefined();
-    expect(plain?.hiddenProps).toEqual(['contactEmail']);
-    expect(plain?.links).toBeUndefined();
-
-    const withPii = await h.rpc.getObject(
-      h.ctx('Viewer', {markings: ['PII']}),
-      s1,
-    );
-    expect(withPii?.props.contactEmail).toBe('acme@example.com');
-    expect(withPii?.hiddenProps).toBeUndefined();
-
-    const d1 = await h.rpc.getObject(viewer, s1, {expand: 'links'});
-    expect(d1?.links?.map(l => [l.type, l.direction])).toEqual([
-      ['supplies', 'out'],
-      ['supplies', 'out'],
-    ]);
-    expect(d1?.neighbors?.map(n => n.title).sort()).toEqual([
-      'Copper',
-      'Steel',
-    ]);
-
-    const before = (h.db as SqliteD1).queries;
-    const d2 = await h.rpc.getObject(viewer, s1, {expand: 'links', depth: 2});
-    expect((h.db as SqliteD1).queries - before).toBeLessThanOrEqual(4);
-    expect(new Set(d2?.links?.map(l => l.type))).toEqual(
-      new Set(['supplies', 'usedIn']),
-    );
-    expect(d2?.neighbors?.map(n => n.title).sort()).toEqual([
-      'Copper',
-      'Gadget',
-      'Gamma Supply',
-      'Steel',
-      'Widget',
-    ]);
-
-    const m1 = await h.rpc.getObject(viewer, await h.rid('Material', 'M1'));
-    expect(m1?.props.unitCost).toBeUndefined();
-    expect(m1?.hiddenProps).toEqual(['unitCost']);
-    const lineage = await h.rpc.lineage(viewer, await h.rid('Material', 'M1'));
-    expect(lineage.props.unitCost).toBeUndefined();
-    expect(lineage.props.name.current?.sourceId).toBe('src-Material');
-
-    const many = await h.rpc.getObjects(viewer, [
-      s1,
-      await h.rid('Supplier', 'S2'),
-      'ri.t2.Supplier.X' as Rid,
-    ]);
-    expect(many.map(o => o.primaryKey)).toEqual(['S1', 'S2']);
-    expect(many[0].props.contactEmail).toBeUndefined();
-
-    const found = await h.rpc.search(viewer, 'me', {type: 'Supplier'});
-    expect(found.map(o => o.primaryKey)).toEqual(['S1']);
-    expect((await h.rpc.search(viewer, 'e')).length).toBeGreaterThan(3);
-    expect(
-      await h.rpc.getObject(viewer, 'ri.t1.Supplier.NOPE' as Rid),
-    ).toBeNull();
-    expect(
-      (await codeOf(h.rpc.lineage(viewer, 'ri.t1.Supplier.NOPE' as Rid))).code,
-    ).toBe('OBJECT_NOT_FOUND');
-  });
-
-  it('impactSubgraph and paths', async () => {
-    const h = await seeded();
-    const ctx = h.ctx('Viewer');
-    const s1 = await h.rid('Supplier', 'S1');
-    const slice = await h.rpc.impactSubgraph(ctx, {
-      rids: [s1],
-      maxHops: 2,
-      limit: 200,
-    });
-    expect(slice.degraded).toBe(false);
-    const byTitle = Object.fromEntries(slice.nodes.map(n => [n.title, n.hop]));
-    expect(byTitle).toEqual({
-      'Acme Metals': 0,
-      Steel: 1,
-      Copper: 1,
-      Widget: 2,
-      Gadget: 2,
-    });
-    expect(
-      slice.nodes.find(n => n.hop === 0)?.props.contactEmail,
-    ).toBeUndefined();
-    expect(slice.edges).toHaveLength(5);
-    const onlySupplies = await h.rpc.impactSubgraph(ctx, {
-      rids: [s1],
-      maxHops: 2,
-      limit: 200,
-      linkTypes: ['supplies'],
-    });
-    expect(onlySupplies.nodes).toHaveLength(3);
-    const limited = await h.rpc.impactSubgraph(ctx, {
-      rids: [s1],
-      maxHops: 2,
-      limit: 2,
-    });
-    expect(limited.nodes).toHaveLength(2);
-
-    const deep = await h.rpc.impactSubgraph(ctx, {
-      rids: [s1],
-      maxHops: 3,
-      limit: 200,
-    });
-    expect(deep.degraded).toBe(true);
-    expect(deep.nodes).toHaveLength(5);
-    expect(
-      (
-        await codeOf(
-          h.rpc.impactSubgraph(ctx, {rids: [s1], maxHops: 2, limit: 501}),
-        )
-      ).code,
-    ).toBe('GRAPH_TOO_LARGE');
-
-    const p1 = await h.rid('Product', 'P1');
-    const paths = await h.rpc.paths(ctx, {from: s1, to: p1});
-    expect(paths.degraded).toBe(false);
-    expect(paths.paths[0]).toHaveLength(3);
-    expect(paths.paths.length).toBeGreaterThanOrEqual(2);
-    const s2 = await h.rid('Supplier', 'S2');
-    expect((await h.rpc.paths(ctx, {from: s1, to: s2})).paths).toEqual([]);
-    const s3 = await h.rid('Supplier', 'S3');
-    expect(
-      (await h.rpc.paths(ctx, {from: s1, to: s3, maxHops: 2})).paths,
-    ).toHaveLength(1);
-    expect(
-      (
-        await codeOf(
-          h.rpc.paths(ctx, {from: s1, to: 'ri.t1.Product.NOPE' as Rid}),
-        )
-      ).code,
-    ).toBe('OBJECT_NOT_FOUND');
-  });
-
-  it('isolates tenants', async () => {
-    const h = await seeded();
-    const other = h.ctx('Admin', {tenantId: 't2'});
-    const s1 = await h.rid('Supplier', 'S1');
-    expect(await h.rpc.getObject(other, s1)).toBeNull();
-    expect((await h.rpc.listObjects(other, 'Supplier')).items).toEqual([]);
-    expect(await h.rpc.getObjects(other, [s1])).toEqual([]);
-    expect(await h.rpc.search(other, 'Acme')).toEqual([]);
-    expect(
-      await h.rpc.aggregate(other, {
-        objectSet: {objectType: 'Supplier'},
-        fn: 'count',
-      }),
-    ).toBe(0);
-    expect(
-      (
-        await codeOf(
-          h.rpc.applyAction(other, {
-            actionType: 'flagSupplier',
-            target: s1,
-            params: {},
-          }),
-        )
-      ).code,
-    ).toBe('OBJECT_NOT_FOUND');
-    expect(
-      (
-        await codeOf(
-          h.rpc.impactSubgraph(other, {rids: [s1], maxHops: 1, limit: 10}),
-        )
-      ).code,
-    ).toBe('OBJECT_NOT_FOUND');
-    // Same primary key in another tenant creates a separate object.
-    await h.send(
-      writeMsg(other, 'job-t2', [cmd('Supplier', 'S1', {name: 'Other Acme'})]),
-    );
-    const t2s1 = await h.rid('Supplier', 'S1', 't2');
-    expect(t2s1).not.toBe(s1);
-    expect((await h.rpc.getObject(h.ctx(), s1))?.title).toBe('Acme Metals');
-    expect(
-      (await h.rpc.listObjects(other, 'Supplier')).items.map(i => i.title),
-    ).toEqual(['Other Acme']);
+    const before = h.db.queries;
+    const res = await h.rpc.upsertBatch(testCtx(), {jobId: 'j', seq: 1, cmds});
+    expect(res).toMatchObject({upserted: 100, linksWritten: 100, rejected: []});
+    const statements = h.db.queries - before;
+    // 3 reads + objects, index delete, index insert, links, outbox + delete.
+    expect(statements).toBeLessThanOrEqual(9);
+    const again = h.db.queries;
+    await h.rpc.upsertBatch(testCtx(), {jobId: 'j', seq: 2, cmds});
+    expect(h.db.queries - again).toBeLessThanOrEqual(3);
   });
 });
 
-describe('object-graph service: actions', () => {
-  async function voucher(
-    target: Rid,
-    actionType: string,
-    opts: {expiresAt?: string; tenantId?: string; secret?: string} = {},
-  ) {
-    return signVoucher(opts.secret ?? SECRET, {
-      recommendationId: 'rec-1',
-      tenantId: opts.tenantId ?? 't1',
-      actionType,
-      target,
-      expiresAt: opts.expiresAt ?? '2026-09-25T00:00:00Z',
-    });
-  }
-
-  it('requires a valid approval voucher', async () => {
-    const h = await seeded();
-    const op = h.ctx('Operator');
-    const p1 = await h.rid('Product', 'P1');
-    const base = {
-      actionType: 'increaseSafetyStock',
-      target: p1,
-      params: {days: 7},
-    };
-    const missing = await codeOf(h.rpc.applyAction(op, base));
-    expect(missing.code).toBe('APPROVAL_REQUIRED');
-    expect(missing.status).toBe(409);
-    const forged = {
-      ...(await voucher(p1, 'increaseSafetyStock')),
-      signature: 'f'.repeat(64),
-    };
-    expect(
-      (await codeOf(h.rpc.applyAction(op, {...base, approval: forged}))).code,
-    ).toBe('APPROVAL_REQUIRED');
-    const wrongSecret = await voucher(p1, 'increaseSafetyStock', {
-      secret: 'other',
-    });
-    expect(
-      (await codeOf(h.rpc.applyAction(op, {...base, approval: wrongSecret})))
-        .code,
-    ).toBe('APPROVAL_REQUIRED');
-    const expired = await voucher(p1, 'increaseSafetyStock', {
-      expiresAt: '2026-09-23T00:00:00Z',
-    });
-    expect(
-      (await codeOf(h.rpc.applyAction(op, {...base, approval: expired}))).code,
-    ).toBe('APPROVAL_REQUIRED');
-    const otherTarget = await voucher(
-      await h.rid('Product', 'P2'),
-      'increaseSafetyStock',
+describe('workspace limits', () => {
+  it('rejects objects beyond MAX_OBJECTS but still updates existing ones', async () => {
+    const h = setup({maxObjects: 5});
+    const cmds = Array.from({length: 7}, (_, i) =>
+      supplier(`S${i}`, {}, i + 1),
     );
-    expect(
-      (await codeOf(h.rpc.applyAction(op, {...base, approval: otherTarget})))
-        .code,
-    ).toBe('APPROVAL_REQUIRED');
-    const otherRec = await voucher(p1, 'increaseSafetyStock');
-    expect(
-      (
-        await codeOf(
-          h.rpc.applyAction(op, {
-            ...base,
-            approval: otherRec,
-            recommendationId: 'rec-2',
-          }),
-        )
-      ).code,
-    ).toBe('APPROVAL_REQUIRED');
-
-    const valid = await voucher(p1, 'increaseSafetyStock');
-    const before = h.bus.size('situation-events');
-    const res = await h.rpc.applyAction(op, {
-      ...base,
-      approval: valid,
-      recommendationId: 'rec-1',
-      ifMatch: 2,
+    const res = await h.rpc.upsertBatch(testCtx(), {jobId: 'j', seq: 1, cmds});
+    expect(res.upserted).toBe(5);
+    expect(res.rejected).toEqual([
+      {row: 6, code: 'OBJECT_LIMIT'},
+      {row: 7, code: 'OBJECT_LIMIT'},
+    ]);
+    const upd = await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 2,
+      cmds: [supplier('S0', {country: 'FR'}), supplier('S9', {}, 2)],
     });
-    expect(res).toMatchObject({
-      actionType: 'increaseSafetyStock',
-      rid: p1,
-      version: 3,
-      writebackStatus: 'NONE',
-      before: {inventoryDays: 10, safetyStockDays: 5},
-      after: {inventoryDays: 17, safetyStockDays: 12},
-    });
-    expect(res.after.revenuePerUnit).toBeUndefined();
-    const evt = h
-      .sit()
-      .slice(before)
-      .find(e => e.kind === 'ActionExecuted');
-    expect(evt).toMatchObject({
-      action: {
-        actionLogId: res.actionLogId,
-        actionType: 'increaseSafetyStock',
-        recommendationId: 'rec-1',
-      },
-      changes: [
-        expect.objectContaining({
-          rid: p1,
-          changed: ['inventoryDays', 'safetyStockDays'],
-        }),
-      ],
-    });
-    expect(evt?.usage?.[0].n).toBeGreaterThan(0);
-    const idx = h.db.raw
-      .prepare(
-        "SELECT num_val FROM og_prop_index WHERE rid = ? AND prop = 'inventoryDays'",
-      )
-      .get(p1) as {num_val: number};
-    expect(idx.num_val).toBe(17);
-    // Replaying the approval is idempotent.
-    const again = await h.rpc.applyAction(op, {
-      ...base,
-      approval: valid,
-      recommendationId: 'rec-1',
-      ifMatch: 2,
-    });
-    expect(again.actionLogId).toBe(res.actionLogId);
-    const log = await h.rpc.listActionLog(h.ctx('Viewer'), {rid: p1});
-    expect(log).toHaveLength(1);
-    expect(log[0]).toMatchObject({
-      actor: 'u1',
-      recommendationId: 'rec-1',
-      params: {days: 7},
-    });
-    const lineage = await h.rpc.lineage(h.ctx(), p1);
-    expect(lineage.props.inventoryDays.current?.sourceId).toBe(
-      'action:increaseSafetyStock',
-    );
-    expect(lineage.props.inventoryDays.history[0].value).toBe(10);
+    expect(upd.upserted).toBe(1);
+    expect(upd.rejected).toEqual([{row: 2, code: 'OBJECT_LIMIT'}]);
   });
 
-  it('checks role, If-Match and preconditions', async () => {
-    const h = await seeded();
-    const s1 = await h.rid('Supplier', 'S1');
-    const p1 = await h.rid('Product', 'P1');
-    const viewer = await codeOf(
-      h.rpc.applyAction(h.ctx('Viewer'), {
-        actionType: 'flagSupplier',
-        target: s1,
-        params: {},
-      }),
-    );
-    expect(viewer.code).toBe('FORBIDDEN');
-    expect(viewer.status).toBe(403);
-    const conflict = await codeOf(
-      h.rpc.applyAction(h.ctx('Operator'), {
-        actionType: 'flagSupplier',
-        target: s1,
-        params: {},
-        ifMatch: 7,
-      }),
-    );
-    expect(conflict.code).toBe('VERSION_CONFLICT');
-    expect(conflict.status).toBe(412);
-    expect(conflict.extras.currentVersion).toBe(1);
-
-    const approval = await signVoucher(SECRET, {
-      recommendationId: 'rec-9',
-      tenantId: 't1',
-      actionType: 'increaseSafetyStock',
-      target: p1,
-      expiresAt: '2026-09-25T00:00:00Z',
+  it('rejects links beyond MAX_LINKS while the object is written', async () => {
+    const h = setup({maxLinks: 3});
+    const res = await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [
+        part('P1'),
+        part('P2', {}, 2),
+        part('P3', {}, 3),
+        part('P4', {}, 4),
+        supplier('S1', {}, 5, [
+          supplies('P1'),
+          supplies('P2'),
+          supplies('P3'),
+          supplies('P4'),
+        ]),
+      ],
     });
-    const pre = await codeOf(
-      h.rpc.applyAction(h.ctx('Operator', {locale: 'zh-CN'}), {
-        actionType: 'increaseSafetyStock',
-        target: p1,
-        params: {days: 40},
-        approval,
+    expect(res.upserted).toBe(5);
+    expect(res.linksWritten).toBe(3);
+    expect(res.rejected).toEqual([
+      {row: 5, code: 'LINK_LIMIT', detail: 'supplies'},
+    ]);
+  });
+
+  it('never exceeds the limits under concurrent batches', async () => {
+    const h = setup({maxObjects: 5, maxLinks: 4});
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 0,
+      cmds: [part('P1'), part('P2', {}, 2)],
+    });
+    const batch = (prefix: string) =>
+      h.rpc.upsertBatch(testCtx(), {
+        jobId: prefix,
+        seq: 1,
+        cmds: [1, 2].map(i =>
+          supplier(`${prefix}${i}`, {}, i, [supplies('P1'), supplies('P2')]),
+        ),
+      });
+    const results = await Promise.all([batch('A'), batch('B')]);
+    const stats = await h.rpc.stats(testCtx());
+    expect(stats.objects).toBe(5);
+    expect(stats.links).toBe(4);
+    const upserted = results.reduce((n, r) => n + r.upserted, 0);
+    const objectRejects = results
+      .flatMap(r => r.rejected)
+      .filter(r => r.code === 'OBJECT_LIMIT').length;
+    expect(upserted).toBe(3);
+    expect(objectRejects).toBe(1);
+    expect(results.reduce((n, r) => n + r.linksWritten, 0)).toBe(4);
+  });
+});
+
+describe('outbox delivery', () => {
+  it('leaves the outbox row when the queue fails and the cron redelivers it', async () => {
+    const h = setup();
+    h.failQueue(true);
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [supplier('S1')],
+    });
+    expect(h.messages()).toHaveLength(0);
+    expect(count(h, 'SELECT COUNT(*) AS n FROM domain_event')).toBe(1);
+    h.failQueue(false);
+    // Too young: left to the request's own delivery.
+    await h.svc.scheduled('*/15 * * * *', h.clock.now());
+    expect(h.messages()).toHaveLength(0);
+    h.clock.advance(2 * MINUTE_MS);
+    await h.svc.scheduled('*/15 * * * *', h.clock.now());
+    expect(h.messages()).toHaveLength(1);
+    expect(h.messages()[0].kind).toBe('ObjectsUpserted');
+    expect(count(h, 'SELECT COUNT(*) AS n FROM domain_event')).toBe(0);
+  });
+
+  it('splits messages larger than the bound by rid', async () => {
+    const h = setup({maxEventBytes: 1024});
+    const cmds = Array.from({length: 40}, (_, i) => supplier(`S${i}`, {}, i));
+    await h.rpc.upsertBatch(testCtx(), {jobId: 'j', seq: 1, cmds});
+    const msgs = h.messages();
+    expect(msgs.length).toBeGreaterThan(1);
+    for (const m of msgs) {
+      expect(JSON.stringify(m).length).toBeLessThanOrEqual(1024);
+      expect(m.eventId).toMatch(/#\d+$/);
+    }
+    expect(msgs.flatMap(m => m.changes)).toHaveLength(40);
+    expect(new Set(msgs.map(m => m.eventId)).size).toBe(msgs.length);
+  });
+
+  it('drops outbox rows of purged workspaces and sweeps old tombstones', async () => {
+    const h = setup();
+    h.failQueue(true);
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [supplier('S1')],
+    });
+    h.failQueue(false);
+    h.db.raw
+      .prepare(
+        'INSERT INTO tenant_tombstone (tenant_id, deleted_at) VALUES (?, ?)',
+      )
+      .run(TEST_TID, h.clock.now().getTime());
+    h.clock.advance(2 * MINUTE_MS);
+    await h.svc.scheduled('*/15 * * * *', h.clock.now());
+    expect(h.messages()).toHaveLength(0);
+    expect(count(h, 'SELECT COUNT(*) AS n FROM domain_event')).toBe(0);
+    expect(count(h, 'SELECT COUNT(*) AS n FROM tenant_tombstone')).toBe(1);
+    h.clock.advance(49 * HOUR_MS);
+    await h.svc.scheduled('*/15 * * * *', h.clock.now());
+    expect(count(h, 'SELECT COUNT(*) AS n FROM tenant_tombstone')).toBe(0);
+  });
+});
+
+describe('reads and queries', () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = setup();
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [
+        supplier('S1', {country: 'CN', riskScore: 0.9, tier: 1, notes: 'late'}),
+        supplier(
+          'S2',
+          {country: 'DE', riskScore: 0.1, tier: 2, active: false},
+          2,
+        ),
+        supplier(
+          'S3',
+          {country: 'CN', riskScore: 0.5, tier: 3, notes: 'ok'},
+          3,
+        ),
+        supplier('S4', {country: 'US', riskScore: 0.7, tier: 1}, 4),
+        supplier('S5', {riskScore: 0.3, tier: 2, name: 'Acme Metals'}, 5),
+        part('P1', {stock: 5, critical: true}, 6),
+      ],
+    });
+  });
+
+  const pks = (items: {primaryKey: string}[]) => items.map(i => i.primaryKey);
+
+  it('pushes indexed filters and sort keys down to D1', async () => {
+    const page = await h.rpc.listObjects(
+      testCtx(),
+      {
+        type: 'Supplier',
+        filter: {op: 'eq', prop: 'country', value: 'CN'},
+        orderBy: {prop: 'riskScore', dir: 'desc'},
+      },
+      {},
+    );
+    expect(pks(page.items)).toEqual(['S1', 'S3']);
+    const gt = await h.rpc.listObjects(
+      testCtx(),
+      {
+        type: 'Supplier',
+        filter: {
+          op: 'and',
+          args: [
+            {op: 'gte', prop: 'riskScore', value: 0.3},
+            {op: 'in', prop: 'tier', values: [1, 2]},
+          ],
+        },
+        orderBy: {prop: 'riskScore', dir: 'asc'},
+      },
+      {},
+    );
+    expect(pks(gt.items)).toEqual(['S5', 'S4', 'S1']);
+    const neq = await h.rpc.listObjects(
+      testCtx(),
+      {type: 'Supplier', filter: {op: 'neq', prop: 'country', value: 'CN'}},
+      {},
+    );
+    expect(pks(neq.items).sort()).toEqual(['S2', 'S4', 'S5']);
+  });
+
+  it('evaluates non-indexed filters in memory', async () => {
+    const page = await h.rpc.listObjects(
+      testCtx(),
+      {
+        type: 'Supplier',
+        filter: {
+          op: 'and',
+          args: [
+            {op: 'eq', prop: 'country', value: 'CN'},
+            {op: 'contains', prop: 'notes', value: 'LAT'},
+          ],
+        },
+      },
+      {},
+    );
+    expect(pks(page.items)).toEqual(['S1']);
+    const inactive = await h.rpc.listObjects(
+      testCtx(),
+      {type: 'Supplier', filter: {op: 'eq', prop: 'active', value: false}},
+      {},
+    );
+    expect(pks(inactive.items)).toEqual(['S2']);
+  });
+
+  it('searches title, primary key and RID', async () => {
+    const byTitle = await h.rpc.listObjects(testCtx(), {q: 'acme'}, {});
+    expect(pks(byTitle.items)).toEqual(['S5']);
+    const rid = await ridOf(h, 'Part', 'P1');
+    const byRid = await h.rpc.listObjects(testCtx(), {q: rid}, {});
+    expect(pks(byRid.items)).toEqual(['P1']);
+  });
+
+  it('pages with a cursor (limit ≤ 100)', async () => {
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 5; i++) {
+      const page = await h.rpc.listObjects(
+        testCtx(),
+        {type: 'Supplier', orderBy: {prop: 'tier', dir: 'asc'}},
+        {cursor, limit: 2},
+      );
+      seen.push(...pks(page.items));
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+    expect(seen).toHaveLength(5);
+    expect(new Set(seen).size).toBe(5);
+    const inMem: string[] = [];
+    cursor = undefined;
+    for (let i = 0; i < 5; i++) {
+      const page = await h.rpc.listObjects(
+        testCtx(),
+        {type: 'Supplier', filter: {op: 'exists', prop: 'notes'}},
+        {cursor, limit: 1},
+      );
+      inMem.push(...pks(page.items));
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+    expect(inMem.sort()).toEqual(['S1', 'S3']);
+  });
+
+  it('rejects sorting on non-indexed properties', async () => {
+    const err = await codeOf(
+      h.rpc.listObjects(
+        testCtx(),
+        {type: 'Supplier', orderBy: {prop: 'notes', dir: 'asc'}},
+        {},
+      ),
+    );
+    expect(err.code).toBe('VALIDATION_FAILED');
+  });
+
+  it('drops props absent from the ontology and reports invalid ones', async () => {
+    h.setSchema(
+      testSchema(s => {
+        const t = s.objectTypes.Supplier;
+        t.properties = t.properties.filter(p => p.apiName !== 'notes');
+        delete t.propsByName.notes;
+        t.propsByName.tier.dataType = 'string';
       }),
     );
-    expect(pre.code).toBe('PRECONDITION_FAILED');
-    expect(pre.status).toBe(422);
-    expect(pre.extras.unmet).toEqual(['增加天数须在 1–30 之间']);
+    const dto = (await h.rpc.getObject(
+      testCtx(),
+      await ridOf(h, 'Supplier', 'S1'),
+    ))!;
+    expect(dto.props.notes).toBeUndefined();
+    expect(dto.provenance.notes).toBeUndefined();
+    expect(dto.invalidProps).toEqual(['tier']);
+  });
+
+  it('reads several objects by rid and counts the workspace', async () => {
+    const r1 = await ridOf(h, 'Supplier', 'S1');
+    const r2 = await ridOf(h, 'Part', 'P1');
+    const many = await h.rpc.getObjects(testCtx(), [
+      r2,
+      r1,
+      'ri.Part.01K6A0000000000000000000ZZ' as Rid,
+    ]);
+    expect(pks(many)).toEqual(['P1', 'S1']);
+    expect(await h.rpc.stats(testCtx())).toEqual({
+      objects: 6,
+      links: 0,
+      byType: {Supplier: 5, Part: 1},
+    });
+  });
+});
+
+describe('patchObject', () => {
+  let h: Harness;
+  let rid: Rid;
+  beforeEach(async () => {
+    h = setup();
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [supplier('S1', {riskScore: 0.2, notes: 'n'})],
+    });
+    rid = await ridOf(h, 'Supplier', 'S1');
+  });
+
+  it('applies a merge patch with If-Match and publishes ObjectPatched', async () => {
+    const dto = await h.rpc.patchObject(
+      testCtx(),
+      rid,
+      {riskScore: '0.95', notes: null},
+      1,
+    );
+    expect(dto.version).toBe(2);
+    expect(dto.props.riskScore).toBe(0.95);
+    expect(dto.props.notes).toBeUndefined();
+    expect(dto.provenance.riskScore).toBeUndefined();
+    const msg = h.messages().at(-1)!;
+    expect(msg.kind).toBe('ObjectPatched');
+    expect(msg.changes).toEqual([
+      {rid, type: 'Supplier', changed: ['riskScore', 'notes']},
+    ]);
+    const found = await h.rpc.listObjects(
+      testCtx(),
+      {type: 'Supplier', filter: {op: 'gt', prop: 'riskScore', value: 0.9}},
+      {},
+    );
+    expect(found.items.map(i => i.rid)).toEqual([rid]);
+  });
+
+  it('returns 412 for a stale If-Match (two tabs)', async () => {
+    const [a, b] = await Promise.allSettled([
+      h.rpc.patchObject(testCtx(), rid, {notes: 'tab A'}, 1),
+      h.rpc.patchObject(testCtx(), rid, {notes: 'tab B'}, 1),
+    ]);
+    const outcomes = [a, b].map(r => r.status);
+    expect(outcomes.sort()).toEqual(['fulfilled', 'rejected']);
+    const rejected = [a, b].find(
+      r => r.status === 'rejected',
+    ) as PromiseRejectedResult;
+    const err = AppError.from(rejected.reason);
+    expect(err.code).toBe('PRECONDITION_FAILED');
+    expect(err.status).toBe(412);
+    const stale = await codeOf(
+      h.rpc.patchObject(testCtx(), rid, {notes: 'late'}, 1),
+    );
+    expect(stale.code).toBe('PRECONDITION_FAILED');
+    expect((await h.rpc.getObject(testCtx(), rid))!.version).toBe(2);
+    expect(count(h, 'SELECT COUNT(*) AS n FROM domain_event')).toBe(0);
+  });
+
+  it('validates the patch', async () => {
     expect(
-      (
-        await codeOf(
-          h.rpc.applyAction(h.ctx('Operator'), {
-            actionType: 'nope',
-            target: s1,
-            params: {},
-          }),
-        )
-      ).code,
-    ).toBe('NOT_FOUND');
-    expect(
-      (
-        await codeOf(
-          h.rpc.applyAction(h.ctx('Operator'), {
-            actionType: 'flagSupplier',
-            target: p1,
-            params: {},
-          }),
-        )
-      ).code,
+      (await codeOf(h.rpc.patchObject(testCtx(), rid, {bogus: 1}, 1))).code,
     ).toBe('VALIDATION_FAILED');
     expect(
-      (
-        await codeOf(
-          h.rpc.applyAction(h.ctx('Operator'), {
-            actionType: 'flagSupplier',
-            target: 'ri.t1.Supplier.X' as Rid,
-            params: {},
-          }),
-        )
-      ).code,
-    ).toBe('OBJECT_NOT_FOUND');
+      (await codeOf(h.rpc.patchObject(testCtx(), rid, {tier: 'x'}, 1))).code,
+    ).toBe('VALIDATION_FAILED');
+    expect(
+      (await codeOf(h.rpc.patchObject(testCtx(), rid, {name: null}, 1))).code,
+    ).toBe('VALIDATION_FAILED');
+    expect(
+      (await codeOf(h.rpc.patchObject(testCtx(), rid, {supplierId: 'S9'}, 1)))
+        .code,
+    ).toBe('VALIDATION_FAILED');
+    const missing = 'ri.Supplier.01K6A0000000000000000000ZZ' as Rid;
+    expect(
+      (await codeOf(h.rpc.patchObject(testCtx(), missing, {}, 1))).code,
+    ).toBe('NOT_FOUND');
+  });
+});
 
-    const ok = await h.rpc.applyAction(h.ctx('Operator'), {
-      actionType: 'flagSupplier',
-      target: s1,
-      params: {reason: 'risk'},
-      ifMatch: 1,
+describe('graph traversal', () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = setup();
+    // S1 → P1 → P2 → P3 (dependsOn), S2 → P1.
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [
+        part('P3', {}, 1),
+        part('P2', {}, 2, [{type: 'dependsOn', toType: 'Part', toKey: 'P3'}]),
+        part('P1', {}, 3, [{type: 'dependsOn', toType: 'Part', toKey: 'P2'}]),
+        supplier('S1', {}, 4, [supplies('P1', 0.6)]),
+        supplier('S2', {}, 5, [supplies('P1')]),
+      ],
     });
-    expect(ok).toMatchObject({version: 2, after: {status: 'watch'}});
-    expect(ok.after.contactEmail).toBeUndefined();
-    const watch = await h.rpc.listObjects(h.ctx(), 'Supplier', {
-      filter: {op: 'eq', prop: 'status', value: 'watch'},
-    });
-    expect(watch.items.map(i => i.primaryKey)).toEqual(['S1']);
   });
 
-  it('switchSupplier relinks by primary key and syncs the graph', async () => {
-    const h = await seeded();
-    const m1 = await h.rid('Material', 'M1');
-    const s1 = await h.rid('Supplier', 'S1');
-    const s2 = await h.rid('Supplier', 'S2');
-    const approval = await signVoucher(SECRET, {
-      recommendationId: 'rec-s',
-      tenantId: 't1',
-      actionType: 'switchSupplier',
-      target: m1,
-      expiresAt: '2026-09-25T00:00:00Z',
-    });
-    const syncBefore = h.bus.size('graph-sync');
-    const res = await h.rpc.applyAction(h.ctx('Operator'), {
-      actionType: 'switchSupplier',
-      target: m1,
-      params: {newSupplier: 'S2'},
-      approval,
-    });
-    expect(res.version).toBe(3);
-    const links = h.db.raw
-      .prepare(
-        "SELECT src_rid, weight FROM og_link WHERE link_type = 'supplies' AND dst_rid = ?",
-      )
-      .all(m1) as {src_rid: string; weight: number}[];
-    expect(links).toEqual([{src_rid: s2, weight: 0.6}]);
-    const msg = h.sync().slice(syncBefore)[0];
-    expect(msg.links).toEqual([
-      {type: 'supplies', src: s1, dst: m1, weight: 0.6, op: 'delete'},
-      {type: 'supplies', src: s2, dst: m1, weight: 0.6, op: 'merge'},
+  it('walks links around an object up to depth 2', async () => {
+    const s1 = await ridOf(h, 'Supplier', 'S1');
+    const d1 = await h.rpc.getLinks(testCtx(), s1, {depth: 1});
+    expect(d1.nodes.map(n => [n.title, n.hop])).toEqual([
+      ['Supplier S1', 0],
+      ['P1', 1],
     ]);
-    const unknown = await codeOf(
-      h.rpc.applyAction(h.ctx('Operator'), {
-        actionType: 'switchSupplier',
-        target: m1,
-        params: {newSupplier: 'S404'},
-        approval: {
-          ...approval,
-          recommendationId: 'rec-s2',
-          signature: (
-            await signVoucher(SECRET, {...approval, recommendationId: 'rec-s2'})
-          ).signature,
-        },
+    const d2 = await h.rpc.getLinks(testCtx(), s1, {depth: 2});
+    expect(d2.nodes.map(n => n.title).sort()).toEqual(
+      ['P1', 'P2', 'Supplier S1', 'Supplier S2'].sort(),
+    );
+    expect(d2.nodes.find(n => n.title === 'P3')).toBeUndefined();
+    const out = await h.rpc.getLinks(testCtx(), s1, {
+      depth: 2,
+      direction: 'out',
+    });
+    expect(out.nodes.map(n => n.title).sort()).toEqual(
+      ['P1', 'P2', 'Supplier S1'].sort(),
+    );
+    const typed = await h.rpc.getLinks(testCtx(), s1, {
+      depth: 2,
+      linkTypes: ['supplies'],
+    });
+    expect(typed.nodes.map(n => n.title).sort()).toEqual(
+      ['P1', 'Supplier S1', 'Supplier S2'].sort(),
+    );
+    expect(typed.edges.every(e => e.type === 'supplies')).toBe(true);
+    const cut = await h.rpc.getLinks(testCtx(), s1, {depth: 2, limit: 2});
+    expect(cut.nodes).toHaveLength(2);
+    expect(cut.truncated).toBe(true);
+    expect(d2.truncated).toBe(false);
+  });
+
+  it('computes the outgoing impact subgraph (6.3.2)', async () => {
+    const s1 = await ridOf(h, 'Supplier', 'S1');
+    const one = await h.rpc.impactSubgraph(testCtx(), {
+      rids: [s1],
+      linkTypes: ['supplies', 'dependsOn'],
+      depth: 1,
+      limit: 300,
+    });
+    expect(one.nodes.map(n => n.title)).toEqual(['Supplier S1', 'P1']);
+    const two = await h.rpc.impactSubgraph(testCtx(), {
+      rids: [s1],
+      linkTypes: ['supplies', 'dependsOn'],
+      depth: 2,
+      limit: 300,
+    });
+    expect(two.nodes.map(n => [n.title, n.hop])).toEqual([
+      ['Supplier S1', 0],
+      ['P1', 1],
+      ['P2', 2],
+    ]);
+    expect(two.edges.map(e => e.type).sort()).toEqual([
+      'dependsOn',
+      'supplies',
+    ]);
+    expect(two.edges.find(e => e.type === 'supplies')!.weight).toBe(0.6);
+    const onlySupplies = await h.rpc.impactSubgraph(testCtx(), {
+      rids: [s1],
+      linkTypes: ['supplies'],
+      depth: 2,
+      limit: 300,
+    });
+    expect(onlySupplies.nodes).toHaveLength(2);
+    const cut = await h.rpc.impactSubgraph(testCtx(), {
+      rids: [s1],
+      linkTypes: ['supplies', 'dependsOn'],
+      depth: 2,
+      limit: 1,
+    });
+    expect(cut).toMatchObject({truncated: true});
+    expect(cut.nodes).toHaveLength(1);
+  });
+
+  it('rejects depth > 2 and unknown roots', async () => {
+    const s1 = await ridOf(h, 'Supplier', 'S1');
+    const err = await codeOf(h.rpc.getLinks(testCtx(), s1, {depth: 3 as 2}));
+    expect(err.code).toBe('VALIDATION_FAILED');
+    const missing = 'ri.Part.01K6A0000000000000000000ZZ' as Rid;
+    expect(
+      (await codeOf(h.rpc.getLinks(testCtx(), missing, {depth: 1}))).code,
+    ).toBe('NOT_FOUND');
+  });
+});
+
+describe('applyAction', () => {
+  let h: Harness;
+  let s1: Rid;
+  let s2: Rid;
+  let p1: Rid;
+  beforeEach(async () => {
+    h = setup();
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [
+        part('P1'),
+        supplier('S1', {riskScore: 0.5}, 2, [supplies('P1')]),
+        supplier('S2', {}, 3),
+        supplier('S3', {active: false}, 4),
+      ],
+    });
+    s1 = await ridOf(h, 'Supplier', 'S1');
+    s2 = await ridOf(h, 'Supplier', 'S2');
+    p1 = await ridOf(h, 'Part', 'P1');
+  });
+
+  const flag = (key: string, ifMatch?: number, target?: Rid) => ({
+    actionType: 'flagSupplier',
+    target: target ?? s1,
+    params: {reason: 'late shipments'},
+    ifMatch,
+    idempotencyKey: key,
+  });
+
+  it('executes effects, logs the owner and publishes ActionExecuted', async () => {
+    const res = await h.rpc.applyAction(
+      testCtx(),
+      flag('key-0000000000000001', 1),
+    );
+    expect(res).toMatchObject({
+      actionType: 'flagSupplier',
+      rid: s1,
+      version: 2,
+      replayed: false,
+      before: {riskScore: 0.5},
+      after: {riskScore: 0.6, status: 'REVIEW', notes: 'late shipments'},
+    });
+    const dto = (await h.rpc.getObject(testCtx(), s1))!;
+    expect(dto.version).toBe(2);
+    expect(dto.props.status).toBe('REVIEW');
+    const msg = h.messages().at(-1)!;
+    expect(msg).toMatchObject({
+      kind: 'ActionExecuted',
+      actionLogId: res.actionLogId,
+    });
+    const log = await h.rpc.listActionLog(testCtx(), s1, {});
+    expect(log.items).toHaveLength(1);
+    expect(log.items[0]).toMatchObject({
+      actor: 'owner',
+      actionType: 'flagSupplier',
+    });
+    expect(log.items[0].actorUserId).toBeUndefined();
+    const indexed = await h.rpc.listObjects(
+      testCtx(),
+      {type: 'Supplier', filter: {op: 'eq', prop: 'status', value: 'REVIEW'}},
+      {},
+    );
+    expect(indexed.items.map(i => i.rid)).toEqual([s1]);
+  });
+
+  it('replays an idempotency key with the first result', async () => {
+    const first = await h.rpc.applyAction(
+      testCtx(),
+      flag('key-0000000000000002', 1),
+    );
+    const sent = h.messages().length;
+    const again = await h.rpc.applyAction(
+      testCtx(),
+      flag('key-0000000000000002', 1),
+    );
+    expect(again).toEqual({...first, replayed: true});
+    expect(h.messages()).toHaveLength(sent);
+    expect((await h.rpc.getObject(testCtx(), s1))!.version).toBe(2);
+    const reuse = await codeOf(
+      h.rpc.applyAction(testCtx(), flag('key-0000000000000002', 1, s2)),
+    );
+    expect(reuse.code).toBe('CONFLICT');
+  });
+
+  it('returns the same result for concurrent requests with one key', async () => {
+    const results = await Promise.allSettled([
+      h.rpc.applyAction(testCtx(), flag('key-0000000000000003', 1)),
+      h.rpc.applyAction(testCtx(), flag('key-0000000000000003', 1)),
+    ]);
+    const ok = results.filter(
+      r => r.status === 'fulfilled',
+    ) as PromiseFulfilledResult<{actionLogId: string}>[];
+    expect(ok.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(ok.map(r => r.value.actionLogId)).size).toBe(1);
+    expect(count(h, 'SELECT COUNT(*) AS n FROM og_action_log')).toBe(1);
+    expect((await h.rpc.getObject(testCtx(), s1))!.version).toBe(2);
+  });
+
+  it('requires If-Match from humans and rejects stale versions', async () => {
+    const missing = await codeOf(
+      h.rpc.applyAction(testCtx(), flag('key-0000000000000004')),
+    );
+    expect(missing.code).toBe('PRECONDITION_FAILED');
+    const stale = await codeOf(
+      h.rpc.applyAction(testCtx(), flag('key-0000000000000005', 7)),
+    );
+    expect(stale.status).toBe(412);
+    expect(count(h, 'SELECT COUNT(*) AS n FROM og_action_log')).toBe(0);
+  });
+
+  it('lets decision-engine execute without If-Match as svc:decision-engine', async () => {
+    const ctx = serviceCtx(TEST_TID, 'decision-engine');
+    const res = await h.rpc.applyAction(ctx, {
+      ...flag('rec:01K6A0000000000000000REC1'),
+      recommendationId: '01K6A0000000000000000REC1',
+    });
+    expect(res.version).toBe(2);
+    const log = await h.rpc.listActionLog(testCtx(), s1, {});
+    expect(log.items[0]).toMatchObject({
+      actor: 'svc:decision-engine',
+      recommendationId: '01K6A0000000000000000REC1',
+    });
+    expect(h.messages().at(-1)!.recommendationId).toBe(
+      '01K6A0000000000000000REC1',
+    );
+    const other = await codeOf(
+      h.rpc.applyAction(
+        serviceCtx(TEST_TID, 'data-integration'),
+        flag('key-0000000000000006'),
+      ),
+    );
+    expect(other.code).toBe('FORBIDDEN');
+  });
+
+  it('records admin actions under Act-as with the admin user id', async () => {
+    const ctx = testCtx({
+      role: 'admin',
+      actingAs: true,
+      sub: '01K6A000000000000000000A01',
+    });
+    ctx.actor.userId = '01K6A000000000000000000A01';
+    await h.rpc.applyAction(ctx, flag('key-0000000000000007', 1));
+    const log = await h.rpc.listActionLog(testCtx(), s1, {});
+    expect(log.items[0]).toMatchObject({
+      actor: 'admin',
+      actorUserId: '01K6A000000000000000000A01',
+    });
+  });
+
+  it('rejects unmet preconditions with 422 and localized messages', async () => {
+    const s3 = await ridOf(h, 'Supplier', 'S3');
+    const err = await codeOf(
+      h.rpc.applyAction(
+        testCtx({locale: 'en-US'}),
+        flag('key-0000000000000008', 1, s3),
+      ),
+    );
+    expect(err.code).toBe('VALIDATION_FAILED');
+    expect(err.status).toBe(422);
+    expect(err.extras.unmet).toEqual(['Supplier is inactive']);
+    const params = await codeOf(
+      h.rpc.applyAction(testCtx(), {
+        ...flag('key-0000000000000009', 1),
+        params: {},
       }),
     );
-    expect(unknown.code).toBe('VALIDATION_FAILED');
+    expect(params).toMatchObject({code: 'VALIDATION_FAILED', status: 400});
   });
 
-  it('writeback failure marks WRITEBACK_PENDING and cron retries it', async () => {
-    const h = await seeded();
-    h.setModel({flagWritebackUrl: 'https://erp.example.com/hook'});
-    h.clock.advance(61_000); // model cache TTL
-    h.fetchMock.respond(() => new Response('down', {status: 503}));
-    const s1 = await h.rid('Supplier', 'S1');
-    const res = await h.rpc.applyAction(h.ctx('Operator'), {
-      actionType: 'flagSupplier',
-      target: s1,
-      params: {},
+  it('relinks and unlinks within the workspace', async () => {
+    const res = await h.rpc.applyAction(testCtx(), {
+      actionType: 'switchSupplier',
+      target: p1,
+      params: {newSupplier: s2},
+      ifMatch: 1,
+      idempotencyKey: 'key-0000000000000010',
     });
-    expect(res.writebackStatus).toBe('WRITEBACK_PENDING');
-    expect(res.after.status).toBe('watch');
-    expect((await h.rpc.getObject(h.ctx(), s1))?.props.status).toBe('watch');
-    const call = h.fetchMock.calls[0];
-    expect(call.url).toBe('https://erp.example.com/hook');
-    expect(call.headers['idempotency-key']).toBe(res.actionLogId);
-    const expected = await hmacSha256Hex(
-      'wb-secret',
-      `${call.headers['x-od-timestamp']}.${call.body}`,
+    expect(res.version).toBe(2);
+    const links = await h.rpc.getLinks(testCtx(), p1, {
+      depth: 1,
+      direction: 'in',
+    });
+    expect(links.edges.map(e => e.src)).toEqual([s2]);
+    const changes = h
+      .messages()
+      .at(-1)!
+      .changes.map(c => c.rid)
+      .sort();
+    expect(changes).toEqual([p1, s1, s2].sort());
+    await h.rpc.applyAction(testCtx(), {
+      actionType: 'dropSupplier',
+      target: p1,
+      params: {supplier: s2},
+      ifMatch: 2,
+      idempotencyKey: 'key-0000000000000011',
+    });
+    expect((await h.rpc.stats(testCtx())).links).toBe(0);
+    const bad = await codeOf(
+      h.rpc.applyAction(testCtx(), {
+        actionType: 'switchSupplier',
+        target: p1,
+        params: {newSupplier: 'ri.Supplier.01K6A0000000000000000000ZZ'},
+        ifMatch: 3,
+        idempotencyKey: 'key-0000000000000012',
+      }),
     );
-    expect(call.headers['x-od-signature']).toBe(expected);
-    expect(JSON.parse(call.body)).toMatchObject({
-      actionLogId: res.actionLogId,
-      actionType: 'flagSupplier',
-      target: s1,
-    });
+    expect(bad.code).toBe('VALIDATION_FAILED');
+  });
 
-    // Still failing: attempts grow; then success.
-    await h.svc.scheduled!('*/15 * * * *', h.clock.now());
-    let row = h.db.raw
-      .prepare(
-        'SELECT writeback_status, writeback_attempts FROM og_action_log WHERE id = ?',
-      )
-      .get(res.actionLogId) as Record<string, unknown>;
-    expect(row).toEqual({
-      writeback_status: 'WRITEBACK_PENDING',
-      writeback_attempts: 2,
+  it('pages the action log newest first', async () => {
+    for (let i = 0; i < 3; i++) {
+      h.clock.advance(1000);
+      await h.rpc.applyAction(testCtx(), flag(`key-00000000000001${i}`, i + 1));
+    }
+    const first = await h.rpc.listActionLog(testCtx(), s1, {limit: 2});
+    expect(first.items).toHaveLength(2);
+    expect(first.nextCursor).not.toBeNull();
+    const second = await h.rpc.listActionLog(testCtx(), s1, {
+      limit: 2,
+      cursor: first.nextCursor!,
     });
-    h.fetchMock.respond(() => new Response('{}', {status: 200}));
-    await h.svc.scheduled!('*/15 * * * *', h.clock.now());
-    row = h.db.raw
-      .prepare(
-        'SELECT writeback_status, writeback_attempts FROM og_action_log WHERE id = ?',
-      )
-      .get(res.actionLogId) as Record<string, unknown>;
-    expect(row).toEqual({writeback_status: 'SENT', writeback_attempts: 3});
-    expect(h.fetchMock.calls).toHaveLength(3);
-    expect(
-      h.fetchMock.calls.every(
-        c => c.headers['idempotency-key'] === res.actionLogId,
-      ),
-    ).toBe(true);
-
-    // A successful first attempt is SENT immediately; exhausted retries are left alone.
-    const s2 = await h.rid('Supplier', 'S2');
-    const sent = await h.rpc.applyAction(h.ctx('Operator'), {
-      actionType: 'flagSupplier',
-      target: s2,
-      params: {},
-    });
-    expect(sent.writebackStatus).toBe('SENT');
-    h.fetchMock.respond(() => new Response('down', {status: 500}));
-    const s3 = await h.rid('Supplier', 'S3');
-    const pending = await h.rpc.applyAction(h.ctx('Operator'), {
-      actionType: 'flagSupplier',
-      target: s3,
-      params: {},
-    });
-    for (let i = 0; i < 4; i++)
-      await h.svc.scheduled!('*/15 * * * *', h.clock.now());
-    row = h.db.raw
-      .prepare(
-        'SELECT writeback_status, writeback_attempts FROM og_action_log WHERE id = ?',
-      )
-      .get(pending.actionLogId) as Record<string, unknown>;
-    expect(row).toEqual({
-      writeback_status: 'WRITEBACK_PENDING',
-      writeback_attempts: 3,
-    });
-    const log = await h.rpc.listActionLog(h.ctx(), {});
-    expect(log.map(l => l.writebackStatus).sort()).toEqual([
-      'SENT',
-      'SENT',
-      'WRITEBACK_PENDING',
-    ]);
+    expect(second.items).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+    const all = [...first.items, ...second.items].map(i => i.executedAt);
+    expect([...all].sort().reverse()).toEqual(all);
   });
 });
 
-describe('object-graph service: entity resolution and admin', () => {
-  it('suggests fuzzy merges; accepting moves links and aliases the key', async () => {
-    const h = await seeded();
-    const ctx = h.ctx();
-    await h.send(
-      writeMsg(ctx, 'job-dup', [
-        cmd(
-          'Supplier',
-          'S4',
-          {name: 'ACME Metal'},
-          {
-            row: 1,
-            links: [{type: 'supplies', toType: 'Material', toKey: 'M3'}],
-          },
-        ),
-      ]),
-    );
-    const s1 = await h.rid('Supplier', 'S1');
-    const s4 = await h.rid('Supplier', 'S4');
-    expect(
-      (await codeOf(h.rpc.listMergeSuggestions(h.ctx('Operator')))).code,
-    ).toBe('FORBIDDEN');
-    const [s] = await h.rpc.listMergeSuggestions(h.ctx('Modeler'));
-    expect(s).toMatchObject({
-      ridA: s1,
-      ridB: s4,
-      titleA: 'Acme Metals',
-      titleB: 'ACME Metal',
-      status: 'OPEN',
+describe('tenant isolation', () => {
+  it('never reads or writes across workspaces', async () => {
+    const h = setup();
+    const a = testCtx();
+    const b = testCtx({tid: OTHER_TID, sub: '01K6A000000000000000000U02'});
+    await h.rpc.upsertBatch(a, {
+      jobId: 'j',
+      seq: 1,
+      cmds: [part('P1'), supplier('S1', {}, 2, [supplies('P1')])],
     });
-    expect(s.score).toBeGreaterThanOrEqual(0.92);
-
-    const accepted = await h.rpc.resolveMergeSuggestion(
-      h.ctx('Modeler'),
-      s.id,
-      true,
+    await h.rpc.upsertBatch(b, {
+      jobId: 'j',
+      seq: 1,
+      cmds: [supplier('S1', {name: 'B corp'})],
+    });
+    const ra = await ridOf(h, 'Supplier', 'S1', a);
+    const rb = await ridOf(h, 'Supplier', 'S1', b);
+    expect(ra).not.toBe(rb);
+    expect(await h.rpc.getObject(b, ra)).toBeNull();
+    expect(await h.rpc.getObjects(b, [ra])).toEqual([]);
+    expect((await h.rpc.listObjects(b, {}, {})).items.map(i => i.rid)).toEqual([
+      rb,
+    ]);
+    expect((await codeOf(h.rpc.patchObject(b, ra, {notes: 'x'}, 1))).code).toBe(
+      'NOT_FOUND',
     );
-    expect(accepted.status).toBe('ACCEPTED');
-    expect(await h.rpc.getObject(ctx, s4)).toBeNull();
-    const m3 = await h.rid('Material', 'M3');
-    const linked = await h.rpc.getObject(ctx, s1, {expand: 'links'});
-    expect(
-      linked?.links?.some(l => l.dst === m3 && l.type === 'supplies'),
-    ).toBe(true);
-    expect(
-      (
-        await codeOf(
-          h.rpc.resolveMergeSuggestion(h.ctx('Modeler'), s.id, false),
-        )
-      ).code,
-    ).toBe('INVALID_TRANSITION');
-
-    // Later upserts of S4 resolve to S1 through the alias.
-    await h.send(
-      writeMsg(ctx, 'job-dup-2', [
-        cmd(
-          'Supplier',
-          'S4',
-          {name: 'ACME Metal', riskScore: 81},
-          {provenance: {ingestedAt: '2026-09-26T00:00:00Z'}},
-        ),
-      ]),
+    expect((await codeOf(h.rpc.getLinks(b, ra, {depth: 1}))).code).toBe(
+      'NOT_FOUND',
     );
-    expect(
-      count(
-        h.db,
-        "SELECT COUNT(*) AS n FROM og_object WHERE object_type = 'Supplier'",
-      ),
-    ).toBe(3);
-    expect((await h.rpc.getObject(ctx, s1))?.props.riskScore).toBe(81);
-    expect(h.reports.at(-1)?.r.merged).toBe(1);
-
-    // Rejecting only changes the status.
-    await h.send(
-      writeMsg(ctx, 'job-dup-3', [cmd('Supplier', 'S5', {name: 'Beta Part'})]),
-    );
-    const open = (await h.rpc.listMergeSuggestions(h.ctx('Modeler'))).find(
-      x => x.status === 'OPEN',
-    )!;
-    expect(open.titleA).toBe('Beta Parts');
-    expect(
-      (await h.rpc.resolveMergeSuggestion(h.ctx('Modeler'), open.id, false))
-        .status,
-    ).toBe('REJECTED');
-    expect(await h.rpc.getObject(ctx, open.ridB)).not.toBeNull();
-  });
-
-  it('resolves aliases by source external key', async () => {
-    const h = harness();
-    const ctx = h.ctx();
-    await h.send(
-      writeMsg(ctx, 'j1', [
-        cmd(
-          'Supplier',
-          'S1',
-          {name: 'Acme'},
-          {source: 'erp', externalKey: 'ERP-1'},
-        ),
-      ]),
-    );
-    await h.send(
-      writeMsg(ctx, 'j2', [
-        cmd(
-          'Supplier',
-          'ACME-001',
-          {name: 'Acme', country: 'CN'},
-          {
-            source: 'erp',
-            externalKey: 'ERP-1',
-            provenance: {ingestedAt: '2026-09-25T00:00:00Z'},
-          },
-        ),
-      ]),
-    );
-    expect(count(h.db, 'SELECT COUNT(*) AS n FROM og_object')).toBe(1);
-    const s1 = await h.rid('Supplier', 'S1');
-    expect((await h.rpc.getObject(ctx, s1))?.props.country).toBe('CN');
-  });
-
-  it('rebuilds indexes when the index plan changes', async () => {
-    const h = await seeded();
+    const impact = await h.rpc.impactSubgraph(b, {
+      rids: [ra],
+      linkTypes: ['supplies'],
+      depth: 2,
+      limit: 10,
+    });
+    expect(impact.nodes).toEqual([]);
     expect(
       (
         await codeOf(
-          h.rpc.onOntologyPublished(h.ctx('Operator'), {
-            api: 'supplyChain',
-            version: '1.1.0',
-            breaking: false,
+          h.rpc.applyAction(b, {
+            actionType: 'flagSupplier',
+            target: ra,
+            params: {reason: 'x'},
+            ifMatch: 1,
+            idempotencyKey: 'key-0000000000000099',
           }),
         )
       ).code,
-    ).toBe('FORBIDDEN');
-    const first = await h.rpc.onOntologyPublished(h.ctx('Modeler'), {
-      api: 'supplyChain',
-      version: '1.0.0',
-      breaking: false,
+    ).toBe('NOT_FOUND');
+    expect(await h.rpc.stats(b)).toEqual({
+      objects: 1,
+      links: 0,
+      byType: {Supplier: 1},
     });
-    expect(first.reindexed).toBe(7);
-    h.setModel({version: '1.1.0', extraIndexed: {Supplier: ['onTimeRate']}});
-    const second = await h.rpc.onOntologyPublished(h.ctx('Modeler'), {
-      api: 'supplyChain',
-      version: '1.1.0',
-      breaking: false,
-    });
-    expect(second.reindexed).toBe(3);
-    expect(
-      count(
-        h.db,
-        "SELECT COUNT(*) AS n FROM og_prop_index WHERE prop = 'onTimeRate'",
-      ),
-    ).toBe(3);
-    expect(
-      h.db.raw
-        .prepare(
-          "SELECT value FROM og_meta WHERE tenant_id = 't1' AND key = 'modelVersion'",
-        )
-        .get(),
-    ).toEqual({value: '1.1.0'});
-    h.setModel({version: '1.2.0'});
-    await h.rpc.onOntologyPublished(h.ctx('Modeler'), {
-      api: 'supplyChain',
-      version: '1.2.0',
-      breaking: true,
-    });
-    expect(
-      count(
-        h.db,
-        "SELECT COUNT(*) AS n FROM og_prop_index WHERE prop = 'onTimeRate'",
-      ),
-    ).toBe(0);
-  });
-
-  it('rebuildProjection enqueues graph-sync chunks (Admin only)', async () => {
-    const h = await seeded();
-    expect((await codeOf(h.rpc.rebuildProjection(h.ctx('Modeler')))).code).toBe(
-      'FORBIDDEN',
-    );
-    const before = h.bus.size('graph-sync');
-    const res = await h.rpc.rebuildProjection(h.ctx());
-    expect(res.queued).toBe(2);
-    const msgs = h.sync().slice(before);
-    expect(msgs[0].upserts).toHaveLength(7);
-    expect(msgs[1].links).toHaveLength(6);
-  });
-
-  it('graph-sync consumer is a no-op without Neo4j', async () => {
-    const h = await seeded();
-    await h.bus.drain({
-      'graph-sync': {handler: b => h.svc.queue!(b), maxRetries: 5},
-    });
-    expect(h.bus.size('graph-sync')).toBe(0);
-    expect(h.fetchMock.calls).toHaveLength(0);
+    // Same primary key in two workspaces are two objects.
+    expect((await h.rpc.getObject(a, ra))!.title).toBe('Supplier S1');
+    expect((await h.rpc.getObject(b, rb))!.title).toBe('B corp');
   });
 });
 
-describe('object-graph service: Neo4j', () => {
-  const neo = {
-    FEATURE_NEO4J: 'true',
-    NEO4J_URL: 'neo4j+s://abc.databases.neo4j.io',
-    NEO4J_USER: 'neo4j',
-    NEO4J_PASSWORD: 'pw',
-    NEO4J_DATABASE: 'neo4j',
-  };
-
-  it('writes graph-sync messages through the Query API and sends a daily heartbeat', async () => {
-    const h = await seeded(neo);
-    h.fetchMock.respond(() =>
-      Response.json({data: {fields: [], values: []}}, {status: 202}),
-    );
-    await h.bus.drain({
-      'graph-sync': {handler: b => h.svc.queue!(b), maxRetries: 5},
+describe('TenantLifecycle', () => {
+  async function seeded() {
+    const h = setup();
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [
+        part('P1', {stock: 1}),
+        part('P2', {stock: 2}, 2),
+        supplier('S1', {}, 3, [supplies('P1'), supplies('P2')]),
+      ],
     });
-    const calls = h.fetchMock.calls;
-    expect(calls.length).toBeGreaterThan(0);
-    expect(
-      calls.every(
-        c => c.url === 'https://abc.databases.neo4j.io/db/neo4j/query/v2',
-      ),
-    ).toBe(true);
-    expect(calls[0].headers.authorization).toBe(`Basic ${btoa('neo4j:pw')}`);
-    const bodies = calls.map(
-      c =>
-        JSON.parse(c.body) as {
-          statement: string;
-          parameters: Record<string, unknown>;
-        },
-    );
-    const supplierMerge = bodies.find(b =>
-      b.statement.includes('SET n:`Supplier`'),
-    )!;
-    expect(supplierMerge.parameters.tenant).toBe('t1');
-    expect(
-      bodies.some(b => b.statement.includes('MERGE (a)-[r:`supplies`]->(b)')),
-    ).toBe(true);
-    expect(bodies.every(b => !b.statement.includes('apoc'))).toBe(true);
+    const s1 = await ridOf(h, 'Supplier', 'S1');
+    await h.rpc.applyAction(testCtx(), {
+      actionType: 'flagSupplier',
+      target: s1,
+      params: {reason: 'r'},
+      ifMatch: 1,
+      idempotencyKey: 'key-0000000000000001',
+    });
+    await h.rpc.upsertBatch(testCtx({tid: OTHER_TID}), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [supplier('X1')],
+    });
+    return h;
+  }
 
-    const n = calls.length;
-    await h.svc.scheduled!('*/15 * * * *', h.clock.now());
-    await h.svc.scheduled!('*/15 * * * *', h.clock.now());
-    const beats = h.fetchMock.calls
-      .slice(n)
-      .filter(c => c.body.includes('Checkpoint'));
-    expect(beats).toHaveLength(1);
-    h.clock.advance(86_400_000);
-    await h.svc.scheduled!('*/15 * * * *', h.clock.now());
-    expect(
-      h.fetchMock.calls.slice(n).filter(c => c.body.includes('Checkpoint')),
-    ).toHaveLength(2);
+  it('exports objects, links and audit as JSON Lines pages', async () => {
+    const h = await seeded();
+    const lc = rpcBinding(h.svc.lifecycle);
+    const pages = [];
+    let cursor: string | null = null;
+    do {
+      const p = await lc.exportTenant(TEST_TID, cursor);
+      pages.push(p);
+      cursor = p.nextCursor;
+    } while (cursor);
+    expect(pages.map(p => p.file)).toEqual([
+      'objects.jsonl',
+      'links.jsonl',
+      'audit.jsonl',
+    ]);
+    const objects = pages[0].text
+      .trim()
+      .split('\n')
+      .map(l => JSON.parse(l));
+    expect(objects).toHaveLength(3);
+    expect(objects[0]).toHaveProperty('provenance');
+    expect(pages[1].text.trim().split('\n')).toHaveLength(2);
+    const audit = JSON.parse(pages[2].text.trim());
+    expect(audit).toMatchObject({actionType: 'flagSupplier', actor: 'owner'});
+    expect(audit).not.toHaveProperty('idempotencyKey');
   });
 
-  it('serves 3-hop impact from Neo4j and degrades to D1 on failure', async () => {
-    const h = await seeded(neo);
-    const s1 = await h.rid('Supplier', 'S1');
-    const m1 = await h.rid('Material', 'M1');
-    const p1 = await h.rid('Product', 'P1');
-    h.fetchMock.respond(() =>
-      Response.json(
-        {
-          data: {
-            fields: ['src', 'dst', 'type', 'weight'],
-            values: [
-              [s1, m1, 'supplies', 0.6],
-              [m1, p1, 'usedIn', null],
-            ],
-          },
-        },
-        {status: 202},
-      ),
-    );
-    const deep = await h.rpc.impactSubgraph(h.ctx(), {
-      rids: [s1],
-      maxHops: 3,
-      limit: 100,
+  it('pages by rows and bytes with a resumable cursor', async () => {
+    const h = await seeded();
+    const lc = createTenantLifecycle({
+      store: new D1LifecycleStore(h.db.asD1()),
+      clock: h.clock,
+      pageRows: 2,
     });
-    expect(deep.degraded).toBe(false);
-    expect(deep.nodes.map(n => [n.title, n.hop])).toEqual([
-      ['Acme Metals', 0],
-      ['Steel', 1],
-      ['Widget', 2],
-    ]);
-    const stmt = JSON.parse(h.fetchMock.calls.at(-1)!.body).statement as string;
-    expect(stmt).toContain('*1..3');
+    const files: string[] = [];
+    let lines = 0;
+    let cursor: string | null = null;
+    do {
+      const p = await lc.exportTenant(TEST_TID, cursor);
+      files.push(p.file);
+      lines += p.text ? p.text.trim().split('\n').length : 0;
+      cursor = p.nextCursor;
+    } while (cursor);
+    expect(lines).toBe(3 + 2 + 1);
+    expect(files.filter(f => f === 'objects.jsonl').length).toBe(2);
+    const tiny = createTenantLifecycle({
+      store: new D1LifecycleStore(h.db.asD1()),
+      clock: h.clock,
+      pageBytes: 10,
+    });
+    const first = await tiny.exportTenant(TEST_TID, null);
+    expect(first.text.trim().split('\n')).toHaveLength(1);
+    expect(first.nextCursor).not.toBeNull();
+    await expect(tiny.exportTenant(TEST_TID, 'garbage')).rejects.toThrow();
+  });
 
-    h.fetchMock.respond(
-      () =>
-        new Response('{"errors":[{"code":"Neo.DatabaseError"}]}', {
-          status: 500,
-        }),
+  it('purges in bounded steps, writes the tombstone and rejects late writes', async () => {
+    const h = await seeded();
+    const lc = rpcBinding(h.svc.lifecycle);
+    const total = await lc.countTenant(TEST_TID);
+    // 3 objects, 2 links, index rows, 1 action log.
+    expect(total).toBeGreaterThan(6);
+    let deleted = 0;
+    let steps = 0;
+    for (;;) {
+      const r = await lc.purgeTenant(TEST_TID, 3);
+      expect(r.deleted).toBeLessThanOrEqual(3);
+      deleted += r.deleted;
+      steps++;
+      if (r.done) break;
+    }
+    expect(deleted).toBe(total);
+    expect(steps).toBeGreaterThan(2);
+    expect(await lc.countTenant(TEST_TID)).toBe(0);
+    expect(
+      count(
+        h,
+        'SELECT COUNT(*) AS n FROM tenant_tombstone WHERE tenant_id = ?',
+        TEST_TID,
+      ),
+    ).toBe(1);
+    expect(await lc.countTenant(OTHER_TID)).toBeGreaterThan(0);
+    const late = await codeOf(
+      h.rpc.upsertBatch(testCtx(), {
+        jobId: 'j',
+        seq: 9,
+        cmds: [supplier('S9')],
+      }),
     );
-    const degraded = await h.rpc.impactSubgraph(h.ctx(), {
-      rids: [s1],
-      maxHops: 3,
-      limit: 100,
-    });
-    expect(degraded.degraded).toBe(true);
-    expect(degraded.nodes).toHaveLength(5);
+    expect(late.code).toBe('NOT_FOUND');
+    expect(await lc.countTenant(TEST_TID)).toBe(0);
+    const again = await lc.purgeTenant(TEST_TID, 500);
+    expect(again).toEqual({deleted: 0, done: true});
+  });
+
+  it('deletes child rows before objects (purge order)', async () => {
+    const h = await seeded();
+    const lc = h.svc.lifecycle;
+    const idx = count(
+      h,
+      'SELECT COUNT(*) AS n FROM og_prop_index WHERE tenant_id = ?',
+      TEST_TID,
+    );
+    await lc.purgeTenant(TEST_TID, idx);
+    expect(
+      count(
+        h,
+        'SELECT COUNT(*) AS n FROM og_prop_index WHERE tenant_id = ?',
+        TEST_TID,
+      ),
+    ).toBe(0);
+    expect(
+      count(
+        h,
+        'SELECT COUNT(*) AS n FROM og_object WHERE tenant_id = ?',
+        TEST_TID,
+      ),
+    ).toBe(3);
+    await lc.purgeTenant(TEST_TID, 2);
+    expect(
+      count(
+        h,
+        'SELECT COUNT(*) AS n FROM og_link WHERE tenant_id = ?',
+        TEST_TID,
+      ),
+    ).toBe(0);
+    expect(
+      count(
+        h,
+        'SELECT COUNT(*) AS n FROM og_object WHERE tenant_id = ?',
+        TEST_TID,
+      ),
+    ).toBe(3);
   });
 });

@@ -1,53 +1,49 @@
 /**
- * @fileoverview Application errors and RFC 9457 Problem Details.
+ * @fileoverview Application errors and RFC 9457 Problem Details
+ * (修订说明书 10.1, 详细设计 6.6).
  *
- * Errors thrown across Workers RPC lose custom properties and keep only the
- * message, so {@link AppError} encodes its payload into the message and
- * {@link AppError.from} decodes it on the caller side.
+ * The error codes are the stable contract with the web app, which maps each
+ * code to a localized message. Errors thrown across Workers RPC keep only
+ * their message, so {@link AppError} encodes its payload into the message
+ * and {@link AppError.from} decodes it on the caller side.
  */
 
-/** Error codes and their HTTP status. */
+/** Error codes and their default HTTP status. */
 export const ERROR_STATUS = {
   VALIDATION_FAILED: 400,
-  PERTURBATION_INVALID: 400,
-  OBJECT_SET_INVALID: 400,
-  AUTH_INVALID: 401,
-  AUTH_EXPIRED: 401,
-  SIGNATURE_INVALID: 401,
+  CODE_INVALID: 400,
+  UNAUTHENTICATED: 401,
+  TRIAL_EXPIRED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
-  OBJECT_NOT_FOUND: 404,
-  SOURCE_NOT_FOUND: 404,
   CONFLICT: 409,
-  APPROVAL_REQUIRED: 409,
-  INVALID_TRANSITION: 409,
-  REPLAY: 409,
-  VERSION_CONFLICT: 412,
-  BATCH_TOO_LARGE: 413,
-  PRECONDITION_FAILED: 422,
-  ONTOLOGY_BREAKING_CHANGE: 422,
-  ONTOLOGY_INVALID: 422,
-  GRAPH_TOO_LARGE: 422,
-  AUTH_LOCKED: 423,
+  PRECONDITION_FAILED: 412,
   RATE_LIMITED: 429,
+  QUOTA_EXCEEDED: 429,
   INTERNAL: 500,
-  UPSTREAM_FAILED: 502,
-  QUOTA_EXCEEDED: 503,
+  UNAVAILABLE: 503,
+  SIGNUP_CLOSED: 503,
 } as const;
 
 /** A known error code. */
 export type ErrorCode = keyof typeof ERROR_STATUS;
 
-/** RFC 9457 Problem Details body. */
+/** Every error code, in declaration order (OpenAPI `Problem.code` enum). */
+export const ERROR_CODES = Object.keys(ERROR_STATUS) as ErrorCode[];
+
+/** RFC 9457 Problem Details body (`application/problem+json`). */
 export interface Problem {
   type: string;
   title: string;
   status: number;
   code: ErrorCode;
   detail?: string;
-  requestId?: string;
+  traceId?: string;
   [extension: string]: unknown;
 }
+
+/** Media type of Problem Details responses. */
+export const PROBLEM_MEDIA_TYPE = 'application/problem+json';
 
 const MARKER = 'OD_ERR:';
 
@@ -55,6 +51,18 @@ const MARKER = 'OD_ERR:';
 interface AppErrorPayload {
   code: ErrorCode;
   detail?: string;
+  status?: number;
+  extras?: Record<string, unknown>;
+}
+
+/** Options of an {@link AppError}. */
+export interface AppErrorOptions {
+  /**
+   * Overrides the default status, e.g. 422 for unmet action preconditions
+   * or 413 for oversized bodies (both VALIDATION_FAILED).
+   */
+  status?: number;
+  /** Extension members added to the Problem Details body. */
   extras?: Record<string, unknown>;
 }
 
@@ -65,29 +73,30 @@ export class AppError extends Error {
   readonly detail?: string;
   readonly extras: Record<string, unknown>;
 
-  constructor(
-    code: ErrorCode,
-    detail?: string,
-    extras: Record<string, unknown> = {},
-  ) {
-    const payload: AppErrorPayload = {code, detail, extras};
+  constructor(code: ErrorCode, detail?: string, opts: AppErrorOptions = {}) {
+    const payload: AppErrorPayload = {
+      code,
+      detail,
+      status: opts.status,
+      extras: opts.extras,
+    };
     super(MARKER + JSON.stringify(payload));
     this.name = 'AppError';
     this.code = code;
-    this.status = ERROR_STATUS[code];
+    this.status = opts.status ?? ERROR_STATUS[code];
     this.detail = detail;
-    this.extras = extras;
+    this.extras = opts.extras ?? {};
   }
 
   /** Converts to Problem Details. */
-  toProblem(requestId?: string): Problem {
+  toProblem(traceId?: string): Problem {
     return {
-      type: `https://ontodecide-ce.pages.dev/problems/${this.code.toLowerCase()}`,
+      type: `about:blank#${this.code.toLowerCase()}`,
       title: this.code,
       status: this.status,
       code: this.code,
       ...(this.detail ? {detail: this.detail} : {}),
-      ...(requestId ? {requestId} : {}),
+      ...(traceId ? {traceId} : {}),
       ...this.extras,
     };
   }
@@ -105,22 +114,23 @@ export class AppError extends Error {
         const p = JSON.parse(
           message.slice(idx + MARKER.length),
         ) as AppErrorPayload;
-        if (p.code in ERROR_STATUS)
-          return new AppError(p.code, p.detail, p.extras ?? {});
+        if (p.code in ERROR_STATUS) {
+          return new AppError(p.code, p.detail, {
+            status: p.status,
+            extras: p.extras,
+          });
+        }
       } catch {
-        // fall through
+        // Not an encoded AppError; fall through.
       }
     }
     return new AppError('INTERNAL', message);
   }
 }
 
-/** Throws NOT_FOUND-style errors concisely. */
-export function notFound(
-  code: ErrorCode = 'NOT_FOUND',
-  detail?: string,
-): never {
-  throw new AppError(code, detail);
+/** Throws a NOT_FOUND error. */
+export function notFound(detail?: string): never {
+  throw new AppError('NOT_FOUND', detail);
 }
 
 /** Asserts a condition, throwing an AppError otherwise. */
@@ -128,6 +138,7 @@ export function ensure(
   cond: unknown,
   code: ErrorCode,
   detail?: string,
+  opts?: AppErrorOptions,
 ): asserts cond {
-  if (!cond) throw new AppError(code, detail);
+  if (!cond) throw new AppError(code, detail, opts);
 }

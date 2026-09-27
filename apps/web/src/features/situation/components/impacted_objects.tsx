@@ -1,117 +1,59 @@
 /**
- * @fileoverview Objects most affected by the latest recommendation's
- * simulation (sorted by |delta|), with an orange single-hue impact bar.
+ * @fileoverview 受影响对象: objects most affected by the latest simulation,
+ * sorted by impact (orange single-hue bars), each opening its Object View.
  */
 
-import type {RecommendationSummary} from '@ontodecide/situation/contract';
+import type {ImpactedObject} from '@ontodecide/situation/contract';
 import {Link} from '@tanstack/react-router';
-import {Waypoints} from 'lucide-react';
 import {useTranslation} from 'react-i18next';
 import {useUiModel} from '../../../entities/schema/api';
-import {impactColor, useChartTokens} from '../../../shared/charts/theme';
 import {fmt} from '../../../shared/lib/format';
-import {DegradedBadge} from '../../../shared/ui/badge';
-import {Panel} from '../../../shared/ui/card';
-import {EmptyState, ErrorView} from '../../../shared/ui/empty_state';
-import {Skeleton} from '../../../shared/ui/skeleton';
-import {useRecommendation} from '../../decision/api';
-import {newestProposed} from '../model';
 
-const MAX_ROWS = 8;
-
-/** Impacted objects widget. */
-export function ImpactedObjects({
-  recommendations,
-  className,
-}: {
-  recommendations: readonly RecommendationSummary[];
-  className?: string;
-}) {
+/** Impacted objects list. */
+export function ImpactedObjects({items}: {items: readonly ImpactedObject[]}) {
   const {t} = useTranslation('cockpit');
-  const tokens = useChartTokens();
   const {model} = useUiModel();
-  const latest = newestProposed(recommendations);
-  const q = useRecommendation(latest?.id);
-  const sim = q.data?.simulation;
-  const rows = [...(sim?.affected ?? [])]
+  const sorted = [...items]
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-    .slice(0, MAX_ROWS);
-  const max = rows.reduce((m, r) => Math.max(m, Math.abs(r.delta)), 0) || 1;
-
+    .slice(0, 6);
+  const max = Math.max(0.0001, ...sorted.map(i => Math.abs(i.delta)));
+  if (!sorted.length)
+    return (
+      <p className="py-6 text-center text-sm text-dim">{t('impacted.none')}</p>
+    );
   return (
-    <Panel
-      title={t('impacted.title')}
-      subtitle={rows.length > 0 ? t('impacted.subtitle') : undefined}
-      icon={<Waypoints aria-hidden />}
-      className={className}
-      actions={sim?.degraded && <DegradedBadge />}
-    >
-      {latest && q.isLoading ? (
-        <div className="flex flex-col gap-2">
-          {Array.from({length: 4}, (_, i) => (
-            <Skeleton key={i} className="h-8 w-full" />
-          ))}
-        </div>
-      ) : latest && q.isError ? (
-        <ErrorView onRetry={() => void q.refetch()} className="py-6" />
-      ) : rows.length === 0 ? (
-        <EmptyState title={t('impacted.empty')} className="py-6" />
-      ) : (
-        <table className="w-full text-sm">
-          <thead className="sr-only">
-            <tr>
-              <th>{t('impacted.col.object')}</th>
-              <th>{t('impacted.col.type')}</th>
-              <th>{t('impacted.col.hop')}</th>
-              <th>{t('impacted.col.delta')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => {
-              const k = Math.abs(r.delta) / max;
-              return (
-                <tr key={r.rid} className="border-b border-line last:border-0">
-                  <td className="max-w-0 py-1.5 pr-2">
-                    <Link
-                      to="/objects/rid/$rid"
-                      params={{rid: r.rid}}
-                      className="block truncate font-medium text-text hover:text-cyan hover:underline"
-                      title={r.title}
-                    >
-                      {r.title}
-                    </Link>
-                  </td>
-                  <td className="py-1.5 pr-2 text-xs whitespace-nowrap text-muted">
-                    {model.byName[r.type]?.displayName ?? r.type}
-                  </td>
-                  <td className="py-1.5 pr-2 text-xs whitespace-nowrap text-dim">
-                    {t('impacted.hop', {hop: r.hop})}
-                  </td>
-                  <td className="w-[38%] py-1.5">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="h-1.5 flex-1 overflow-hidden rounded-full bg-line"
-                        aria-hidden
-                      >
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: `${Math.max(4, k * 100)}%`,
-                            background: impactColor(k, tokens.orange),
-                          }}
-                        />
-                      </div>
-                      <span className="num w-14 text-right text-xs font-medium text-orange">
-                        {fmt.signedPercent(r.delta, 0)}
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </Panel>
+    <ul className="flex flex-col">
+      {sorted.map(i => (
+        <li key={i.rid} className="border-b border-line last:border-b-0">
+          <Link
+            to="/objects/$rid"
+            params={{rid: i.rid}}
+            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] items-center gap-3 py-2.5 hover:bg-panel-2/60"
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm text-text">
+                {i.title}
+              </span>
+              <span className="block text-xs text-dim">
+                {model.byName[i.type]?.displayName ?? i.type} ·{' '}
+                {t('impacted.hop', {n: i.hop})}
+              </span>
+            </span>
+            <span
+              aria-hidden
+              className="h-1.5 overflow-hidden rounded-full bg-line-2"
+            >
+              <span
+                className="block h-full rounded-full bg-orange"
+                style={{width: `${(Math.abs(i.delta) / max) * 100}%`}}
+              />
+            </span>
+            <span className="num text-right text-sm text-orange">
+              {fmt.signedPercent(i.delta, 0)}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }

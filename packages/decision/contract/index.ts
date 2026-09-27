@@ -1,7 +1,7 @@
 /**
- * @fileoverview Public contract of the Decision context.
+ * @fileoverview Public contract of the decision context.
  */
 
-export type * from './rpc';
+export * from './rpc';
 export * from './schemas';
 export * from './types';

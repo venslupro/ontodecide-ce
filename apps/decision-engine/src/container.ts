@@ -3,89 +3,76 @@
  */
 
 import {
+  AI_MODELS,
   createLogger,
-  MINUTE_MS,
   systemClock,
   type Clock,
   type Logger,
-  type QueueBatch,
+  type TenantLifecycleRpc,
 } from '@ontodecide/shared-kernel';
-import type {DecisionRpc} from '@ontodecide/decision/contract';
-import {DECISION_LIMITS} from '@ontodecide/decision/contract';
+import {DECISION_LIMITS, type DecisionRpc} from '@ontodecide/decision/contract';
 import type {
-  CaseStore,
+  AiPort,
   DecisionConfig,
   DecisionDeps,
-  Embedder,
-  LlmPort,
 } from '@ontodecide/decision/application';
 import {
-  buildLlmChain,
-  D1CaseStore,
-  D1LlmStore,
+  D1LifecycleRepository,
   D1RecommendationRepository,
   D1ScenarioRepository,
-  VectorizeCaseStore,
-  WorkersAiEmbedder,
-  type AiRunner,
-  type VectorIndexLike,
+  D1UsageCounter,
+  WorkersAiPort,
+  type AiBinding,
 } from '@ontodecide/decision/infrastructure';
 import {
-  createDecisionCronHandler,
-  createDecisionQueueHandler,
+  createDecisionLifecycle,
   createDecisionRpc,
-  createHandlers,
-  type DecisionHandlers,
 } from '@ontodecide/decision/interface';
 import type {Env} from './env';
 
-/** Test and runtime overrides. */
+/** Test and dev overrides. */
 export interface Overrides {
   clock?: Clock;
   logger?: Logger;
-  /** fetch used by the Gemini / Groq adapters. */
-  fetch?: typeof fetch;
-  /** Replaces the whole provider chain (cache and quotas still apply). */
-  llm?: LlmPort;
-  /** Replaces the bge-m3 embedder. */
-  embedder?: Embedder;
+  /** Replaces the Workers AI adapter; `null` disables AI (rules only). */
+  ai?: AiPort | null;
 }
 
-/** Assembled service parts. */
-export interface Container {
-  deps: DecisionDeps;
-  handlers: DecisionHandlers;
-  rpc: DecisionRpc;
-  queueHandler(batch: QueueBatch<unknown>): Promise<void>;
-  cron(cron: string, now: Date): Promise<void>;
+function numVar(v: string | undefined, fallback: number): number {
+  const n = Number(v);
+  return v !== undefined && v !== '' && Number.isFinite(n) ? n : fallback;
 }
 
-function intVar(v: string | undefined, fallback: number): number {
-  const n = Number.parseInt(v ?? '', 10);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
-
-/** Parses tunables from the environment. */
+/** Reads the vars (defaults from the design). */
 export function readConfig(env: Env): DecisionConfig {
   return {
-    recExpireHours: Math.min(
-      Math.max(
-        1,
-        intVar(env.REC_EXPIRE_HOURS, DECISION_LIMITS.recExpireHoursDefault),
-      ),
-      DECISION_LIMITS.recExpireHoursMax,
+    aiModel: env.AI_MODEL || AI_MODELS.primary,
+    aiFallbackModel: env.AI_FALLBACK_MODEL || AI_MODELS.fallback,
+    recAiUserDailyLimit: numVar(
+      env.REC_AI_USER_DAILY_LIMIT,
+      DECISION_LIMITS.aiRecsDaily,
     ),
-    userDailyLimit: intVar(
-      env.LLM_USER_DAILY_LIMIT,
-      DECISION_LIMITS.userDailyLlmDefault,
+    neuronsDailyBudget: numVar(
+      env.NEURONS_DAILY_BUDGET,
+      DECISION_LIMITS.neuronsDailyBudget,
     ),
-    tenantDailyLimit: intVar(
-      env.LLM_TENANT_DAILY_LIMIT,
-      DECISION_LIMITS.tenantDailyLlmDefault,
+    neuronsReserveFactor: numVar(
+      env.NEURONS_RESERVE_FACTOR,
+      DECISION_LIMITS.neuronsReserveFactor,
     ),
-    approvalSecret: env.APPROVAL_SECRET,
-    voucherTtlMs: 10 * MINUTE_MS,
+    recExpireHours: numVar(
+      env.REC_EXPIRE_HOURS,
+      DECISION_LIMITS.recExpireHours,
+    ),
+    aiTimeoutMs: DECISION_LIMITS.aiTimeoutMs,
   };
+}
+
+/** Wired service. */
+export interface Container {
+  deps: DecisionDeps;
+  rpc: DecisionRpc;
+  lifecycle: TenantLifecycleRpc;
 }
 
 /** Builds the container. */
@@ -94,51 +81,35 @@ export function createContainer(
   overrides: Overrides = {},
 ): Container {
   const clock = overrides.clock ?? systemClock;
-  const logger = overrides.logger ?? createLogger({service: 'decision-engine'});
-  const ai = env.AI as unknown as AiRunner | undefined;
-  const llm =
-    overrides.llm ??
-    buildLlmChain({
-      chain: env.LLM_CHAIN,
-      ai,
-      geminiApiKey: env.GEMINI_API_KEY,
-      groqApiKey: env.GROQ_API_KEY,
-      fetch: overrides.fetch ?? ((input, init) => fetch(input, init)),
-      logger,
-    });
-  const embedder =
-    overrides.embedder ?? (ai ? new WorkersAiEmbedder(ai) : null);
-  const caseRows = new D1CaseStore(env.DECISION_DB, embedder);
-  const cases: CaseStore =
-    env.VEC && embedder
-      ? new VectorizeCaseStore(
-          env.VEC as unknown as VectorIndexLike,
-          embedder,
-          caseRows,
-          logger,
-        )
-      : caseRows;
-  if (!env.APPROVAL_SECRET) logger.warn('decision.approval_secret_missing');
+  const logger =
+    overrides.logger ??
+    createLogger({service: 'decision-engine', env: env.ENVIRONMENT});
+  const ai =
+    overrides.ai === null
+      ? undefined
+      : (overrides.ai ??
+        (env.AI
+          ? new WorkersAiPort(env.AI as unknown as AiBinding)
+          : undefined));
   const deps: DecisionDeps = {
-    scenarios: new D1ScenarioRepository(env.DECISION_DB),
-    recommendations: new D1RecommendationRepository(env.DECISION_DB),
-    llmStore: new D1LlmStore(env.DECISION_DB),
-    llm,
-    cases,
-    graph: env.OBJECTS,
-    models: env.ONTOLOGY,
-    notifier: env.SITUATION,
-    jobs: env.DECISION_JOBS_QUEUE,
+    scenarios: tid => new D1ScenarioRepository(env.DECISION_DB, tid),
+    recommendations: tid =>
+      new D1RecommendationRepository(env.DECISION_DB, tid),
+    usage: new D1UsageCounter(env.DECISION_DB),
+    ...(ai ? {ai} : {}),
+    objects: env.OBJECTS,
+    ontology: env.ONTOLOGY,
+    situation: env.SITUATION,
     clock,
     logger,
     config: readConfig(env),
   };
-  const handlers = createHandlers(deps);
   return {
     deps,
-    handlers,
-    rpc: createDecisionRpc(deps, handlers),
-    queueHandler: createDecisionQueueHandler(handlers, logger),
-    cron: createDecisionCronHandler(handlers, logger),
+    rpc: createDecisionRpc(deps),
+    lifecycle: createDecisionLifecycle(
+      new D1LifecycleRepository(env.DECISION_DB),
+      clock,
+    ),
   };
 }

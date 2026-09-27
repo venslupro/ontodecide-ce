@@ -1,12 +1,11 @@
 /**
- * @fileoverview Worker entry point of api-gateway. The only module (with
- * edge_guard.ts) importing `cloudflare:workers`.
+ * @fileoverview Worker entry point of api-gateway (Workers Route
+ * `app.<domain>/api/*`). No Durable Object and no KV: the V1.3 EdgeGuard
+ * class is deleted by the `v2` migration in wrangler.jsonc.
  */
 
 import {createApp, type GatewayApp} from './app';
 import type {Env} from './env';
-
-export {EdgeGuard} from './edge_guard';
 
 let cache: {env: Env; app: GatewayApp} | undefined;
 

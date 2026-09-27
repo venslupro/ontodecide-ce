@@ -1,467 +1,327 @@
 /**
- * @fileoverview D1 implementation of ObjectWriter: translates a unit of
- * work into statements committed with one `db.batch()` (a transaction).
+ * @fileoverview D1 ObjectWriter (详细设计 6.2): every commit is one D1
+ * batch. Upserts write the whole batch with one `INSERT … SELECT … FROM
+ * json_each(?)` per table (unchanged rows skipped by props_hash), guarded
+ * so that concurrent batches never exceed the object and link limits.
+ * Patches and actions guard every statement on the expected version and run
+ * the version-bumping UPDATE last, so they apply all-or-nothing.
  */
 
-import {indexValue} from '@ontodecide/ontology/contract';
 import {AppError} from '@ontodecide/shared-kernel';
-import type {ObjectWriter, WriteOp} from '../application/ports';
-import type {StoredObject} from '../domain';
+import {TenantRepository} from '@ontodecide/shared-kernel/d1';
+import type {
+  CommitOutcome,
+  GuardedUpdate,
+  HashedObject,
+  ObjectWriter,
+  OutboxRow,
+  UpsertCommit,
+} from '../application/ports';
+import type {ActionLogRow} from '../application/ports';
+import type {GraphCaps, PlannedLink, StoredLink} from '../domain';
+import {linkKey} from '../domain';
+import {isUniqueViolation} from './rows';
 
-function objectValues(o: StoredObject): unknown[] {
-  return [
-    o.title,
-    JSON.stringify(o.props),
-    o.propsHash,
-    JSON.stringify(o.provenance),
-    JSON.stringify(o.history),
-    o.schemaVersion,
-    o.version,
-    o.updatedAt,
-  ];
-}
+const GUARD =
+  'EXISTS (SELECT 1 FROM og_object g WHERE g.tenant_id = ?1 AND ' +
+  'g.rid = ?2 AND g.version = ?3)';
 
-/** D1-backed atomic writer. */
-export class D1ObjectWriter implements ObjectWriter {
-  constructor(private readonly db: D1Database) {}
-
-  private statements(op: WriteOp): D1PreparedStatement[] {
-    const db = this.db;
-    switch (op.kind) {
-      case 'insertObject':
-        return [
-          db
-            .prepare(
-              `INSERT INTO og_object (rid, tenant_id, object_type, primary_key, title, props,
-                 props_hash, provenance, prov_history, schema_version, version, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            )
-            .bind(
-              op.obj.rid,
-              op.obj.tenantId,
-              op.obj.type,
-              op.obj.primaryKey,
-              ...objectValues(op.obj),
-            ),
-        ];
-      case 'updateObject':
-        return [
-          db
-            .prepare(
-              `UPDATE og_object SET title = ?, props = ?, props_hash = ?, provenance = ?,
-                 prov_history = ?, schema_version = ?, version = ?, updated_at = ?
-               WHERE tenant_id = ? AND rid = ?`,
-            )
-            .bind(...objectValues(op.obj), op.obj.tenantId, op.obj.rid),
-        ];
-      case 'deleteObject':
-        return [
-          db
-            .prepare('DELETE FROM og_object WHERE tenant_id = ? AND rid = ?')
-            .bind(op.tenantId, op.rid),
-        ];
-      case 'guardVersion':
-        // Violates og_meta.key NOT NULL (aborting the batch) unless the
-        // object still has the expected version.
-        return [
-          db
-            .prepare(
-              `INSERT INTO og_meta (tenant_id, key, value)
-               SELECT ?, NULL, NULL
-               WHERE NOT EXISTS (SELECT 1 FROM og_object WHERE tenant_id = ? AND rid = ? AND version = ?)`,
-            )
-            .bind(op.tenantId, op.tenantId, op.rid, op.version),
-        ];
-      case 'setIndex': {
-        if (op.value === null || op.value === undefined) {
-          return [
-            db
-              .prepare(
-                'DELETE FROM og_prop_index WHERE tenant_id = ? AND rid = ? AND prop = ?',
-              )
-              .bind(op.tenantId, op.rid, op.prop),
-          ];
-        }
-        const v = indexValue(op.value);
-        return [
-          db
-            .prepare(
-              `INSERT INTO og_prop_index (tenant_id, object_type, prop, rid, num_val, str_val)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT (rid, prop) DO UPDATE SET
-                 object_type = excluded.object_type, num_val = excluded.num_val, str_val = excluded.str_val`,
-            )
-            .bind(op.tenantId, op.type, op.prop, op.rid, v.num, v.str),
-        ];
-      }
-      case 'clearIndex':
-        return [
-          db
-            .prepare(
-              'DELETE FROM og_prop_index WHERE tenant_id = ? AND rid = ?',
-            )
-            .bind(op.tenantId, op.rid),
-        ];
-      case 'clearIndexProp':
-        return [
-          db
-            .prepare(
-              'DELETE FROM og_prop_index WHERE tenant_id = ? AND object_type = ? AND prop = ?',
-            )
-            .bind(op.tenantId, op.type, op.prop),
-        ];
-      case 'upsertLink':
-        return [
-          db
-            .prepare(
-              `INSERT INTO og_link (tenant_id, link_type, src_rid, dst_rid, weight)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT (link_type, src_rid, dst_rid) DO UPDATE SET
-                 weight = COALESCE(excluded.weight, og_link.weight)`,
-            )
-            .bind(
-              op.tenantId,
-              op.link.type,
-              op.link.src,
-              op.link.dst,
-              op.link.weight ?? null,
-            ),
-        ];
-      case 'deleteLink':
-        return [
-          db
-            .prepare(
-              'DELETE FROM og_link WHERE tenant_id = ? AND link_type = ? AND src_rid = ? AND dst_rid = ?',
-            )
-            .bind(op.tenantId, op.link.type, op.link.src, op.link.dst),
-        ];
-      case 'moveLinks':
-        return [
-          db
-            .prepare(
-              `INSERT OR IGNORE INTO og_link (tenant_id, link_type, src_rid, dst_rid, weight, props)
-               SELECT tenant_id, link_type, ?, dst_rid, weight, props FROM og_link
-               WHERE tenant_id = ? AND src_rid = ? AND dst_rid <> ? AND dst_rid <> ?`,
-            )
-            .bind(op.to, op.tenantId, op.from, op.to, op.from),
-          db
-            .prepare(
-              `INSERT OR IGNORE INTO og_link (tenant_id, link_type, src_rid, dst_rid, weight, props)
-               SELECT tenant_id, link_type, src_rid, ?, weight, props FROM og_link
-               WHERE tenant_id = ? AND dst_rid = ? AND src_rid <> ? AND src_rid <> ?`,
-            )
-            .bind(op.to, op.tenantId, op.from, op.to, op.from),
-          db
-            .prepare(
-              'DELETE FROM og_link WHERE tenant_id = ? AND (src_rid = ? OR dst_rid = ?)',
-            )
-            .bind(op.tenantId, op.from, op.from),
-        ];
-      case 'alias':
-        return [
-          db
-            .prepare(
-              op.replace
-                ? `INSERT INTO og_object_alias (tenant_id, source_id, external_key, rid) VALUES (?, ?, ?, ?)
-                   ON CONFLICT (source_id, external_key) DO UPDATE SET rid = excluded.rid`
-                : `INSERT OR IGNORE INTO og_object_alias (tenant_id, source_id, external_key, rid)
-                   VALUES (?, ?, ?, ?)`,
-            )
-            .bind(op.tenantId, op.sourceId, op.externalKey, op.rid),
-        ];
-      case 'mergeSuggestion':
-        return [
-          db
-            .prepare(
-              `INSERT INTO og_merge_suggestion (id, tenant_id, rid_a, rid_b, score, status, created_at)
-               VALUES (?, ?, ?, ?, ?, 'OPEN', ?)`,
-            )
-            .bind(op.id, op.tenantId, op.ridA, op.ridB, op.score, op.createdAt),
-        ];
-      case 'resolveSuggestion':
-        return [
-          db
-            .prepare(
-              'UPDATE og_merge_suggestion SET status = ? WHERE tenant_id = ? AND id = ?',
-            )
-            .bind(op.status, op.tenantId, op.id),
-        ];
-      case 'actionLog': {
-        const e = op.entry;
-        return [
-          db
-            .prepare(
-              `INSERT INTO og_action_log (id, tenant_id, action_type, target_rid, params, before, after,
-                 actor, recommendation_id, writeback_status, writeback_attempts, executed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            )
-            .bind(
-              e.id,
-              e.tenantId,
-              e.actionType,
-              e.targetRid,
-              JSON.stringify(e.params),
-              JSON.stringify(e.before),
-              JSON.stringify(e.after),
-              e.actor,
-              e.recommendationId ?? null,
-              e.writebackStatus,
-              e.writebackAttempts,
-              Date.parse(e.executedAt),
-            ),
-        ];
-      }
-      case 'outbox':
-        return [
-          db
-            .prepare(
-              `INSERT INTO domain_event (id, tenant_id, type, topic, payload, occurred_at)
-               VALUES (?, ?, ?, ?, ?, ?)`,
-            )
-            .bind(
-              op.event.id,
-              op.event.tenantId,
-              op.event.type,
-              op.event.topic,
-              JSON.stringify(op.event.payload),
-              op.event.occurredAt,
-            ),
-        ];
-      case 'inbox':
-        return [
-          db
-            .prepare(
-              'INSERT INTO og_inbox (msg_key, processed_at, tenant_id, result) VALUES (?, ?, ?, ?)',
-            )
-            .bind(op.key, op.at, op.tenantId, JSON.stringify(op.result)),
-        ];
-      case 'meta':
-        return [
-          db
-            .prepare(
-              `INSERT INTO og_meta (tenant_id, key, value) VALUES (?, ?, ?)
-               ON CONFLICT (tenant_id, key) DO UPDATE SET value = excluded.value`,
-            )
-            .bind(op.tenantId, op.key, op.value),
-        ];
-      default:
-        return [];
-    }
+/** Workspace-scoped object writes. */
+export class D1ObjectWriter extends TenantRepository implements ObjectWriter {
+  private outboxStmt(row: OutboxRow): D1PreparedStatement {
+    return this.stmt(
+      `INSERT INTO domain_event (tenant_id, id, payload, occurred_at)
+       VALUES (?1, ?2, ?3, ?4)`,
+      row.id,
+      JSON.stringify(row.msg),
+      row.msg.occurredAt,
+    );
   }
 
-  /**
-   * One statement for a run of same-kind ops (rows passed as a JSON array),
-   * or null when the kind has no bulk form. Keeps a large upsert batch to a
-   * handful of statements.
-   */
-  private bulk(
-    key: string,
-    ops: readonly WriteOp[],
-  ): D1PreparedStatement | null {
-    const db = this.db;
-    const rows = (f: (op: WriteOp) => unknown[]) => JSON.stringify(ops.map(f));
-    const col = (i: number) => `json_extract(j.value, '$[${i}]')`;
-    const cols = (n: number) =>
-      Array.from({length: n}, (_, i) => col(i)).join(', ');
-    switch (key) {
-      case 'insertObject':
-        return db
-          .prepare(
-            `INSERT INTO og_object (rid, tenant_id, object_type, primary_key, title, props,
-               props_hash, provenance, prov_history, schema_version, version, updated_at)
-             SELECT ${cols(12)} FROM json_each(?) j`,
-          )
-          .bind(
-            rows(op => {
-              const o = (op as Extract<WriteOp, {kind: 'insertObject'}>).obj;
-              return [
-                o.rid,
-                o.tenantId,
-                o.type,
-                o.primaryKey,
-                ...objectValues(o),
-              ];
-            }),
-          );
-      case 'updateObject':
-        return db
-          .prepare(
-            `UPDATE og_object SET title = u.title, props = u.props, props_hash = u.props_hash,
-               provenance = u.provenance, prov_history = u.prov_history,
-               schema_version = u.schema_version, version = u.version, updated_at = u.updated_at
-             FROM (SELECT ${col(0)} AS tenant_id, ${col(1)} AS rid, ${col(2)} AS title,
-                     ${col(3)} AS props, ${col(4)} AS props_hash, ${col(5)} AS provenance,
-                     ${col(6)} AS prov_history, ${col(7)} AS schema_version,
-                     ${col(8)} AS version, ${col(9)} AS updated_at
-                   FROM json_each(?) j) AS u
-             WHERE og_object.tenant_id = u.tenant_id AND og_object.rid = u.rid`,
-          )
-          .bind(
-            rows(op => {
-              const o = (op as Extract<WriteOp, {kind: 'updateObject'}>).obj;
-              return [o.tenantId, o.rid, ...objectValues(o)];
-            }),
-          );
-      case 'guardVersion':
-        return db
-          .prepare(
-            `INSERT INTO og_meta (tenant_id, key, value)
-             SELECT ${col(0)}, NULL, NULL FROM json_each(?) j
-             WHERE NOT EXISTS (SELECT 1 FROM og_object g
-               WHERE g.tenant_id = ${col(0)} AND g.rid = ${col(1)} AND g.version = ${col(2)})`,
-          )
-          .bind(
-            rows(op => {
-              const g = op as Extract<WriteOp, {kind: 'guardVersion'}>;
-              return [g.tenantId, g.rid, g.version];
-            }),
-          );
-      case 'setIndex': {
-        return db
-          .prepare(
-            `INSERT INTO og_prop_index (tenant_id, object_type, prop, rid, num_val, str_val)
-             SELECT ${cols(6)} FROM json_each(?) j WHERE true
-             ON CONFLICT (rid, prop) DO UPDATE SET
-               object_type = excluded.object_type, num_val = excluded.num_val, str_val = excluded.str_val`,
-          )
-          .bind(
-            rows(op => {
-              const x = op as Extract<WriteOp, {kind: 'setIndex'}>;
-              const v = indexValue(x.value);
-              return [x.tenantId, x.type, x.prop, x.rid, v.num, v.str];
-            }),
-          );
-      }
-      case 'setIndex:delete':
-        return db
-          .prepare(
-            `DELETE FROM og_prop_index WHERE EXISTS (SELECT 1 FROM json_each(?) j
-               WHERE og_prop_index.tenant_id = ${col(0)} AND og_prop_index.rid = ${col(1)}
-                 AND og_prop_index.prop = ${col(2)})`,
-          )
-          .bind(
-            rows(op => {
-              const x = op as Extract<WriteOp, {kind: 'setIndex'}>;
-              return [x.tenantId, x.rid, x.prop];
-            }),
-          );
-      case 'upsertLink':
-        return db
-          .prepare(
-            `INSERT INTO og_link (tenant_id, link_type, src_rid, dst_rid, weight)
-             SELECT ${cols(5)} FROM json_each(?) j WHERE true
-             ON CONFLICT (link_type, src_rid, dst_rid) DO UPDATE SET
-               weight = COALESCE(excluded.weight, og_link.weight)`,
-          )
-          .bind(
-            rows(op => {
-              const x = op as Extract<WriteOp, {kind: 'upsertLink'}>;
-              return [
-                x.tenantId,
-                x.link.type,
-                x.link.src,
-                x.link.dst,
-                x.link.weight ?? null,
-              ];
-            }),
-          );
-      case 'deleteLink':
-        return db
-          .prepare(
-            `DELETE FROM og_link WHERE EXISTS (SELECT 1 FROM json_each(?) j
-               WHERE og_link.tenant_id = ${col(0)} AND og_link.link_type = ${col(1)}
-                 AND og_link.src_rid = ${col(2)} AND og_link.dst_rid = ${col(3)})`,
-          )
-          .bind(
-            rows(op => {
-              const x = op as Extract<WriteOp, {kind: 'deleteLink'}>;
-              return [x.tenantId, x.link.type, x.link.src, x.link.dst];
-            }),
-          );
-      case 'alias':
-        return db
-          .prepare(
-            `INSERT OR IGNORE INTO og_object_alias (tenant_id, source_id, external_key, rid)
-             SELECT ${cols(4)} FROM json_each(?) j`,
-          )
-          .bind(
-            rows(op => {
-              const x = op as Extract<WriteOp, {kind: 'alias'}>;
-              return [x.tenantId, x.sourceId, x.externalKey, x.rid];
-            }),
-          );
-      case 'mergeSuggestion':
-        return db
-          .prepare(
-            `INSERT INTO og_merge_suggestion (id, tenant_id, rid_a, rid_b, score, status, created_at)
-             SELECT ${col(0)}, ${col(1)}, ${col(2)}, ${col(3)}, ${col(4)}, 'OPEN', ${col(5)}
-             FROM json_each(?) j`,
-          )
-          .bind(
-            rows(op => {
-              const x = op as Extract<WriteOp, {kind: 'mergeSuggestion'}>;
-              return [x.id, x.tenantId, x.ridA, x.ridB, x.score, x.createdAt];
-            }),
-          );
-      case 'outbox':
-        return db
-          .prepare(
-            `INSERT INTO domain_event (id, tenant_id, type, topic, payload, occurred_at)
-             SELECT ${cols(6)} FROM json_each(?) j`,
-          )
-          .bind(
-            rows(op => {
-              const e = (op as Extract<WriteOp, {kind: 'outbox'}>).event;
-              return [
-                e.id,
-                e.tenantId,
-                e.type,
-                e.topic,
-                JSON.stringify(e.payload),
-                e.occurredAt,
-              ];
-            }),
-          );
-      default:
-        return null;
-    }
-  }
-
-  async commit(ops: readonly WriteOp[]): Promise<void> {
-    const keyOf = (op: WriteOp): string => {
-      if (
-        op.kind === 'setIndex' &&
-        (op.value === null || op.value === undefined)
-      ) {
-        return 'setIndex:delete';
-      }
-      if (op.kind === 'alias' && op.replace) return 'alias:replace';
-      return op.kind;
-    };
+  async commitUpsert(input: {
+    objects: HashedObject[];
+    links: PlannedLink[];
+    caps: GraphCaps;
+    outbox: OutboxRow | null;
+    nowMs: number;
+  }): Promise<UpsertCommit> {
     const stmts: D1PreparedStatement[] = [];
-    for (let i = 0; i < ops.length;) {
-      const key = keyOf(ops[i]);
-      let j = i + 1;
-      while (j < ops.length && keyOf(ops[j]) === key) j++;
-      const run = ops.slice(i, j);
-      const bulk = run.length > 1 ? this.bulk(key, run) : null;
-      if (bulk) stmts.push(bulk);
-      else for (const op of run) stmts.push(...this.statements(op));
-      i = j;
+    let objectsAt = -1;
+    let linksAt = -1;
+    if (input.objects.length) {
+      const objects = JSON.stringify(
+        input.objects.map(o => ({
+          rid: o.rid,
+          type: o.type,
+          pk: o.primaryKey,
+          title: o.title,
+          props: JSON.stringify(o.state.props),
+          hash: o.hash,
+          prov: JSON.stringify(o.state.provenance),
+          n: o.newOrdinal,
+        })),
+      );
+      objectsAt = stmts.length;
+      stmts.push(
+        this.stmt(
+          `INSERT INTO og_object (tenant_id, rid, object_type, primary_key,
+             title, props, props_hash, provenance, version, updated_at)
+           SELECT ?1, j.value ->> 'rid', j.value ->> 'type', j.value ->> 'pk',
+             j.value ->> 'title', j.value ->> 'props', j.value ->> 'hash',
+             j.value ->> 'prov', 1, ?3
+           FROM json_each(?2) AS j
+           WHERE (j.value ->> 'n' IS NULL
+             OR (SELECT COUNT(*) FROM og_object c WHERE c.tenant_id = ?1)
+                + (j.value ->> 'n') <= ?4)
+           ON CONFLICT (tenant_id, rid) DO UPDATE SET
+             props = excluded.props, props_hash = excluded.props_hash,
+             provenance = excluded.provenance, title = excluded.title,
+             version = og_object.version + 1, updated_at = excluded.updated_at
+           WHERE og_object.props_hash <> excluded.props_hash
+           RETURNING rid`,
+          objects,
+          input.nowMs,
+          input.caps.maxObjects,
+        ),
+      );
+      const written = JSON.stringify(
+        input.objects.map(o => ({rid: o.rid, hash: o.hash})),
+      );
+      stmts.push(
+        this.stmt(
+          `DELETE FROM og_prop_index WHERE tenant_id = ?1 AND rid IN
+             (SELECT j.value ->> 'rid' FROM json_each(?2) AS j
+              WHERE EXISTS (SELECT 1 FROM og_object o WHERE o.tenant_id = ?1
+                AND o.rid = j.value ->> 'rid'
+                AND o.props_hash = j.value ->> 'hash'))`,
+          written,
+        ),
+      );
+      const index = input.objects.flatMap(o =>
+        o.index.map(i => ({
+          rid: o.rid,
+          type: o.type,
+          hash: o.hash,
+          prop: i.prop,
+          v: i.value,
+        })),
+      );
+      if (index.length) {
+        stmts.push(
+          this.stmt(
+            `INSERT INTO og_prop_index (tenant_id, rid, prop, object_type, value)
+             SELECT ?1, j.value ->> 'rid', j.value ->> 'prop',
+               j.value ->> 'type', j.value ->> 'v'
+             FROM json_each(?2) AS j
+             WHERE EXISTS (SELECT 1 FROM og_object o WHERE o.tenant_id = ?1
+               AND o.rid = j.value ->> 'rid'
+               AND o.props_hash = j.value ->> 'hash')
+             ON CONFLICT (tenant_id, rid, prop) DO UPDATE SET
+               value = excluded.value, object_type = excluded.object_type`,
+            JSON.stringify(index),
+          ),
+        );
+      }
     }
-    if (!stmts.length) return;
+    if (input.links.length) {
+      linksAt = stmts.length;
+      stmts.push(
+        this.stmt(
+          `INSERT INTO og_link (tenant_id, src_rid, link_type, dst_rid, weight)
+           SELECT ?1, j.value ->> 's', j.value ->> 't', j.value ->> 'd',
+             j.value ->> 'w'
+           FROM json_each(?2) AS j
+           WHERE EXISTS (SELECT 1 FROM og_object a WHERE a.tenant_id = ?1
+               AND a.rid = j.value ->> 's')
+             AND EXISTS (SELECT 1 FROM og_object b WHERE b.tenant_id = ?1
+               AND b.rid = j.value ->> 'd')
+             AND (j.value ->> 'n' IS NULL
+               OR (SELECT COUNT(*) FROM og_link c WHERE c.tenant_id = ?1)
+                  + (j.value ->> 'n') <= ?3)
+           ON CONFLICT (tenant_id, src_rid, link_type, dst_rid) DO UPDATE SET
+             weight = excluded.weight
+           WHERE og_link.weight IS NOT excluded.weight
+           RETURNING src_rid, link_type, dst_rid`,
+          JSON.stringify(
+            input.links.map(l => ({
+              s: l.src,
+              t: l.type,
+              d: l.dst,
+              w: l.weight,
+              n: l.newOrdinal,
+            })),
+          ),
+          input.caps.maxLinks,
+        ),
+      );
+    }
+    if (input.outbox) stmts.push(this.outboxStmt(input.outbox));
+
+    let results: D1Result[];
     try {
-      await this.db.batch(stmts);
+      results = await this.db.batch(stmts);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('og_meta.key')) {
-        throw new AppError('VERSION_CONFLICT', 'Object version changed');
+      if (isUniqueViolation(e, 'og_object')) {
+        throw new AppError('CONFLICT', 'Concurrent write; retry the batch');
       }
-      if (msg.includes('og_inbox.msg_key')) {
-        throw new AppError('CONFLICT', 'Message already processed', {
-          duplicate: 'inbox',
-        });
+      throw e;
+    }
+    const objects = new Set<string>();
+    if (objectsAt >= 0) {
+      for (const r of results[objectsAt].results as {rid: string}[]) {
+        objects.add(r.rid);
       }
+    }
+    const links = new Set<string>();
+    if (linksAt >= 0) {
+      for (const r of results[linksAt].results as {
+        src_rid: string;
+        link_type: string;
+        dst_rid: string;
+      }[]) {
+        links.add(linkKey(r.src_rid, r.link_type, r.dst_rid));
+      }
+    }
+    return {objects, links};
+  }
+
+  /** Statements replacing an object's index rows, guarded on its version. */
+  private indexStmts(u: GuardedUpdate, type: string): D1PreparedStatement[] {
+    if (!u.index) return [];
+    const out = [
+      this.stmt(
+        `DELETE FROM og_prop_index WHERE tenant_id = ?1 AND rid = ?2
+         AND ${GUARD}`,
+        u.rid,
+        u.expectedVersion,
+      ),
+    ];
+    if (u.index.length) {
+      out.push(
+        this.stmt(
+          `INSERT INTO og_prop_index (tenant_id, rid, prop, object_type, value)
+           SELECT ?1, ?2, j.value ->> 'prop', ?4, j.value ->> 'v'
+           FROM json_each(?5) AS j WHERE ${GUARD}`,
+          u.rid,
+          u.expectedVersion,
+          type,
+          JSON.stringify(u.index.map(i => ({prop: i.prop, v: i.value}))),
+        ),
+      );
+    }
+    return out;
+  }
+
+  private updateStmt(u: GuardedUpdate): D1PreparedStatement {
+    return this.stmt(
+      `UPDATE og_object SET props = ?4, props_hash = ?5, provenance = ?6,
+         title = ?7, version = version + 1, updated_at = ?8
+       WHERE tenant_id = ?1 AND rid = ?2 AND version = ?3`,
+      u.rid,
+      u.expectedVersion,
+      JSON.stringify(u.state.props),
+      u.hash,
+      JSON.stringify(u.state.provenance),
+      u.title,
+      u.nowMs,
+    );
+  }
+
+  private guardedOutbox(u: GuardedUpdate, row: OutboxRow): D1PreparedStatement {
+    return this.stmt(
+      `INSERT INTO domain_event (tenant_id, id, payload, occurred_at)
+       SELECT ?1, ?4, ?5, ?6 WHERE ${GUARD}`,
+      u.rid,
+      u.expectedVersion,
+      row.id,
+      JSON.stringify(row.msg),
+      row.msg.occurredAt,
+    );
+  }
+
+  async commitPatch(u: GuardedUpdate, row: OutboxRow): Promise<CommitOutcome> {
+    const type = u.rid.split('.')[1] ?? '';
+    const stmts = [
+      ...this.indexStmts(u, type),
+      this.guardedOutbox(u, row),
+      this.updateStmt(u),
+    ];
+    const results = await this.db.batch(stmts);
+    return results[results.length - 1].meta.changes === 1 ? 'ok' : 'stale';
+  }
+
+  async commitAction(input: {
+    update: GuardedUpdate;
+    removeLinks: StoredLink[];
+    addLinks: StoredLink[];
+    log: ActionLogRow;
+    outbox: OutboxRow;
+  }): Promise<CommitOutcome> {
+    const u = input.update;
+    const type = u.rid.split('.')[1] ?? '';
+    const linkJson = (ls: StoredLink[]): string =>
+      JSON.stringify(
+        ls.map(l => ({s: l.src, t: l.type, d: l.dst, w: l.weight})),
+      );
+    const stmts: D1PreparedStatement[] = [...this.indexStmts(u, type)];
+    if (input.removeLinks.length) {
+      stmts.push(
+        this.stmt(
+          `DELETE FROM og_link WHERE tenant_id = ?1
+           AND (src_rid, link_type, dst_rid) IN
+             (SELECT j.value ->> 's', j.value ->> 't', j.value ->> 'd'
+              FROM json_each(?4) AS j)
+           AND ${GUARD}`,
+          u.rid,
+          u.expectedVersion,
+          linkJson(input.removeLinks),
+        ),
+      );
+    }
+    if (input.addLinks.length) {
+      stmts.push(
+        this.stmt(
+          `INSERT INTO og_link (tenant_id, src_rid, link_type, dst_rid, weight)
+           SELECT ?1, j.value ->> 's', j.value ->> 't', j.value ->> 'd',
+             j.value ->> 'w'
+           FROM json_each(?4) AS j WHERE ${GUARD}
+           ON CONFLICT (tenant_id, src_rid, link_type, dst_rid) DO NOTHING`,
+          u.rid,
+          u.expectedVersion,
+          linkJson(input.addLinks),
+        ),
+      );
+    }
+    const log = input.log;
+    stmts.push(
+      this.stmt(
+        `INSERT INTO og_action_log (tenant_id, id, action_type, target_rid,
+           params, before, after, actor, actor_user_id, recommendation_id,
+           idempotency_key, result, executed_at)
+         SELECT ?1, ?4, ?5, ?2, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+         WHERE ${GUARD}`,
+        u.rid,
+        u.expectedVersion,
+        log.id,
+        log.actionType,
+        JSON.stringify(log.params),
+        JSON.stringify(log.before),
+        JSON.stringify(log.after),
+        log.actor,
+        log.actorUserId,
+        log.recommendationId,
+        log.idempotencyKey,
+        JSON.stringify(log.result),
+        log.executedAt,
+      ),
+      this.guardedOutbox(u, input.outbox),
+      this.updateStmt(u),
+    );
+    try {
+      const results = await this.db.batch(stmts);
+      return results[results.length - 1].meta.changes === 1 ? 'ok' : 'stale';
+    } catch (e) {
+      if (isUniqueViolation(e, 'og_action_log')) return 'duplicate';
       throw e;
     }
   }

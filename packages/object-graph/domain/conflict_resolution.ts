@@ -1,142 +1,91 @@
 /**
- * @fileoverview Property-level conflict resolution. Each incoming property
- * value competes with the current one under the source's policy; values that
- * lose their place are kept in a bounded provenance history.
+ * @fileoverview Property conflict resolution (详细设计 6.3.3): latest-wins —
+ * a later non-empty value overwrites the current one and its provenance
+ * records the import job and row. Also the RFC 7396 merge patch used by
+ * PATCH /objects/{rid}.
  */
 
 import {canonicalJson} from '@ontodecide/shared-kernel';
 import type {Provenance} from '@ontodecide/shared-kernel';
-import {GRAPH_LIMITS} from '../contract/types';
-import type {HistoryEntry} from './stored_object';
 
-/** Conflict resolution policy (configured per source). */
-export type ConflictPolicy =
-  'latest-wins' | 'source-priority' | 'max-confidence';
-
-/** Properties with their provenance and overwritten history. */
+/** Properties with their per-property provenance. */
 export interface PropState {
   props: Record<string, unknown>;
   provenance: Record<string, Provenance>;
-  history: Record<string, HistoryEntry[]>;
 }
 
-/** Result of merging an incoming record into the current state. */
+/** Result of a merge. */
 export interface MergeOutcome {
   state: PropState;
   /** Properties whose value changed. */
   changed: string[];
 }
 
-function timestampOf(p: Provenance): number {
-  const t = Date.parse(p.sourceTs ?? p.ingestedAt);
-  return Number.isNaN(t) ? 0 : t;
+/** Whether a value counts as empty (never overwrites). */
+export function isEmptyValue(v: unknown): boolean {
+  return v === null || v === undefined || v === '';
 }
 
-/**
- * Whether the incoming value replaces the current one. Ties fall back to
- * latest-wins (source timestamp, else ingestion time); an equal timestamp
- * lets the newer arrival win.
- */
-export function incomingWins(
-  policy: ConflictPolicy,
-  current: Provenance | undefined,
-  incoming: Provenance,
-): boolean {
-  if (!current) return true;
-  if (policy === 'source-priority') {
-    const a = incoming.priority ?? 0;
-    const b = current.priority ?? 0;
-    if (a !== b) return a > b;
-  } else if (policy === 'max-confidence') {
-    if (incoming.confidence !== current.confidence) {
-      return incoming.confidence > current.confidence;
-    }
-  }
-  return timestampOf(incoming) >= timestampOf(current);
-}
-
-/** Whether two property values are equal (deep, key-order independent). */
+/** Deep, key-order independent equality of two values. */
 export function sameValue(a: unknown, b: unknown): boolean {
   return canonicalJson(a ?? null) === canonicalJson(b ?? null);
 }
 
-/** Prepends an overwritten value to a property's history (≤ 5 kept). */
-export function pushHistory(
-  history: Record<string, HistoryEntry[]>,
-  prop: string,
-  entry: HistoryEntry,
-): Record<string, HistoryEntry[]> {
-  const list = [entry, ...(history[prop] ?? [])].slice(
-    0,
-    GRAPH_LIMITS.provenanceHistoryMax,
-  );
-  return {...history, [prop]: list};
-}
-
 /**
- * Merges incoming properties into the current state. Null or missing
- * incoming values never overwrite; properties absent from the record are
- * kept. Returns the new state and the names of changed properties.
+ * Merges incoming (already validated) properties into the current state.
+ * Empty incoming values are ignored; properties absent from the input are
+ * kept; changed properties get the incoming provenance.
  */
-export function mergeProps(
+export function mergeLatestWins(
   current: PropState | null,
   incoming: Record<string, unknown>,
   provenance: Provenance,
-  policy: ConflictPolicy,
 ): MergeOutcome {
   const props = {...(current?.props ?? {})};
   const prov = {...(current?.provenance ?? {})};
-  let history = {...(current?.history ?? {})};
   const changed: string[] = [];
   for (const [prop, value] of Object.entries(incoming)) {
-    if (value === null || value === undefined) continue;
-    const has = props[prop] !== undefined && props[prop] !== null;
-    if (has && sameValue(props[prop], value)) continue;
-    const curProv = has ? prov[prop] : undefined;
-    if (has && !incomingWins(policy, curProv, provenance)) continue;
-    if (has && curProv) {
-      history = pushHistory(history, prop, {...curProv, value: props[prop]});
-    }
+    if (isEmptyValue(value)) continue;
+    if (prop in props && sameValue(props[prop], value)) continue;
     props[prop] = value;
     prov[prop] = provenance;
     changed.push(prop);
   }
-  return {state: {props, provenance: prov, history}, changed};
+  return {state: {props, provenance: prov}, changed};
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** RFC 7396 JSON Merge Patch of an arbitrary JSON value. */
+export function applyMergePatch(target: unknown, patch: unknown): unknown {
+  if (!isPlainObject(patch)) return patch;
+  const out: Record<string, unknown> = isPlainObject(target) ? {...target} : {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete out[k];
+    else out[k] = applyMergePatch(out[k], v);
+  }
+  return out;
 }
 
 /**
- * Sets properties unconditionally (action effects), recording overwritten
- * values in the history.
+ * Applies a merge patch to properties. Returns the new properties and the
+ * names whose value changed (added, replaced or removed). Provenance of
+ * changed properties is dropped: the value no longer comes from an import.
  */
-export function overwriteProps(
+export function patchProps(
   current: PropState,
-  updates: Record<string, unknown>,
-  provenance: Provenance,
+  patch: Record<string, unknown>,
 ): MergeOutcome {
-  const props = {...current.props};
-  const prov = {...current.provenance};
-  let history = {...current.history};
-  const changed: string[] = [];
-  for (const [prop, value] of Object.entries(updates)) {
-    if (sameValue(props[prop], value)) continue;
-    if (props[prop] !== undefined && props[prop] !== null) {
-      const old: Provenance = prov[prop] ?? {
-        sourceId: 'unknown',
-        datasetTxn: '',
-        recordRef: '',
-        ingestedAt: provenance.ingestedAt,
-        confidence: 0,
-      };
-      history = pushHistory(history, prop, {...old, value: props[prop]});
-    }
-    if (value === null || value === undefined) {
-      delete props[prop];
-      delete prov[prop];
-    } else {
-      props[prop] = value;
-      prov[prop] = provenance;
-    }
-    changed.push(prop);
-  }
-  return {state: {props, provenance: prov, history}, changed};
+  const props = applyMergePatch(current.props, patch) as Record<
+    string,
+    unknown
+  >;
+  const changed = Object.keys(patch).filter(
+    k => !sameValue(current.props[k], props[k]),
+  );
+  const provenance = {...current.provenance};
+  for (const k of changed) delete provenance[k];
+  return {state: {props, provenance}, changed};
 }

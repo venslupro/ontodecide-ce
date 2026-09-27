@@ -1,17 +1,26 @@
 /**
- * @fileoverview Structural validation of an ontology schema: unique api
- * names, resolvable references (types, properties, links, parameters),
- * supported JSONLogic operators and consistent simulation KPIs. Also checks
- * api-name uniqueness across the schemas of a tenant.
+ * @fileoverview Structural validation of a workspace ontology (详细设计
+ * 6.11.1): unique api names, resolvable references (link ends, action
+ * targets, properties, parameters, links), at most {@link MAX_INDEXED_PROPS}
+ * indexed properties per type, existing primary key / title property and
+ * the JSONLogic safe subset. Also finds references that block a deletion.
  */
 
-import {assertLogic, type JsonLogic} from '@ontodecide/shared-kernel';
+import {
+  assertLogic,
+  filterProps,
+  type FilterExpr,
+  type JsonLogic,
+} from '@ontodecide/shared-kernel';
+import {MAX_INDEXED_PROPS} from '../contract';
 import type {
   ActionTypeDef,
   DataType,
+  DefKind,
+  LinkTypeDef,
   ObjectTypeDef,
+  OntologyDef,
   PropertyDef,
-  SchemaDef,
   ValidationIssue,
 } from '../contract';
 
@@ -45,25 +54,13 @@ export function logicVarPaths(expr: JsonLogic): string[] {
   return [...out];
 }
 
-/** Collects the property names a FilterExpr-shaped value refers to. */
-function filterProps(filter: unknown): string[] {
-  const out: string[] = [];
-  const walk = (f: unknown): void => {
-    if (!f || typeof f !== 'object') return;
-    const node = f as Record<string, unknown>;
-    if (typeof node.prop === 'string') out.push(node.prop);
-    if (Array.isArray(node.args)) node.args.forEach(walk);
-    if (node.arg) walk(node.arg);
-  };
-  walk(filter);
-  return out;
-}
-
 class IssueCollector {
   readonly issues: ValidationIssue[] = [];
+
   add(path: string, message: string): void {
     this.issues.push({path, message});
   }
+
   /** Reports duplicate api names within a list. */
   unique(items: readonly {apiName: string}[], path: string, what: string) {
     const seen = new Set<string>();
@@ -77,40 +74,39 @@ class IssueCollector {
       seen.add(item.apiName);
     });
   }
-  /** Reports an unsupported JSONLogic operator. */
+
+  /** Reports operators outside the JSONLogic safe subset. */
   logic(expr: JsonLogic, path: string): void {
     try {
       assertLogic(expr);
     } catch (e) {
-      this.add(path, e instanceof Error ? stripMarker(e) : String(e));
+      const detail = (e as {detail?: unknown}).detail;
+      this.add(path, typeof detail === 'string' ? detail : String(e));
     }
   }
 }
 
-function stripMarker(e: Error): string {
-  const detail = (e as {detail?: unknown}).detail;
-  return typeof detail === 'string' ? detail : e.message;
-}
+type PropLookup = (type: string, prop: string) => PropertyDef | undefined;
 
 /**
- * Validates a schema definition structurally. Returns an empty list when the
- * schema is consistent.
+ * Validates a whole ontology structurally. Returns an empty list when it is
+ * consistent.
  */
-export function validateSchema(def: SchemaDef): ValidationIssue[] {
+export function validateOntology(def: OntologyDef): ValidationIssue[] {
   const c = new IssueCollector();
   const types = new Map<string, ObjectTypeDef>();
   for (const t of def.objectTypes) {
     if (!types.has(t.apiName)) types.set(t.apiName, t);
   }
   const links = new Map(def.linkTypes.map(l => [l.apiName, l]));
-  const propOf = (type: string, prop: string): PropertyDef | undefined =>
+  const propOf: PropLookup = (type, prop) =>
     types.get(type)?.properties.find(p => p.apiName === prop);
 
   c.unique(def.objectTypes, 'objectTypes', 'object type');
   c.unique(def.linkTypes, 'linkTypes', 'link type');
   c.unique(def.actionTypes, 'actionTypes', 'action type');
   c.unique(def.functions, 'functions', 'function');
-  c.unique(def.simulationKpis ?? [], 'simulationKpis', 'simulation KPI');
+  c.unique(def.simulationKpis, 'simulationKpis', 'simulation KPI');
 
   const checkRef = (dataType: string, path: string): void => {
     const target = objectRefTarget(dataType);
@@ -119,37 +115,18 @@ export function validateSchema(def: SchemaDef): ValidationIssue[] {
     }
   };
 
-  def.objectTypes.forEach((t, ti) => {
-    const base = `objectTypes.${ti}`;
-    c.unique(t.properties, `${base}.properties`, 'property');
-    const names = new Set(t.properties.map(p => p.apiName));
-    if (!names.has(t.primaryKey)) {
-      c.add(
-        `${base}.primaryKey`,
-        `Primary key property does not exist: ${t.primaryKey}`,
-      );
-    }
-    if (!names.has(t.titleProperty)) {
-      c.add(
-        `${base}.titleProperty`,
-        `Title property does not exist: ${t.titleProperty}`,
-      );
-    }
-    t.properties.forEach((p, pi) => {
-      const path = `${base}.properties.${pi}`;
-      checkRef(p.dataType, `${path}.dataType`);
-      if (p.dataType === 'enum' && !(p.enumValues && p.enumValues.length)) {
-        c.add(`${path}.enumValues`, 'Enum properties need at least one value');
-      }
-    });
-  });
+  def.objectTypes.forEach((t, ti) =>
+    validateObjectType(c, t, `objectTypes.${ti}`, checkRef),
+  );
 
   def.linkTypes.forEach((l, li) => {
     const base = `linkTypes.${li}`;
-    if (!types.has(l.from))
+    if (!types.has(l.from)) {
       c.add(`${base}.from`, `Object type does not exist: ${l.from}`);
-    if (!types.has(l.to))
+    }
+    if (!types.has(l.to)) {
       c.add(`${base}.to`, `Object type does not exist: ${l.to}`);
+    }
   });
 
   def.actionTypes.forEach((a, ai) =>
@@ -160,27 +137,23 @@ export function validateSchema(def: SchemaDef): ValidationIssue[] {
     const base = `functions.${fi}`;
     c.logic(f.expr, `${base}.expr`);
     checkRef(f.returns, `${base}.returns`);
-    if (f.objectType !== undefined) {
-      if (!types.has(f.objectType)) {
-        c.add(
-          `${base}.objectType`,
-          `Object type does not exist: ${f.objectType}`,
-        );
-      } else {
-        for (const v of logicVarPaths(f.expr)) {
-          const prop = v.split('.')[0];
-          if (!propOf(f.objectType, prop)) {
-            c.add(
-              `${base}.expr`,
-              `Unknown property of ${f.objectType}: ${prop}`,
-            );
-          }
-        }
+    if (f.objectType === undefined) return;
+    if (!types.has(f.objectType)) {
+      c.add(
+        `${base}.objectType`,
+        `Object type does not exist: ${f.objectType}`,
+      );
+      return;
+    }
+    for (const v of logicVarPaths(f.expr)) {
+      const prop = v.split('.')[0];
+      if (!propOf(f.objectType, prop)) {
+        c.add(`${base}.expr`, `Unknown property of ${f.objectType}: ${prop}`);
       }
     }
   });
 
-  (def.simulationKpis ?? []).forEach((k, ki) => {
+  def.simulationKpis.forEach((k, ki) => {
     const base = `simulationKpis.${ki}`;
     if (!types.has(k.objectType)) {
       c.add(
@@ -189,17 +162,10 @@ export function validateSchema(def: SchemaDef): ValidationIssue[] {
       );
       return;
     }
-    if (k.agg === 'count') {
-      if (k.property !== undefined && !propOf(k.objectType, k.property)) {
-        c.add(
-          `${base}.property`,
-          `Unknown property of ${k.objectType}: ${k.property}`,
-        );
-      }
-      return;
-    }
     if (k.property === undefined) {
-      c.add(`${base}.property`, `Aggregation ${k.agg} needs a property`);
+      if (k.agg !== 'count') {
+        c.add(`${base}.property`, `Aggregation ${k.agg} needs a property`);
+      }
       return;
     }
     const p = propOf(k.objectType, k.property);
@@ -208,7 +174,7 @@ export function validateSchema(def: SchemaDef): ValidationIssue[] {
         `${base}.property`,
         `Unknown property of ${k.objectType}: ${k.property}`,
       );
-    } else if (!NUMERIC_TYPES.has(p.dataType)) {
+    } else if (k.agg !== 'count' && !NUMERIC_TYPES.has(p.dataType)) {
       c.add(
         `${base}.property`,
         `Aggregation ${k.agg} needs a numeric property`,
@@ -219,13 +185,52 @@ export function validateSchema(def: SchemaDef): ValidationIssue[] {
   return c.issues;
 }
 
+function validateObjectType(
+  c: IssueCollector,
+  t: ObjectTypeDef,
+  base: string,
+  checkRef: (dataType: string, path: string) => void,
+): void {
+  if (t.properties.length === 0) {
+    c.add(`${base}.properties`, 'An object type needs at least one property');
+  }
+  c.unique(t.properties, `${base}.properties`, 'property');
+  const names = new Set(t.properties.map(p => p.apiName));
+  if (!names.has(t.primaryKey)) {
+    c.add(
+      `${base}.primaryKey`,
+      `Primary key property does not exist: ${t.primaryKey}`,
+    );
+  }
+  if (!names.has(t.titleProperty)) {
+    c.add(
+      `${base}.titleProperty`,
+      `Title property does not exist: ${t.titleProperty}`,
+    );
+  }
+  const indexed = t.properties.filter(p => p.indexed).length;
+  if (indexed > MAX_INDEXED_PROPS) {
+    c.add(
+      `${base}.properties`,
+      `At most ${MAX_INDEXED_PROPS} indexed properties per type (got ${indexed})`,
+    );
+  }
+  t.properties.forEach((p, pi) => {
+    const path = `${base}.properties.${pi}`;
+    checkRef(p.dataType, `${path}.dataType`);
+    if (p.dataType === 'enum' && !(p.enumValues && p.enumValues.length)) {
+      c.add(`${path}.enumValues`, 'Enum properties need at least one value');
+    }
+  });
+}
+
 function validateAction(
   c: IssueCollector,
   a: ActionTypeDef,
   base: string,
   types: Map<string, ObjectTypeDef>,
-  links: Map<string, SchemaDef['linkTypes'][number]>,
-  propOf: (type: string, prop: string) => PropertyDef | undefined,
+  links: Map<string, LinkTypeDef>,
+  propOf: PropLookup,
   checkRef: (dataType: string, path: string) => void,
 ): void {
   c.unique(a.parameters, `${base}.parameters`, 'parameter');
@@ -252,7 +257,7 @@ function validateAction(
           `Unknown property of ${s.objectType}: ${s.orderBy.prop}`,
         );
       }
-      for (const prop of filterProps(s.filter)) {
+      for (const prop of filterProps(s.filter as FilterExpr | undefined)) {
         if (!propOf(s.objectType, prop)) {
           c.add(
             `${path}.suggest.filter`,
@@ -295,10 +300,8 @@ function validateAction(
   a.effects.forEach((e, ei) => {
     const path = `${base}.effects.${ei}`;
     if (e.kind === 'set' || e.kind === 'increment') {
-      checkVars(
-        e.kind === 'set' ? e.value : e.by,
-        `${path}.${e.kind === 'set' ? 'value' : 'by'}`,
-      );
+      const field = e.kind === 'set' ? 'value' : 'by';
+      checkVars(e.kind === 'set' ? e.value : e.by, `${path}.${field}`);
       if (!target) return;
       const p = propOf(a.targetType, e.prop);
       if (!p) {
@@ -327,10 +330,10 @@ function validateAction(
       } else if (link) {
         const far = e.direction === 'in' ? link.from : link.to;
         const ref = objectRefTarget(param.dataType);
-        if (ref !== null && ref !== far) {
+        if (ref !== far) {
           c.add(
             `${path}.toParam`,
-            `Parameter ${e.toParam} must reference ${far}`,
+            `Parameter ${e.toParam} must be objectRef:${far}`,
           );
         }
       }
@@ -338,8 +341,8 @@ function validateAction(
   });
 
   // Impact hints name the perturbed property, which may live on an upstream
-  // type (e.g. switchSupplier on Material restores Supplier.capacity), so
-  // only require the property to exist somewhere in the schema.
+  // type (switchSupplier on Material restores Supplier.capacity), so only
+  // require the property to exist somewhere in the ontology.
   (a.impact ?? []).forEach((h, hi) => {
     const known = [...types.values()].some(t =>
       t.properties.some(p => p.apiName === h.property),
@@ -350,56 +353,58 @@ function validateAction(
   });
 }
 
-/** Api names a schema contributes to the tenant-wide model. */
-export interface SchemaNames {
-  apiName: string;
-  objectTypes: string[];
-  linkTypes: string[];
-  actionTypes: string[];
-  functions: string[];
-}
-
-/** Extracts the tenant-wide api names of a schema. */
-export function schemaNames(def: SchemaDef): SchemaNames {
-  return {
-    apiName: def.apiName,
-    objectTypes: def.objectTypes.map(t => t.apiName),
-    linkTypes: def.linkTypes.map(l => l.apiName),
-    actionTypes: def.actionTypes.map(a => a.apiName),
-    functions: def.functions.map(f => f.apiName),
-  };
-}
-
 /**
- * Checks that object, link, action and function api names of `def` do not
- * clash with those of the tenant's other schemas (same-api schemas are
- * ignored, since they are replaced).
+ * Lists what still references a definition that is about to be deleted.
+ * Deletion is rejected while this is non-empty.
  */
-export function checkCrossSchemaConflicts(
-  def: SchemaDef,
-  others: readonly SchemaNames[],
+export function referencesTo(
+  def: OntologyDef,
+  kind: DefKind,
+  id: string,
 ): ValidationIssue[] {
-  const issues: ValidationIssue[] = [];
-  const kinds = [
-    ['objectTypes', 'Object type'],
-    ['linkTypes', 'Link type'],
-    ['actionTypes', 'Action type'],
-    ['functions', 'Function'],
-  ] as const;
-  const mine = schemaNames(def);
-  for (const other of others) {
-    if (other.apiName === def.apiName) continue;
-    for (const [kind, label] of kinds) {
-      const theirs = new Set(other[kind]);
-      mine[kind].forEach((name, i) => {
-        if (theirs.has(name)) {
-          issues.push({
-            path: `${kind}.${i}.apiName`,
-            message: `${label} ${name} is already defined by schema ${other.apiName}`,
-          });
-        }
-      });
-    }
+  const out: ValidationIssue[] = [];
+  const add = (path: string, what: string) =>
+    out.push({path, message: `${id} is referenced by ${what}`});
+  if (kind === 'object-types') {
+    def.linkTypes.forEach((l, i) => {
+      if (l.from === id || l.to === id) {
+        add(`linkTypes.${i}`, `link type ${l.apiName}`);
+      }
+    });
+    def.actionTypes.forEach((a, i) => {
+      const usesType =
+        a.targetType === id ||
+        a.parameters.some(
+          p =>
+            objectRefTarget(p.dataType) === id || p.suggest?.objectType === id,
+        );
+      if (usesType) add(`actionTypes.${i}`, `action type ${a.apiName}`);
+    });
+    def.objectTypes.forEach((t, i) => {
+      if (t.apiName === id) return;
+      if (t.properties.some(p => objectRefTarget(p.dataType) === id)) {
+        add(`objectTypes.${i}`, `object type ${t.apiName}`);
+      }
+    });
+    def.functions.forEach((f, i) => {
+      if (f.objectType === id || objectRefTarget(f.returns) === id) {
+        add(`functions.${i}`, `function ${f.apiName}`);
+      }
+    });
+    def.simulationKpis.forEach((k, i) => {
+      if (k.objectType === id) {
+        add(`simulationKpis.${i}`, `simulation KPI ${k.apiName}`);
+      }
+    });
+  } else if (kind === 'link-types') {
+    def.actionTypes.forEach((a, i) => {
+      const usesLink =
+        a.effects.some(
+          e => (e.kind === 'relink' || e.kind === 'unlink') && e.link === id,
+        ) ||
+        a.parameters.some(p => p.suggest?.sharesLinkWithTarget?.link === id);
+      if (usesLink) add(`actionTypes.${i}`, `action type ${a.apiName}`);
+    });
   }
-  return issues;
+  return out;
 }

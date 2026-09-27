@@ -1,6 +1,6 @@
 /**
- * @fileoverview Worker entry of data-integration: the IntegrationRpc
- * entrypoint (service binding RPC), queue consumer and cron.
+ * @fileoverview Worker entry of data-integration: the IntegrationRpc and
+ * TenantLifecycle entrypoints (service binding RPC). No queues, no cron.
  */
 
 import {WorkerEntrypoint} from 'cloudflare:workers';
@@ -16,58 +16,47 @@ function svc(env: Env): ServiceModule<Contract> {
   return cache.svc;
 }
 
-/** Service-binding RPC surface; one explicit method per contract method. */
+/** Business RPC surface (bound by api-gateway as INTEGRATION). */
 export class IntegrationRpc extends WorkerEntrypoint<Env> implements Contract {
-  listSources(...a: Parameters<Contract['listSources']>) {
-    return svc(this.env).rpc.listSources(...a);
+  createImport(...a: Parameters<Contract['createImport']>) {
+    return svc(this.env).rpc.createImport(...a);
   }
-  getSource(...a: Parameters<Contract['getSource']>) {
-    return svc(this.env).rpc.getSource(...a);
-  }
-  createSource(...a: Parameters<Contract['createSource']>) {
-    return svc(this.env).rpc.createSource(...a);
-  }
-  updateSource(...a: Parameters<Contract['updateSource']>) {
-    return svc(this.env).rpc.updateSource(...a);
-  }
-  deleteSource(...a: Parameters<Contract['deleteSource']>) {
-    return svc(this.env).rpc.deleteSource(...a);
-  }
-  presignUpload(...a: Parameters<Contract['presignUpload']>) {
-    return svc(this.env).rpc.presignUpload(...a);
+  putMapping(...a: Parameters<Contract['putMapping']>) {
+    return svc(this.env).rpc.putMapping(...a);
   }
   submitBatch(...a: Parameters<Contract['submitBatch']>) {
     return svc(this.env).rpc.submitBatch(...a);
   }
-  acceptWebhook(...a: Parameters<Contract['acceptWebhook']>) {
-    return svc(this.env).rpc.acceptWebhook(...a);
+  getImport(...a: Parameters<Contract['getImport']>) {
+    return svc(this.env).rpc.getImport(...a);
   }
-  listJobs(...a: Parameters<Contract['listJobs']>) {
-    return svc(this.env).rpc.listJobs(...a);
+  listImports(...a: Parameters<Contract['listImports']>) {
+    return svc(this.env).rpc.listImports(...a);
   }
-  getJob(...a: Parameters<Contract['getJob']>) {
-    return svc(this.env).rpc.getJob(...a);
+  mappingDraft(...a: Parameters<Contract['mappingDraft']>) {
+    return svc(this.env).rpc.mappingDraft(...a);
   }
-  listRejected(...a: Parameters<Contract['listRejected']>) {
-    return svc(this.env).rpc.listRejected(...a);
+  loadSample(...a: Parameters<Contract['loadSample']>) {
+    return svc(this.env).rpc.loadSample(...a);
   }
-  replayRejected(...a: Parameters<Contract['replayRejected']>) {
-    return svc(this.env).rpc.replayRejected(...a);
+  usage(...a: Parameters<Contract['usage']>) {
+    return svc(this.env).rpc.usage(...a);
   }
-  reportWriteResult(...a: Parameters<Contract['reportWriteResult']>) {
-    return svc(this.env).rpc.reportWriteResult(...a);
+}
+
+/** Export / purge / count entry point (bound only by identity-access). */
+export class TenantLifecycle extends WorkerEntrypoint<Env> {
+  exportTenant(tid: string, cursor: string | null) {
+    return svc(this.env).lifecycle!.exportTenant(tid, cursor);
   }
-  dataHealth(...a: Parameters<Contract['dataHealth']>) {
-    return svc(this.env).rpc.dataHealth(...a);
+  purgeTenant(tid: string, maxRows: number) {
+    return svc(this.env).lifecycle!.purgeTenant(tid, maxRows);
   }
-  pauseSourcesForTypes(...a: Parameters<Contract['pauseSourcesForTypes']>) {
-    return svc(this.env).rpc.pauseSourcesForTypes(...a);
+  countTenant(tid: string) {
+    return svc(this.env).lifecycle!.countTenant(tid);
   }
 }
 
 export default {
   fetch: () => new Response('Not found', {status: 404}),
-  queue: (batch, env) => svc(env).queue!(batch),
-  scheduled: (evt, env, ctx) =>
-    ctx.waitUntil(svc(env).scheduled!(evt.cron, new Date(evt.scheduledTime))),
 } satisfies ExportedHandler<Env>;

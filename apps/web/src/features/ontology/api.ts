@@ -1,101 +1,64 @@
 /**
- * @fileoverview Ontology workbench queries & mutations.
+ * @fileoverview Ontology definition mutations for the workbench. The
+ * workspace has a single ontology version: `POST /{kind}` creates,
+ * `PUT /{kind}/{id}` replaces and `DELETE /{kind}/{id}` removes a
+ * definition, each with If-Match = the schema ETag. The first change copies
+ * the shared template (copy-on-write). Reads use `useOntology()`.
  */
 
-import type {
-  DiffReport,
-  DraftDto,
-  OntologyPack,
-  PackSummary,
-  PublishReport,
-  SchemaDef,
-  SchemaSummary,
-} from '@ontodecide/ontology/contract';
-import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
-import {api, asList} from '../../shared/api/client';
-import {qk} from '../../shared/api/query_keys';
+import type {DefByKind, DefKind} from '@ontodecide/ontology/contract';
+import {useMutation, useQueryClient} from '@tanstack/react-query';
+import {apiRequest} from '../../shared/api/client';
+import {ontologyKey} from '../../entities/schema/api';
 
-export {useSchema} from '../../entities/schema/api';
+/** Save input. */
+export type SaveDefinitionInput<K extends DefKind = DefKind> = {
+  kind: K;
+  def: DefByKind[K];
+  /** Schema ETag the edit is based on. */
+  etag: number;
+  /** Existing id (PUT); absent for a new definition (POST). */
+  id?: string;
+};
 
-/** Schema listing. */
-export function useSchemas() {
-  return useQuery({
-    queryKey: qk.schemas(),
-    queryFn: async () =>
-      asList(await api.get<SchemaSummary[]>('/ontology/schemas')),
+/** Creates or replaces a definition; resolves to the new schema etag. */
+export async function saveDefinition(v: SaveDefinitionInput): Promise<number> {
+  const path = v.id ? `/${v.kind}/${encodeURIComponent(v.id)}` : `/${v.kind}`;
+  const res = await apiRequest<{etag?: number}>(path, {
+    method: v.id ? 'PUT' : 'POST',
+    body: v.def,
+    ifMatch: v.etag,
   });
+  return res.version ?? res.data?.etag ?? v.etag + 1;
 }
 
-/** Saves a draft (Modeler). */
-export function useSaveDraft(apiName: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (def: SchemaDef) =>
-      api.put<DraftDto>(
-        `/ontology/schemas/${encodeURIComponent(apiName)}/draft`,
-        def,
-      ),
-    onSuccess: () => {
-      void qc.invalidateQueries({queryKey: qk.schema(apiName, 'draft')});
-      void qc.invalidateQueries({queryKey: qk.schemas()});
-      void qc.invalidateQueries({queryKey: qk.diff(apiName)});
-    },
-  });
-}
-
-/** Computes the draft vs current diff. */
-export function useDiff(apiName: string) {
-  return useMutation({
-    mutationFn: () =>
-      api.post<DiffReport>(
-        `/ontology/schemas/${encodeURIComponent(apiName)}/diff`,
-      ),
-  });
-}
-
-/** Publishes the draft; breaking changes need `confirmVersion`. */
-export function usePublish(apiName: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (opts: {confirmVersion?: string}) =>
-      api.post<PublishReport>(
-        `/ontology/schemas/${encodeURIComponent(apiName)}/publish`,
-        opts,
-      ),
-    onSuccess: () => {
-      void qc.invalidateQueries({queryKey: ['ontology']});
-    },
-  });
-}
-
-/** Available packs. */
-export function usePacks() {
-  return useQuery({
-    queryKey: qk.packs(),
-    queryFn: async () =>
-      asList(await api.get<PackSummary[]>('/ontology/packs')),
-  });
-}
-
-/** Imports a pack by id or inline. */
-export function useImportPack() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: {packId?: string; pack?: OntologyPack}) =>
-      api.post<{report: PublishReport; pack?: OntologyPack}>(
-        '/ontology/packs:import',
-        input,
-      ),
-    onSuccess: () => {
-      void qc.invalidateQueries({queryKey: ['ontology']});
-      void qc.invalidateQueries({queryKey: ['situation']});
-    },
-  });
-}
-
-/** Exports a schema as a pack. */
-export function exportPack(apiName: string): Promise<OntologyPack> {
-  return api.get<OntologyPack>(
-    `/ontology/schemas/${encodeURIComponent(apiName)}/export`,
+/** Deletes a definition; resolves to the new schema etag. */
+export async function deleteDefinition(v: {
+  kind: DefKind;
+  id: string;
+  etag: number;
+}): Promise<number> {
+  const res = await apiRequest<{etag?: number}>(
+    `/${v.kind}/${encodeURIComponent(v.id)}`,
+    {method: 'DELETE', ifMatch: v.etag},
   );
+  return res.version ?? res.data?.etag ?? v.etag + 1;
+}
+
+/** Save mutation (refreshes the ontology and every ontology-driven view). */
+export function useSaveDefinition() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: saveDefinition,
+    onSettled: () => void qc.invalidateQueries({queryKey: ontologyKey()}),
+  });
+}
+
+/** Delete mutation. */
+export function useDeleteDefinition() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: deleteDefinition,
+    onSettled: () => void qc.invalidateQueries({queryKey: ontologyKey()}),
+  });
 }

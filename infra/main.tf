@@ -1,46 +1,62 @@
-# OntoDecide CE resources (design V1.3, 总体设计 4.2.4). Single environment:
-# production, applied only from the main branch.
+# OntoDecide CE resources (design V2.4, 修订说明书 7.2 / 表 13). Single
+# environment: production, applied only from the main branch.
 #
-# 6 D1 databases (one per business service), 2 KV namespaces, 5 queues +
-# 5 DLQs, B2 raw bucket + scoped key, Neo4j AuraDB Free.
+#   5 D1 databases, 2 queues (domain-events, dead-letter), 1 B2 bucket
+#   (archive) with a write key and two signing-key slots, 1 Turnstile widget,
+#   and — when var.domain is set — DNS, redirects, the WAF rate-limit rule
+#   and zone TLS settings (domain.tf).
 #
-# Not managed here (no provider): Vectorize index (scripts/bootstrap.sh).
+# Workers, their bindings, routes, crons and Durable Object migrations, and
+# the Pages project belong to Wrangler (apps/*/wrangler.jsonc.tpl,
+# .github/workflows/deploy.yml). V1.3 resources are released from state in
+# legacy.tf and deleted by scripts/cleanup_legacy.sh.
 #
 # Naming: every resource is named {project}-{env}-{service|module}, e.g.
-# ontodecide-prd-api-gateway, ontodecide-prd-graphdb (local.prefix).
+# ontodecide-prd-object-graph-db (local.prefix). Exceptions: the Pages
+# project ontodecide-ce and the state bucket ontodecide-ce-tfstate.
 
 locals {
-  prefix     = "${var.project}-${var.environment}"
-  services   = ["identity-access", "ontology-manager", "data-integration", "object-graph", "situation-awareness", "decision-engine"]
-  queue_base = ["ingest", "object-writes", "graph-sync", "situation-events", "decision-jobs"]
-  queues     = flatten([for q in local.queue_base : [q, "${q}-dlq"]])
+  prefix = "${var.project}-${var.environment}"
+
+  # Services that own a D1 database (situation-awareness uses its Durable
+  # Object storage).
+  d1_services = [
+    "identity-access",
+    "ontology-manager",
+    "data-integration",
+    "object-graph",
+    "decision-engine",
+  ]
+
+  pages_host = "ontodecide-ce.pages.dev"
+  app_host   = var.domain == "" ? local.pages_host : "app.${var.domain}"
+  app_origin = "https://${local.app_host}"
 }
 
 resource "cloudflare_d1_database" "db" {
-  for_each   = toset([for s in local.services : "${s}-db"])
+  for_each   = toset([for s in local.d1_services : "${s}-db"])
   account_id = var.account_id
   name       = "${local.prefix}-${each.key}"
 }
 
-resource "cloudflare_workers_kv_namespace" "schema_cache" {
+# object-graph outbox → situation-awareness (one aggregated message per
+# commit, ≤ 64 KB).
+resource "cloudflare_queue" "domain_events" {
   account_id = var.account_id
-  title      = "${local.prefix}-schema-cache"
+  queue_name = "${local.prefix}-domain-events"
 }
 
-resource "cloudflare_workers_kv_namespace" "gateway_config" {
+# Dead letters of domain-events; no consumer.
+resource "cloudflare_queue" "dead_letter" {
   account_id = var.account_id
-  title      = "${local.prefix}-gateway-config"
+  queue_name = "${local.prefix}-dead-letter"
 }
 
-resource "cloudflare_queue" "q" {
-  for_each   = toset(local.queues)
-  account_id = var.account_id
-  queue_name = "${local.prefix}-${each.key}"
-}
-
-# Raw files, snapshots and backups (B2 bucket names are globally unique).
-resource "b2_bucket" "raw" {
-  bucket_name = "${local.prefix}-raw"
+# Expired-workspace archives (修订说明书 9.4). B2 bucket names are globally
+# unique. No CORS: the e-mailed presigned link is a plain navigation, and
+# the web app never talks to B2.
+resource "b2_bucket" "archive" {
+  bucket_name = "${local.prefix}-archive"
   bucket_type = "allPrivate"
 
   default_server_side_encryption {
@@ -48,45 +64,45 @@ resource "b2_bucket" "raw" {
     algorithm = "AES256"
   }
 
-  cors_rules {
-    cors_rule_name  = "browser-direct-upload"
-    allowed_origins = ["https://ontodecide-ce.pages.dev", "https://*.ontodecide-ce.pages.dev"]
-    allowed_operations = [
-      "s3_put",
-    ]
-    allowed_headers = ["*"]
-    max_age_seconds = 3600
+  # Safety net if the archive saga fails: ZIPs are gone after 9 days at
+  # most (links live 7 days).
+  lifecycle_rules {
+    file_name_prefix              = "archives/"
+    days_from_uploading_to_hiding = 8
+    days_from_hiding_to_deleting  = 1
   }
 
-  # Raw uploads are kept 30 days.
+  # Export segments staged before zipping.
   lifecycle_rules {
-    file_name_prefix              = "raw/"
-    days_from_uploading_to_hiding = 30
+    file_name_prefix              = "staging/"
+    days_from_uploading_to_hiding = 1
     days_from_hiding_to_deleting  = 1
   }
 }
 
-# Least-privilege key for data-integration (presigned uploads only).
-resource "b2_application_key" "integration" {
-  key_name     = "${local.prefix}-data-integration"
-  capabilities = ["listFiles", "readFiles", "writeFiles"]
-  bucket_ids   = [b2_bucket.raw.bucket_id]
+# identity-access upload / packing / deletion / audit anchor key, bucket
+# scoped.
+resource "b2_application_key" "archive_write" {
+  key_name     = "${local.prefix}-archive-write"
+  capabilities = ["deleteFiles", "listFiles", "readFiles", "writeFiles"]
+  bucket_ids   = [b2_bucket.archive.bucket_id]
 }
 
-data "neo4jaura_projects" "this" {
-  count = var.enable_neo4j ? 1 : 0
+# Presigning keys (readFiles on archives/ only), two slots for the monthly
+# rotation; var.archive_sign_active selects the one exported to
+# identity-access. Links are computed locally (SigV4), never with a B2 call.
+resource "b2_application_key" "archive_sign" {
+  for_each     = toset(["a", "b"])
+  key_name     = "${local.prefix}-archive-sign-${each.key}"
+  capabilities = ["readFiles"]
+  bucket_ids   = [b2_bucket.archive.bucket_id]
+  name_prefix  = "archives/"
 }
 
-resource "neo4jaura_instance" "graph" {
-  count          = var.enable_neo4j ? 1 : 0
-  name           = "${local.prefix}-graphdb"
-  cloud_provider = var.neo4j_cloud_provider
-  region         = var.neo4j_region
-  type           = "free-db"
-  version        = "5"
-  project_id     = data.neo4jaura_projects.this[0].projects[0].id
-
-  lifecycle {
-    prevent_destroy = true
-  }
+# Sign-up / login challenge. Local development uses Cloudflare's test keys.
+resource "cloudflare_turnstile_widget" "auth" {
+  account_id = var.account_id
+  name       = "${local.prefix}-auth"
+  domains    = [local.app_host]
+  mode       = "managed"
 }

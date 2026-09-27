@@ -13,3 +13,8 @@ declare module 'cytoscape-fcose' {
   const fcose: Ext;
   export default fcose;
 }
+
+interface ImportMetaEnv {
+  /** Cloudflare Turnstile site key (managed mode). */
+  readonly VITE_TURNSTILE_SITE_KEY?: string;
+}

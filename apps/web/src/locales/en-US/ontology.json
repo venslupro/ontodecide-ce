@@ -1,155 +1,69 @@
 {
-  "index": {
-    "title": "Ontology workbench",
-    "description": "Manage the business ontology: object types, links, actions and simulation KPIs; publish versions and import packs.",
-    "schemas": "Ontologies",
-    "schemasSubtitle": "Published versions and drafts",
-    "col": {
-      "name": "Name",
-      "version": "Current version",
-      "objectTypes": "Object types",
-      "publishedAt": "Published"
-    },
-    "draft": "Draft",
-    "open": "Open",
-    "openAria": "Open {name} in the workbench",
-    "noSchemas": "No ontologies yet",
-    "noSchemasHint": "Import the built-in supply-chain pack or create an empty ontology.",
-    "newSchema": "New ontology",
-    "newSchemaDescription": "Create an empty ontology and edit it in the workbench; it is stored once you save a draft.",
-    "createAndOpen": "Create and open"
+  "title": "Ontology workbench",
+  "description": "Edit object types, properties, links and actions. CE has a single version: saving takes effect immediately.",
+  "badge": {
+    "custom": "Your copy · v{etag}",
+    "template": "Template: {name}"
   },
-  "packs": {
-    "title": "Ontology packs",
-    "subtitle": "Packs bundle a schema, situation templates and sample data",
-    "builtIn": "Built-in",
-    "fromFile": "Import from file",
-    "importAria": "Import pack {name}",
-    "empty": "No packs available",
-    "confirmTitle": "Import “{name}”?",
-    "confirmDescription": "Importing publishes the pack's schema and installs its situation templates and sample data.",
-    "confirmHint": "If an ontology with the same name exists, a new semantic version is published.",
-    "confirmImport": "Import",
-    "id": "Pack ID",
-    "version": "Version",
-    "file": "File",
-    "contents": "Contents",
-    "contentsValue": "{objects, plural, one {# object type} other {# object types}} · {links, plural, one {# link} other {# links}} · {actions, plural, one {# action} other {# actions}}",
-    "imported": "Imported {name} (v{version})",
-    "invalidTitle": "Invalid pack file",
-    "invalidDescription": "{file} failed validation:",
-    "resultTitle": "Import complete",
-    "resultBody": "{name} was published as {api} v{version}",
-    "resultChanges": "{changes, plural, one {# schema change} other {# schema changes}}, {indexes, plural, one {# index change} other {# index changes}}",
-    "openWorkbench": "Open workbench"
+  "notice": {
+    "copyOnWrite": "Your first change will copy the template into your own ontology",
+    "detail": "This workspace references the shared read-only template “{name}”. The first save copies it into your own ontology; after that every save takes effect immediately — there is no publishing or versioning."
   },
-  "workbench": {
-    "new": "New",
-    "dirty": "Unsaved changes",
-    "clean": "Saved",
-    "export": "Export",
-    "compare": "Compare & publish"
+  "template": {
+    "supply-chain": "Supply chain risk"
   },
-  "save": {
-    "saved": "Draft saved",
-    "savedWithIssues": "Draft saved with {count, plural, one {# issue} other {# issues}} to fix",
-    "failed": "Could not save the draft"
+  "unsaved": "Unsaved",
+  "empty": "Select a definition on the left or create a new one.",
+  "saved": "Saved “{name}”",
+  "deleted": "Deleted {name}",
+  "actions": {
+    "save": "Save",
+    "delete": "Delete",
+    "discard": "Discard changes",
+    "cancel": "Cancel"
   },
-  "validation": {
-    "title": "{count, plural, one {# validation issue} other {# validation issues}}"
+  "kind": {
+    "object-types": "Object types",
+    "link-types": "Link types",
+    "action-types": "Action types"
   },
-  "leave": {
-    "title": "Discard unsaved changes?",
-    "description": "Your changes to this ontology will be lost if you leave.",
-    "stay": "Keep editing",
-    "discard": "Discard and leave"
+  "kindOne": {
+    "object-types": "Object type",
+    "link-types": "Link",
+    "action-types": "Action"
   },
   "tree": {
-    "label": "Ontology structure",
-    "schemaSettings": "Ontology settings",
-    "objectTypes": "Object types",
-    "linkTypes": "Link types",
-    "actionTypes": "Action types",
-    "kpis": "Simulation KPIs",
-    "objectType": "Object type",
-    "linkType": "Link type",
-    "actionType": "Action type",
-    "kpi": "Simulation KPI",
+    "label": "Ontology definitions",
     "propCount": "{count, plural, one {# property} other {# properties}}",
-    "add": "Add to {section}",
-    "remove": "Remove {name}",
-    "empty": "None yet"
+    "add": {
+      "object-types": "New object type",
+      "link-types": "New link type",
+      "action-types": "New action type"
+    },
+    "new": {
+      "object-types": "New object type",
+      "link-types": "New link type",
+      "action-types": "New action type"
+    }
   },
-  "schema": {
-    "formLabel": "Ontology settings",
-    "version": "Version",
-    "unpublished": "Unpublished"
+  "graph": {
+    "title": "Schema graph",
+    "subtitle": "{types} object types · {links} link types",
+    "aria": "Schema graph: {types} object types, {links} link types"
   },
-  "fields": {
+  "field": {
+    "langZh": "{label} (Chinese)",
+    "langEn": "{label} (English)",
     "apiName": "API name",
-    "apiNameHint": "Starts with a letter; letters, digits and underscores; up to 64 characters",
-    "displayName": "Display name",
-    "description": "Description",
-    "choose": "Choose…",
-    "actions": "Actions"
-  },
-  "lang": {
-    "zh": "Chinese",
-    "en": "English"
-  },
-  "errors": {
-    "apiName": "API name must start with a letter and contain only letters, digits and underscores",
-    "apiNameTaken": "This API name is already in use",
-    "required": "Required",
-    "minOneProperty": "An object type needs at least one property",
-    "url": "Enter a valid URL",
-    "weight": "Weight must be between 0 and 1"
-  },
-  "json": {
-    "invalid": "Invalid JSON"
-  },
-  "chips": {
-    "placeholder": "Type and press Enter",
-    "remove": "Remove {value}"
-  },
-  "object": {
-    "formLabel": "Object type form",
+    "apiNameHint": "Starts with a letter; letters, digits and underscores only; fixed after saving",
+    "apiNameFixed": "The API name identifies the definition and cannot be changed",
     "icon": "Icon",
-    "iconHint": "A lucide icon name, e.g. factory, package",
+    "iconHint": "e.g. factory, package",
+    "displayName": "Display name",
     "primaryKey": "Primary key",
     "titleProperty": "Title property",
-    "graphProjected": "Project into the graph database",
-    "graphProjectedHint": "Enables deep (3+ hop) traversal in Neo4j",
-    "properties": "Properties",
-    "addProperty": "Add property"
-  },
-  "prop": {
-    "zh": "Chinese name",
-    "en": "English name",
-    "dataType": "Data type",
-    "required": "Required",
-    "indexed": "Indexed",
-    "sensitive": "Sensitive",
-    "unit": "Unit",
-    "enumValues": "Enum values",
-    "markings": "Markings",
-    "markingsHint": "Only users holding all markings can see this property",
-    "semanticTags": "Semantic tags",
-    "semanticTagsHint": "Used by AI mapping and risk detection, e.g. risk, capacity",
-    "details": "More settings for {name}",
-    "apiNameAria": "API name of property {n}",
-    "zhAria": "{name} Chinese name",
-    "enAria": "{name} English name",
-    "dataTypeAria": "{name} data type",
-    "requiredAria": "{name} required",
-    "indexedAria": "{name} indexed",
-    "sensitiveAria": "{name} sensitive (never sent to external LLMs)",
-    "unitAria": "{name} unit",
-    "enumValuesAria": "{name} enum values",
-    "markingsAria": "{name} markings",
-    "semanticTagsAria": "{name} semantic tags",
-    "remove": "Remove property {name}",
-    "lastProperty": "Keep at least one property"
+    "chooseProperty": "Choose a property",
+    "chooseType": "Choose an object type"
   },
   "dataType": {
     "string": "Text",
@@ -160,130 +74,125 @@
     "timestamp": "Timestamp",
     "geopoint": "Geo point",
     "enum": "Enum",
-    "objectRef": "Object ref → {type}"
+    "objectRef": "Reference → {type}"
+  },
+  "prop": {
+    "title": "Properties",
+    "indexedCount": "Indexed {count}/{max}",
+    "add": "Add property",
+    "apiName": "API name",
+    "nameZh": "Chinese name",
+    "nameEn": "English name",
+    "dataType": "Data type",
+    "unit": "Unit",
+    "required": "Required",
+    "indexed": "Indexed",
+    "sensitive": "Sensitive",
+    "tags": "Semantic tags",
+    "actions": "Actions",
+    "apiNameAria": "API name of property {n}",
+    "nameZhAria": "Chinese name of {name}",
+    "nameEnAria": "English name of {name}",
+    "dataTypeAria": "Data type of {name}",
+    "unitAria": "Unit of {name}",
+    "requiredAria": "{name} is required",
+    "indexedAria": "Index {name}",
+    "indexedFull": "At most {max} indexed properties per object type",
+    "sensitiveAria": "{name} is sensitive (never sent to AI)",
+    "tagsAria": "Semantic tags of {name}",
+    "removeTag": "Remove tag {tag}",
+    "remove": "Remove property {name}",
+    "enumValues": "Enum values",
+    "enumAria": "Enum values of {name}",
+    "removeEnum": "Remove enum value {value}",
+    "enumHint": "Type and press Enter"
   },
   "link": {
-    "formLabel": "Link type form",
     "from": "From type",
     "to": "To type",
     "cardinality": "Cardinality",
     "one": "One",
     "many": "Many",
-    "propagation": "Impact propagation",
-    "propagationOn": "Propagate impacts along this link (from → to)",
-    "propagationHint": "During simulation, links without their own weight use the default weight.",
-    "defaultWeight": "Default weight"
+    "propagates": "Propagate impact along this link",
+    "defaultWeight": "Default weight",
+    "defaultWeightHint": "0 to 1, used when the link has no weight"
   },
   "action": {
-    "formLabel": "Action type form",
-    "targetType": "Target type",
-    "requiresApproval": "Requires approval",
-    "requiresApprovalHint": "Can only be executed through the recommendation approval flow",
-    "writeback": "Writeback",
-    "writebackNone": "None",
-    "writebackWebhook": "Webhook",
-    "webhookUrl": "Webhook URL",
+    "targetType": "Target object type",
     "parameters": "Parameters",
-    "addParameter": "Add parameter",
-    "noParameters": "This action has no parameters",
-    "defaultValue": "Default value",
-    "defaultValueAria": "{name} default value",
-    "paramApiAria": "API name of parameter {n}",
-    "removeParameter": "Remove parameter {name}",
+    "addParam": "Add parameter",
+    "noParams": "No parameters",
+    "paramApiName": "API name of parameter {n}",
+    "paramZh": "Chinese name of parameter {n}",
+    "paramEn": "English name of parameter {n}",
+    "paramType": "Data type of parameter {n}",
+    "paramRequired": "Parameter {n} is required",
+    "removeParam": "Remove parameter {n}",
     "preconditions": "Preconditions",
-    "preconditionsHint": "JSONLogic expressions over target and params",
+    "preconditionsHint": "JSONLogic over '{target, params}'",
     "addPrecondition": "Add precondition",
-    "noPreconditions": "No preconditions",
-    "preconditionN": "Condition {n}",
-    "removePrecondition": "Remove condition {n}",
-    "expr": "Expression (JSONLogic)",
-    "message": "Message when unmet",
+    "preconditionExpr": "Expression of precondition {n}",
+    "jsonLogicHint": "e.g. '{\"<\": [{\"var\": \"target.riskScore\"}, 90]}'",
+    "removePrecondition": "Remove precondition {n}",
+    "preconditionMessage": "Message when precondition {n} fails",
     "effects": "Effects",
-    "effectsHint": "Changes applied to the target when the action runs",
     "addEffect": "Add effect",
-    "noEffects": "No effects",
-    "effectKind": {
+    "effectKind": "Kind of effect {n}",
+    "kind": {
       "set": "Set property",
-      "increment": "Increment",
+      "increment": "Increment property",
       "relink": "Relink",
       "unlink": "Unlink"
     },
-    "effectKindAria": "Effect {n} kind",
-    "effectPropAria": "Effect {n} property",
-    "effectValueAria": "Effect {n} value (JSONLogic)",
-    "effectByAria": "Effect {n} increment (JSONLogic)",
-    "effectLinkAria": "Effect {n} link",
-    "effectDirAria": "Effect {n} direction",
-    "effectParamAria": "Effect {n} target parameter",
+    "effectProp": "Property of effect {n}",
+    "effectValue": "Value of effect {n}",
+    "effectBy": "Increment of effect {n}",
+    "jsonHint": "JSON or JSONLogic, e.g. '{\"var\": \"params.delta\"}'",
+    "effectLink": "Link of effect {n}",
+    "chooseLink": "Choose a link",
+    "effectDirection": "Direction of effect {n}",
+    "out": "Outgoing",
+    "in": "Incoming",
+    "effectParam": "Parameter of effect {n}",
+    "anyParam": "All linked",
+    "chooseParam": "Choose a parameter",
     "removeEffect": "Remove effect {n}",
-    "dirIn": "Incoming",
-    "dirOut": "Outgoing",
-    "noParam": "(all)",
     "impact": "Impact hints",
-    "impactHint": "Relative change applied to the target in simulation (−1 to 1)",
-    "addImpact": "Add impact",
-    "impactPropAria": "Impact {n} property",
-    "impactChangeAria": "Impact {n} relative change",
-    "removeImpact": "Remove impact {n}"
+    "impactHint": "For simulation: relative change of a target property (−1 to 1)",
+    "addImpact": "Add impact hint",
+    "impactProp": "Property of impact hint {n}",
+    "impactChange": "Relative change of impact hint {n}",
+    "removeImpact": "Remove impact hint {n}"
   },
-  "kpi": {
-    "formLabel": "Simulation KPI form",
-    "objectType": "Object type",
-    "agg": "Aggregation",
-    "aggs": {
-      "sum": "Sum",
-      "avg": "Average",
-      "count": "Count"
+  "issue": {
+    "apiName": "API names start with a letter and contain only letters, digits and underscores (≤ 64 characters)",
+    "required": "Required",
+    "dataType": "Invalid data type",
+    "range": "Out of range",
+    "propertiesMin": "At least one property is required",
+    "duplicate": "Duplicate name",
+    "maxIndexed": "{count} indexed properties; at most {max} per object type",
+    "unknownProp": "Unknown property",
+    "unknownType": "Object type {name} does not exist",
+    "unknownLink": "Unknown link type",
+    "unknownParam": "Unknown parameter",
+    "enumValues": "Enums need at least one value",
+    "idTaken": "This API name is already used",
+    "json": "Not valid JSON",
+    "number": "Enter a number",
+    "invalid": "Invalid value",
+    "server": "Rejected by server validation"
+  },
+  "delete": {
+    "title": "Delete “{name}”?",
+    "description": {
+      "object-types": "Objects of this type can no longer be viewed or imported.",
+      "link-types": "Links of this type no longer take part in exploration and impact propagation.",
+      "action-types": "The action no longer appears in scenarios and recommendations."
     },
-    "property": "Property",
-    "higherIsBetter": "Higher is better",
-    "higherIsBetterHint": "Determines whether increases are shown as good or bad"
-  },
-  "graph": {
-    "title": "Schema graph",
-    "subtitle": "Click a node to select its type",
-    "aria": "Schema graph: {types, number} object types, {links, number} links",
-    "legend": "Object type legend",
-    "empty": "No object types yet",
-    "emptyHint": "Add object types on the left to see how they relate."
-  },
-  "diff": {
-    "title": "Compare & publish · {api}",
-    "description": "Differences between the draft and the published version",
-    "computing": "Computing diff…",
-    "from": "From",
-    "to": "To",
-    "suggested": "Suggested version",
-    "breaking": "Breaking",
-    "compatible": "Compatible",
-    "breakingTitle": "{count, plural, one {# breaking change} other {# breaking changes}}",
-    "serverBreaking": "The server reports breaking changes in this publish",
-    "breakingHint": "Breaking changes can affect existing data, filters and automations; a major version bump must be confirmed.",
-    "nonBreaking": "All changes are compatible and can be published directly",
-    "noChanges": "The draft matches the published version",
-    "changes": "Changes",
-    "kind": "Change",
-    "path": "Path",
-    "detail": "Detail",
-    "compat": "Compatibility",
-    "confirmLabel": "Type the new version {version} to confirm",
-    "confirmHint": "Must match the suggested version exactly",
-    "publish": "Publish",
-    "publishAs": "Publish v{version}",
-    "published": "Published v{version}",
-    "publishedHint": "{count, plural, one {# index change} other {# index changes}} queued",
-    "kinds": {
-      "objectTypeAdded": "Object type added",
-      "objectTypeRemoved": "Object type removed",
-      "propertyAdded": "Property added",
-      "propertyRemoved": "Property removed",
-      "propertyTypeChanged": "Property type changed",
-      "propertyChanged": "Property changed",
-      "linkTypeAdded": "Link type added",
-      "linkTypeRemoved": "Link type removed",
-      "actionTypeAdded": "Action type added",
-      "actionTypeRemoved": "Action type removed",
-      "actionTypeChanged": "Action type changed"
-    }
+    "loadingStats": "Counting affected objects…",
+    "objectCount": "{count, plural, =0 {There are no objects of this type.} one {# object of this type will be affected.} other {# objects of this type will be affected.}}",
+    "dangling": "If links, actions or reference properties still point to this type, the server rejects the deletion (no dangling references).",
+    "references": "Still referenced by:"
   }
 }

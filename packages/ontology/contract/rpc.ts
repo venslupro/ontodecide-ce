@@ -1,58 +1,68 @@
 /**
- * @fileoverview RPC contract exposed by ontology-manager (OntologyRpc
- * WorkerEntrypoint).
+ * @fileoverview RPC contract of ontology-manager (OntologyRpc entry point).
+ * No dependencies on other services.
  */
 
 import type {CallCtx} from '@ontodecide/shared-kernel';
 import type {
-  CompiledModel,
   CompiledSchema,
-  DiffReport,
-  DraftDto,
-  OntologyPack,
-  PackSummary,
-  PublishReport,
-  SchemaDef,
-  SchemaDto,
-  SchemaSummary,
+  DefByKind,
+  DefKind,
+  OntologyDto,
+  TemplateSeeds,
 } from './schema';
 
-/** Ontology manager RPC surface. */
+/** A definition with the schema version it was read at. */
+export interface DefinitionResult<K extends DefKind> {
+  item: DefByKind[K];
+  etag: number;
+}
+
+/** A definition collection with the schema version. */
+export interface DefinitionList<K extends DefKind> {
+  items: DefByKind[K][];
+  etag: number;
+  custom: boolean;
+}
+
+/** ontology-manager RPC surface. */
 export interface OntologyRpc {
-  listSchemas(ctx: CallCtx): Promise<SchemaSummary[]>;
-  /** `version` may be a semver, `current` (default) or `draft`. */
-  getSchema(ctx: CallCtx, api: string, version?: string): Promise<SchemaDto>;
-  /** Compiled schema; served from KV / memory when possible. */
-  getCompiledSchema(
-    ctx: CallCtx,
-    api: string,
-    version?: string,
-  ): Promise<CompiledSchema>;
-  /** Merged model of all published schemas of the tenant. */
-  getActiveModel(ctx: CallCtx): Promise<CompiledModel>;
-  saveDraft(ctx: CallCtx, api: string, def: SchemaDef): Promise<DraftDto>;
-  diff(ctx: CallCtx, api: string): Promise<DiffReport>;
   /**
-   * Publishes the draft. Breaking changes require a major version bump;
-   * pass `confirmVersion` equal to the new version to confirm.
+   * Compiled ontology of the workspace (the template until the first
+   * change). Cached in isolate memory by (tid, etag).
    */
-  publish(
+  getCompiledSchema(ctx: CallCtx): Promise<CompiledSchema>;
+  /** Whole ontology for the workbench. */
+  getOntology(ctx: CallCtx): Promise<OntologyDto>;
+  /** Template KPI and automation seeds. */
+  getTemplateSeeds(templateId: string): Promise<TemplateSeeds>;
+  listDefinitions<K extends DefKind>(
     ctx: CallCtx,
-    api: string,
-    opts?: {confirmVersion?: string},
-  ): Promise<PublishReport>;
-  listPacks(ctx: CallCtx): Promise<PackSummary[]>;
-  getPack(ctx: CallCtx, id: string): Promise<OntologyPack>;
-  /** Imports a pack (by id or inline) and publishes its schema. */
-  importPack(
+    kind: K,
+  ): Promise<DefinitionList<K>>;
+  /** NOT_FOUND when the definition does not exist. */
+  getDefinition<K extends DefKind>(
     ctx: CallCtx,
-    input: {packId?: string; pack?: OntologyPack},
-  ): Promise<{report: PublishReport; pack: OntologyPack}>;
-  exportPack(ctx: CallCtx, api: string): Promise<OntologyPack>;
-  /** Evaluates a declarative function against an object's properties. */
-  evaluateFunction(
+    kind: K,
+    id: string,
+  ): Promise<DefinitionResult<K>>;
+  /**
+   * Creates (`id` absent in the ontology) or replaces a definition. The
+   * first change copies the template. `ifMatch` is the schema etag;
+   * mismatch → PRECONDITION_FAILED; structural errors → VALIDATION_FAILED.
+   */
+  putDefinition<K extends DefKind>(
     ctx: CallCtx,
-    fn: string,
-    props: Record<string, unknown>,
-  ): Promise<unknown>;
+    kind: K,
+    id: string,
+    def: DefByKind[K],
+    ifMatch: number,
+  ): Promise<{etag: number}>;
+  /** Removes a definition (and dangling references are rejected). */
+  deleteDefinition(
+    ctx: CallCtx,
+    kind: DefKind,
+    id: string,
+    ifMatch: number,
+  ): Promise<{etag: number}>;
 }

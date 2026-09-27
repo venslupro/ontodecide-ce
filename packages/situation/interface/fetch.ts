@@ -1,53 +1,55 @@
 /**
- * @fileoverview HTTP entry: the WebSocket stream forwarded by api-gateway
- * (ctx in `x-od-ctx`) goes to the tenant's SituationRoom.
+ * @fileoverview `GET /api/v1/situation/stream?ticket=` forwarded by
+ * api-gateway (after its Origin check): the ticket's `{tid}` prefix selects
+ * the room, which redeems the ticket and upgrades the connection.
  */
 
 import {
   AppError,
-  CTX_HEADER,
-  type CallCtx,
-  decodeCtx,
-  hasRole,
+  type ErrorCode,
+  PROBLEM_MEDIA_TYPE,
 } from '@ontodecide/shared-kernel';
+import {ticketTid} from '../domain';
+import type {RoomResolver} from './rpc';
 
-/** Stream path. */
-export const STREAM_PATH = '/api/v1/situation/stream';
+/** A room stub that accepts forwarded fetches. */
+export interface RoomFetcher {
+  fetch(request: Request): Promise<Response>;
+}
 
-/** Forwards a request to the SituationRoom DO of a tenant. */
-export type RoomFetch = (
-  tenantId: string,
-  request: Request,
-) => Promise<Response>;
-
-function problem(err: AppError): Response {
+/** RFC 9457 response for the stream endpoint. */
+export function problemResponse(code: ErrorCode, detail?: string): Response {
+  const err = new AppError(code, detail);
   return new Response(JSON.stringify(err.toProblem()), {
     status: err.status,
-    headers: {'content-type': 'application/problem+json'},
+    headers: {'content-type': PROBLEM_MEDIA_TYPE},
   });
 }
 
-/** Builds the fetch handler. */
-export function createFetchHandler(
-  roomFetch: RoomFetch,
+/** Whether a request asks for a WebSocket upgrade. */
+export function isWebSocketUpgrade(request: Request): boolean {
+  return request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
+}
+
+/** Builds the stream fetch handler. */
+export function createStreamFetch(
+  rooms: RoomResolver<RoomFetcher>,
 ): (request: Request) => Promise<Response> {
   return async request => {
-    const url = new URL(request.url);
-    if (url.pathname !== STREAM_PATH) {
-      return new Response('Not found', {status: 404});
+    if (request.method !== 'GET') {
+      return problemResponse('NOT_FOUND');
     }
-    const header = request.headers.get(CTX_HEADER);
-    let ctx: CallCtx;
-    try {
-      if (!header) throw new Error('missing');
-      ctx = decodeCtx(header);
-      if (!ctx?.tenantId || !Array.isArray(ctx.roles)) throw new Error('bad');
-    } catch {
-      return problem(new AppError('AUTH_INVALID', 'Missing call context'));
+    if (!isWebSocketUpgrade(request)) {
+      const res = problemResponse(
+        'VALIDATION_FAILED',
+        'WebSocket upgrade required',
+      );
+      return new Response(res.body, {status: 426, headers: res.headers});
     }
-    if (!hasRole(ctx.roles, 'Viewer')) {
-      return problem(new AppError('FORBIDDEN', 'Requires role Viewer'));
-    }
-    return roomFetch(ctx.tenantId, request);
+    const ticket = new URL(request.url).searchParams.get('ticket');
+    const tid = ticketTid(ticket);
+    if (!tid)
+      return problemResponse('UNAUTHENTICATED', 'Invalid stream ticket');
+    return rooms(tid).fetch(request);
   };
 }

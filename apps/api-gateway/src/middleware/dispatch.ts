@@ -1,34 +1,29 @@
 /**
- * @fileoverview Terminal step: invokes the route handler and encodes its
- * result (DTO → JSON, undefined → 204, Response → as is).
+ * @fileoverview Terminal step: calls the route handler (the RPC with its
+ * CallCtx). RPC errors are re-thrown for the Problem Details step, which
+ * decodes them with AppError.from.
  */
 
-import type {Env} from '../env';
-import {jsonResponse} from '../http';
-import {type GatewayDeps, type GatewayState, routeOf} from './chain';
+import type {GatewayDeps, GatewayState} from './chain';
+import {routeOf} from './chain';
 
-/** Creates the dispatcher. */
+/** Dispatch terminal. */
 export function dispatch(
   deps: GatewayDeps,
 ): (s: GatewayState) => Promise<Response> {
-  const env: Env = deps.env;
-  return async s => {
-    const route = routeOf(s);
-    if (!s.ctx) throw new Error('ctx not built');
-    const result = await route.handler(env, {
+  return s =>
+    routeOf(s).handler(deps.env, {
       ctx: s.ctx,
+      claims: s.claims,
       params: s.params,
       query: s.query,
       body: s.body,
-      headers: s.request.headers,
-      rawBody: s.rawBody,
+      ifMatch: s.ifMatch,
+      idempotencyKey: s.idempotencyKey,
+      stepUp: s.stepUp,
       request: s.request,
+      meta: s.meta,
+      clock: deps.clock,
       logger: deps.logger,
     });
-    if (result instanceof Response) return result;
-    if (result === undefined || route.status === 204) {
-      return new Response(null, {status: route.status ?? 204});
-    }
-    return jsonResponse(result, route.status ?? 200);
-  };
 }

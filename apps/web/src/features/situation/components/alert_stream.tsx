@@ -1,190 +1,159 @@
 /**
- * @fileoverview Realtime alert stream: severity-sorted list (≤ 200) with the
- * connection status, Open / All filter, links to the Object View, relative
- * times and an optimistic acknowledge for Operator+. Newly pushed alerts
- * flash their left bar once.
+ * @fileoverview 实时告警流: most severe first, live connection state, new
+ * alerts flash once (left colour bar), click opens the Object View, OPEN
+ * alerts can be acknowledged; 「全部」 lists every alert via `GET /alerts`
+ * (cursor pages).
  */
 
 import type {AlertDto} from '@ontodecide/situation/contract';
-import {resolveText} from '@ontodecide/shared-kernel';
-import {Link} from '@tanstack/react-router';
-import {BellRing, Check} from 'lucide-react';
-import {useMemo, useState} from 'react';
+import {useNavigate} from '@tanstack/react-router';
+import {ArrowRight, Check} from 'lucide-react';
+import {useState} from 'react';
 import {useTranslation} from 'react-i18next';
-import {useHasRole} from '../../../entities/session/store';
 import {errorMessage} from '../../../shared/api/error_message';
 import {cn} from '../../../shared/lib/cn';
 import {fmt} from '../../../shared/lib/format';
-import {useOnline} from '../../../shared/lib/hooks';
-import {Badge, SeverityBadge} from '../../../shared/ui/badge';
+import {SeverityBadge, severityLevel} from '../../../shared/ui/badge';
 import {Button} from '../../../shared/ui/button';
-import {Panel} from '../../../shared/ui/card';
-import {EmptyState} from '../../../shared/ui/empty_state';
-import {Tabs, TabsList, TabsTrigger} from '../../../shared/ui/tabs';
-import {toast} from '../../../shared/ui/toast';
-import {useUpdateAlert} from '../api';
+import {Dialog, DialogContent} from '../../../shared/ui/dialog';
+import {useRealtimeStatus} from '../../../shared/ws';
+import {useAckAlert, useAlerts} from '../api';
 import {sortAlertsBySeverity} from '../model';
-import {useRealtimeStatus} from '../stream';
-import {RealtimeBadge} from './realtime_badge';
 
-const BAR: Record<AlertDto['severity'], string> = {
-  CRITICAL: 'border-l-crit',
-  HIGH: 'border-l-crit/70',
-  MEDIUM: 'border-l-warn',
-  LOW: 'border-l-blue',
+const BAR: Record<string, string> = {
+  crit: 'bg-crit',
+  warn: 'bg-warn',
+  info: 'bg-cyan',
+  good: 'bg-good',
 };
 
-type AlertFilterTab = 'open' | 'all';
-
-/** Alert stream widget. */
-export function AlertStream({
-  alerts,
-  readOnly,
-  className,
+function AlertRow({
+  a,
+  fresh,
+  onOpen,
 }: {
-  alerts: readonly AlertDto[];
-  /** Wall mode: hides the acknowledge buttons and filter. */
-  readOnly?: boolean;
-  className?: string;
+  a: AlertDto;
+  fresh: boolean;
+  onOpen(a: AlertDto): void;
 }) {
-  const {t, i18n} = useTranslation('cockpit');
-  const [tab, setTab] = useState<AlertFilterTab>('open');
-  const canAck = useHasRole('Operator') && !readOnly;
-  const online = useOnline();
-  const newIds = useRealtimeStatus(s => s.newAlertIds);
-  const update = useUpdateAlert();
-  const sorted = useMemo(() => sortAlertsBySeverity(alerts), [alerts]);
-  const openCount = sorted.filter(a => a.status === 'OPEN').length;
-  const shown =
-    tab === 'open' ? sorted.filter(a => a.status === 'OPEN') : sorted;
-  const flash = new Set(newIds);
-
-  const ack = (a: AlertDto) =>
-    update.mutate(
-      {id: a.id, status: 'ACKED'},
-      {
-        onSuccess: () => toast.success(t('alerts.acked')),
-        onError: e => toast.error(t('alerts.ackFailed'), errorMessage(e, t)),
-      },
-    );
-
+  const {t} = useTranslation('cockpit');
+  const ack = useAckAlert();
   return (
-    <Panel
-      title={t('alerts.title')}
-      icon={<BellRing aria-hidden />}
-      className={className}
-      bodyClassName="flex flex-col gap-2"
-      actions={
-        <>
-          <Badge tone={openCount ? 'crit' : 'neutral'} className="num">
-            {t('alerts.count', {count: openCount})}
-          </Badge>
-          <RealtimeBadge />
-        </>
-      }
-    >
-      {!readOnly && (
-        <Tabs value={tab} onValueChange={v => setTab(v as AlertFilterTab)}>
-          <TabsList aria-label={t('alerts.filter')}>
-            <TabsTrigger value="open">{t('alerts.filterOpen')}</TabsTrigger>
-            <TabsTrigger value="all">{t('alerts.filterAll')}</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      )}
-      {shown.length === 0 ? (
-        <EmptyState
-          icon={<Check aria-hidden />}
-          title={tab === 'open' ? t('alerts.emptyOpen') : t('alerts.empty')}
-          className="py-6"
-        />
-      ) : (
-        <ul
-          className="-mr-2 flex max-h-[26rem] min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-2"
-          aria-live="polite"
+    <li className="relative flex items-center gap-3 border-b border-line py-2.5 pl-3 last:border-b-0">
+      <span
+        aria-hidden
+        className={cn(
+          'absolute top-2 bottom-2 left-0 w-1 rounded-full',
+          BAR[severityLevel(a.severity)],
+          fresh && 'animate-pulse',
+        )}
+      />
+      <button
+        type="button"
+        className="min-w-0 flex-1 text-left"
+        onClick={() => onOpen(a)}
+        disabled={!a.rid}
+      >
+        <p className="truncate text-sm font-medium text-text">{a.title}</p>
+        <p className="text-xs text-muted">
+          {t('alerts.meta', {hits: a.hits, ago: fmt.ago(a.raisedAt)})}
+          {a.status === 'ACKED' && ` · ${t('alerts.acked')}`}
+        </p>
+      </button>
+      <SeverityBadge severity={a.severity} />
+      {a.status === 'OPEN' && (
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label={t('alerts.ack', {title: a.title})}
+          title={t('alerts.ackShort')}
+          loading={ack.isPending}
+          onClick={() => ack.mutate(a.id)}
         >
-          {shown.map(a => (
-            <li
+          <Check aria-hidden />
+        </Button>
+      )}
+      {ack.error ? (
+        <span role="alert" className="sr-only">
+          {errorMessage(ack.error, t)}
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
+function AllAlertsDialog({
+  open,
+  onOpenChange,
+  onOpen,
+}: {
+  open: boolean;
+  onOpenChange(o: boolean): void;
+  onOpen(a: AlertDto): void;
+}) {
+  const {t} = useTranslation('cockpit');
+  const q = useAlerts({}, 50, open);
+  const items = q.data?.pages.flatMap(p => p.items) ?? [];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent title={t('alerts.all')} size="lg">
+        <ul>
+          {items.map(a => (
+            <AlertRow key={a.id} a={a} fresh={false} onOpen={onOpen} />
+          ))}
+        </ul>
+        {q.hasNextPage && (
+          <Button
+            className="mt-3"
+            size="sm"
+            loading={q.isFetchingNextPage}
+            onClick={() => void q.fetchNextPage()}
+          >
+            {t('alerts.more')}
+          </Button>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Alert stream card body. */
+export function AlertStream({alerts}: {alerts: readonly AlertDto[]}) {
+  const {t} = useTranslation('cockpit');
+  const navigate = useNavigate();
+  const fresh = useRealtimeStatus(s => s.newAlertIds);
+  const [all, setAll] = useState(false);
+  const list = sortAlertsBySeverity(alerts.filter(a => a.status !== 'CLOSED'));
+  const open = (a: AlertDto) => {
+    setAll(false);
+    if (a.rid) void navigate({to: '/objects/$rid', params: {rid: a.rid}});
+  };
+  return (
+    <div className="flex flex-col">
+      {list.length === 0 ? (
+        <p className="py-6 text-center text-sm text-dim">{t('alerts.none')}</p>
+      ) : (
+        <ul aria-live="polite" className="max-h-[340px] overflow-y-auto">
+          {list.slice(0, 50).map(a => (
+            <AlertRow
               key={a.id}
-              data-testid="alert-item"
-              className={cn(
-                'rounded-[10px] border border-l-[3px] border-line bg-panel-2/60 px-3 py-2',
-                BAR[a.severity],
-                flash.has(a.id) && 'flash-bar',
-                a.status !== 'OPEN' && 'opacity-75',
-              )}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <SeverityBadge severity={a.severity} />
-                    {a.rid ? (
-                      <Link
-                        to="/objects/rid/$rid"
-                        params={{rid: a.rid}}
-                        className="min-w-0 text-sm font-medium break-words text-text hover:text-cyan hover:underline"
-                      >
-                        {a.title}
-                      </Link>
-                    ) : (
-                      <span
-                        className="text-sm font-medium break-words text-text"
-                        title={t('alerts.noObject')}
-                      >
-                        {a.title}
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
-                    <span>
-                      {resolveText(
-                        a.automationName,
-                        i18n.language,
-                        a.automationId,
-                      )}
-                    </span>
-                    <span aria-hidden className="text-dim">
-                      ·
-                    </span>
-                    <time
-                      dateTime={a.raisedAt}
-                      title={fmt.dateTime(a.raisedAt)}
-                    >
-                      {fmt.ago(a.raisedAt)}
-                    </time>
-                    <span aria-hidden className="text-dim">
-                      ·
-                    </span>
-                    <span className="num">
-                      {t('alerts.hits', {count: a.hits})}
-                    </span>
-                    <span aria-hidden className="text-dim">
-                      ·
-                    </span>
-                    <span data-testid="alert-status">
-                      {t(`common:alertStatus.${a.status}`)}
-                    </span>
-                  </p>
-                </div>
-                {canAck && a.status === 'OPEN' && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    aria-label={t('alerts.ackLabel', {title: a.title})}
-                    disabled={
-                      !online ||
-                      (update.isPending && update.variables?.id === a.id)
-                    }
-                    onClick={() => ack(a)}
-                  >
-                    <Check aria-hidden />
-                    {t('alerts.ack')}
-                  </Button>
-                )}
-              </div>
-            </li>
+              a={a}
+              fresh={fresh.includes(a.id)}
+              onOpen={open}
+            />
           ))}
         </ul>
       )}
-    </Panel>
+      <Button
+        variant="link"
+        size="sm"
+        className="mt-2 self-end"
+        onClick={() => setAll(true)}
+      >
+        {t('alerts.all')}
+        <ArrowRight aria-hidden />
+      </Button>
+      <AllAlertsDialog open={all} onOpenChange={setAll} onOpen={open} />
+    </div>
   );
 }

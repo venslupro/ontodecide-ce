@@ -1,82 +1,61 @@
 /**
- * @fileoverview RPC contract exposed by data-integration (IntegrationRpc).
+ * @fileoverview RPC contract of data-integration (IntegrationRpc entry
+ * point). Depends on ontology-manager and object-graph; has its own AiPort
+ * (Workers AI) and does not depend on decision-engine.
  */
 
-import type {CallCtx} from '@ontodecide/shared-kernel';
 import type {
-  DataHealthDto,
+  CallCtx,
+  PageRequest,
+  PageResult,
+  QuotaItem,
+} from '@ontodecide/shared-kernel';
+import type {
+  BatchInput,
+  BatchResult,
+  CreateImportInput,
   JobDto,
-  RawRecordDto,
-  SourceDef,
-  SourceDto,
-  TxnType,
-  WriteResult,
+  MappingDraft,
+  MappingDraftInput,
+  MappingSpec,
 } from './types';
 
-/** Data integration RPC surface. */
+/** data-integration RPC surface. */
 export interface IntegrationRpc {
-  listSources(ctx: CallCtx): Promise<SourceDto[]>;
-  getSource(ctx: CallCtx, id: string): Promise<SourceDto>;
-  createSource(ctx: CallCtx, def: SourceDef): Promise<SourceDto>;
-  updateSource(
-    ctx: CallCtx,
-    id: string,
-    patch: Partial<SourceDef>,
-  ): Promise<SourceDto>;
-  deleteSource(ctx: CallCtx, id: string): Promise<void>;
-  /** B2 presigned PUT for archiving the raw file. */
-  presignUpload(
-    ctx: CallCtx,
-    sourceId: string,
-    fileName: string,
-    bytes: number,
-  ): Promise<{url: string; key: string; expiresAt: string; jobId: string}>;
   /**
-   * Accepts ≤ 500 records, splits them into ≤ 50-record messages on the
-   * `ingest` queue. Creates the job when `jobId` is omitted.
+   * Creates a job after checking object/link headroom (ObjectGraphRpc.stats)
+   * and reserving `totalRows` of the user's daily import rows; otherwise
+   * QUOTA_EXCEEDED.
+   */
+  createImport(ctx: CallCtx, input: CreateImportInput): Promise<JobDto>;
+  /** Sets the mapping while no batch has been received (else CONFLICT). */
+  putMapping(
+    ctx: CallCtx,
+    jobId: string,
+    mapping: MappingSpec,
+  ): Promise<JobDto>;
+  /**
+   * Maps, validates and writes one batch synchronously (upsertBatch). The
+   * same seq returns the first result. `last` marks the job DONE.
    */
   submitBatch(
     ctx: CallCtx,
-    sourceId: string,
-    batch: {
-      jobId?: string;
-      seq: number;
-      last: boolean;
-      records: Record<string, unknown>[];
-      txnType?: TxnType;
-    },
-  ): Promise<{jobId: string; queuedMessages: number}>;
-  /** Verifies HMAC + replay window, then enqueues. No ctx: tenant comes from the source. */
-  acceptWebhook(
-    sourceId: string,
-    headers: Record<string, string>,
-    body: string,
-  ): Promise<{accepted: number; jobId: string}>;
-  listJobs(
-    ctx: CallCtx,
-    filter?: {sourceId?: string; limit?: number},
-  ): Promise<JobDto[]>;
-  getJob(ctx: CallCtx, jobId: string): Promise<JobDto>;
-  listRejected(ctx: CallCtx, jobId: string): Promise<RawRecordDto[]>;
-  /** Re-enqueues rejected records, optionally with corrected payloads. */
-  replayRejected(
+    jobId: string,
+    batch: BatchInput,
+  ): Promise<BatchResult>;
+  getImport(ctx: CallCtx, jobId: string): Promise<JobDto>;
+  listImports(ctx: CallCtx, page: PageRequest): Promise<PageResult<JobDto>>;
+  /** ≤ 2 AI drafts per user per day; afterwards rankedBy = rules. */
+  mappingDraft(
     ctx: CallCtx,
     jobId: string,
-    fixes?: {id: string; payload: Record<string, unknown>}[],
-  ): Promise<{requeued: number}>;
-  /** Called by object-graph after writing one message group. */
-  reportWriteResult(
-    ctx: CallCtx,
-    jobId: string,
-    seq: number,
-    last: boolean,
-    r: WriteResult,
-  ): Promise<void>;
-  /** Per-source freshness and quality. */
-  dataHealth(ctx: CallCtx): Promise<DataHealthDto[]>;
-  /** Pauses sources whose mapping targets the given object types. */
-  pauseSourcesForTypes(
-    ctx: CallCtx,
-    objectTypes: string[],
-  ): Promise<{paused: number}>;
+    input: MappingDraftInput,
+  ): Promise<MappingDraft>;
+  /**
+   * Loads the sample scenario once per workspace, within the global daily
+   * seed budget (QUOTA_EXCEEDED) — CONFLICT when already loaded.
+   */
+  loadSample(ctx: CallCtx): Promise<JobDto>;
+  /** importRowsToday and mappingDraftsToday of the caller. */
+  usage(ctx: CallCtx): Promise<QuotaItem[]>;
 }

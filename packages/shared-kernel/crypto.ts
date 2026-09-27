@@ -42,9 +42,12 @@ export function toHex(bytes: ArrayBuffer | Uint8Array): string {
   return Array.from(view, b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** SHA-256 of a string, hex encoded. */
-export async function sha256Hex(input: string): Promise<string> {
-  return toHex(await crypto.subtle.digest('SHA-256', utf8(input)));
+/** SHA-256 of a string or bytes, hex encoded. */
+export async function sha256Hex(input: string | Uint8Array): Promise<string> {
+  const bytes = typeof input === 'string' ? utf8(input) : input;
+  return toHex(
+    await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>),
+  );
 }
 
 async function hmacKey(
@@ -84,30 +87,6 @@ export function constantTimeEqual(a: string, b: string): boolean {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
-}
-
-/** PBKDF2-SHA256 iteration count (detailed design: 100k). */
-export const PBKDF2_ITERATIONS = 100_000;
-
-/** Derives a PBKDF2-SHA256 hash (base64url) from a password and salt. */
-export async function pbkdf2(
-  password: string,
-  salt: Uint8Array<ArrayBuffer>,
-  iterations = PBKDF2_ITERATIONS,
-): Promise<string> {
-  const material = await crypto.subtle.importKey(
-    'raw',
-    utf8(password),
-    'PBKDF2',
-    false,
-    ['deriveBits'],
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {name: 'PBKDF2', salt, iterations, hash: 'SHA-256'},
-    material,
-    256,
-  );
-  return base64url(bits);
 }
 
 /** Returns n random bytes. */

@@ -1,122 +1,64 @@
 /**
- * @fileoverview Background use cases: cron maintenance (outbox re-dispatch,
- * writeback retries, purges, daily Neo4j heartbeat) and the graph-sync
- * consumer.
+ * @fileoverview Cron maintenance (*\/15 * * * *): redeliver the oldest
+ * undelivered outbox rows, deleting each once sent (rows of purged
+ * workspaces are dropped), then sweep tombstones older than 48 hours.
  */
 
-import {DAY_MS, MINUTE_MS, systemCtx, utcDay} from '@ontodecide/shared-kernel';
-import type {GraphSyncMsg} from '../contract';
-import {writebackBody} from './apply_action';
-import type {AppDeps} from './ports';
+import {AppError, MINUTE_MS} from '@ontodecide/shared-kernel';
+import type {Clock, Logger} from '@ontodecide/shared-kernel';
+import type {EventPublisher, OutboxRelayStore} from './ports';
 
-/** Writeback attempts before a pending writeback is left alone. */
-export const WRITEBACK_MAX_ATTEMPTS = 3;
-/** Tenant id used for system-wide metadata rows. */
-export const SYSTEM_TENANT = '_system';
-/** og_meta key of the last heartbeat day. */
-export const META_HEARTBEAT_DAY = 'neo4jHeartbeatDay';
+/** Rows redelivered per cron run. */
+export const REDELIVERY_BATCH = 50;
 
-/** Summary of one maintenance run. */
+/** Rows younger than this are left to their own request's delivery. */
+export const REDELIVERY_MIN_AGE_MS = MINUTE_MS;
+
+/** Outcome of one maintenance run. */
 export interface MaintenanceReport {
-  redispatched: number;
-  writebacksRetried: number;
-  writebacksSent: number;
-  purged: number;
-  heartbeat: boolean;
+  delivered: number;
+  dropped: number;
+  failed: number;
 }
 
-/** Use case: the `*\/15 * * * *` cron run. */
-export class RunMaintenance {
-  constructor(private readonly d: AppDeps) {}
-
-  async handle(now: Date): Promise<MaintenanceReport> {
-    const t = now.getTime();
-    const report: MaintenanceReport = {
-      redispatched: 0,
-      writebacksRetried: 0,
-      writebacksSent: 0,
-      purged: 0,
-      heartbeat: false,
-    };
-    report.redispatched = await this.d.outbox.redispatchPending(
-      t - MINUTE_MS,
-      now,
-      500,
-    );
-    await this.retryWritebacks(report);
-    report.purged = await this.d.outbox.purgeDispatched(t - 7 * DAY_MS);
-    await this.d.meta.purgeInbox(t - 7 * DAY_MS);
-    if (this.d.projection.enabled) {
-      const day = utcDay(now);
-      const last = await this.d.meta.get(SYSTEM_TENANT, META_HEARTBEAT_DAY);
-      if (last !== day) {
-        try {
-          await this.d.projection.heartbeat(now);
-          await this.d.meta.set(SYSTEM_TENANT, META_HEARTBEAT_DAY, day);
-          report.heartbeat = true;
-        } catch (e) {
-          this.d.logger.warn('neo4j heartbeat failed', {error: String(e)});
-        }
-      }
+/** Runs one maintenance pass. */
+export async function runMaintenance(deps: {
+  store: OutboxRelayStore;
+  publisher: EventPublisher;
+  clock: Clock;
+  logger: Logger;
+}): Promise<MaintenanceReport> {
+  const nowMs = deps.clock.now().getTime();
+  const report: MaintenanceReport = {delivered: 0, dropped: 0, failed: 0};
+  const rows = await deps.store.oldest(
+    nowMs - REDELIVERY_MIN_AGE_MS,
+    REDELIVERY_BATCH,
+  );
+  const tombstoned = new Map<string, boolean>();
+  for (const row of rows) {
+    if (!tombstoned.has(row.tid)) {
+      tombstoned.set(row.tid, await deps.store.isTombstoned(row.tid));
     }
-    return report;
-  }
-
-  private async retryWritebacks(report: MaintenanceReport): Promise<void> {
-    const pending = await this.d.actionLogs.pendingWritebacks(
-      WRITEBACK_MAX_ATTEMPTS,
-      50,
-    );
-    for (const log of pending) {
-      const attempts = log.writebackAttempts + 1;
-      const model = await this.d.models.get(systemCtx(log.tenantId, 'cron'));
-      const wb = model.actionTypes[log.actionType]?.writeback;
-      if (wb?.kind !== 'webhook') {
-        await this.d.actionLogs.setWriteback(
-          log.tenantId,
-          log.id,
-          'WRITEBACK_PENDING',
-          WRITEBACK_MAX_ATTEMPTS,
-        );
-        continue;
-      }
-      report.writebacksRetried++;
-      try {
-        await this.d.writeback.send({
-          url: wb.url,
-          body: writebackBody(log),
-          idempotencyKey: log.id,
-        });
-        await this.d.actionLogs.setWriteback(
-          log.tenantId,
-          log.id,
-          'SENT',
-          attempts,
-        );
-        report.writebacksSent++;
-      } catch (e) {
-        await this.d.actionLogs.setWriteback(
-          log.tenantId,
-          log.id,
-          'WRITEBACK_PENDING',
-          attempts,
-        );
-        this.d.logger.warn('writeback retry failed', {
-          actionLogId: log.id,
-          attempts,
-          error: String(e),
-        });
-      }
+    if (tombstoned.get(row.tid)) {
+      await deps.store.delete(row.tid, row.id);
+      report.dropped++;
+      continue;
     }
+    try {
+      await deps.publisher.publish(row.msg);
+    } catch (e) {
+      report.failed++;
+      deps.logger.warn('outbox.redelivery_failed', {
+        tid: row.tid,
+        eventId: row.id,
+        error: AppError.from(e).code,
+      });
+      continue;
+    }
+    await deps.store.delete(row.tid, row.id);
+    report.delivered++;
   }
-}
-
-/** Use case: apply one graph-sync message to the projection (or no-op). */
-export class SyncGraph {
-  constructor(private readonly d: AppDeps) {}
-
-  async handle(msg: GraphSyncMsg): Promise<void> {
-    if (!this.d.projection.enabled) return;
-    await this.d.projection.sync(msg);
-  }
+  await deps.store.sweepTombstones(nowMs);
+  if (rows.length) deps.logger.info('outbox.redelivery', {...report});
+  return report;
 }

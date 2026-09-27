@@ -1,25 +1,36 @@
 /**
- * @fileoverview Service module of situation-awareness (used by the Worker
- * entry point and by the in-process test harness).
+ * @fileoverview situation-awareness service module (used by the Worker
+ * entry point and the in-process test harness).
  */
 
-import type {ServiceModule} from '@ontodecide/shared-kernel';
+import type {
+  ServiceModule,
+  TenantLifecycleRpc,
+} from '@ontodecide/shared-kernel';
 import type {SituationRpc} from '@ontodecide/situation/contract';
-import {type Overrides, createContainer} from './container';
+import {createContainer, type Overrides} from './container';
 import type {Env} from './env';
 
-export type {Overrides} from './container';
+export type {Overrides, RoomStub} from './container';
+export {createRoomCore} from './container';
 
-/** Builds the service: RPC, queue consumer, cron and stream fetch. */
+/** The service with every entry point present. */
+export interface SituationService extends ServiceModule<SituationRpc> {
+  lifecycle: Required<TenantLifecycleRpc>;
+  queue: NonNullable<ServiceModule<SituationRpc>['queue']>;
+  fetch: NonNullable<ServiceModule<SituationRpc>['fetch']>;
+}
+
+/** Creates the situation-awareness service (RPC, lifecycle, queue, fetch). */
 export function createService(
   env: Env,
   overrides: Overrides = {},
-): ServiceModule<SituationRpc> {
+): SituationService {
   const c = createContainer(env, overrides);
   return {
     rpc: c.rpc,
-    queue: batch => c.queueHandler(batch),
-    scheduled: (cron, now) => c.cron(cron, now),
+    lifecycle: c.lifecycle,
+    queue: batch => c.queue(batch),
     fetch: request => c.fetch(request),
   };
 }

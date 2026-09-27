@@ -3,12 +3,15 @@
  * point (and to the in-process test harness).
  */
 
+import type {TenantLifecycleRpc} from './lifecycle';
 import type {QueueBatch} from './queue';
 
 /** A service assembled from its composition root. */
 export interface ServiceModule<Rpc> {
   /** Methods exposed through the WorkerEntrypoint (service binding RPC). */
   rpc: Rpc;
+  /** TenantLifecycle entry point (data-owning services only). */
+  lifecycle?: TenantLifecycleRpc;
   /** Queue consumer. */
   queue?(batch: QueueBatch<unknown>): Promise<void>;
   /** Cron handler. */

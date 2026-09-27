@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Tests of the WebCrypto helpers and canonical JSON.
+ */
+
 import {describe, expect, it} from 'vitest';
 import {
   aesGcmDecrypt,
@@ -6,7 +10,6 @@ import {
   base64urlDecode,
   constantTimeEqual,
   hmacSha256Hex,
-  pbkdf2,
   sha256Hex,
 } from './crypto';
 import {canonicalJson, parseJson} from './json';
@@ -25,14 +28,6 @@ describe('crypto', () => {
     expect(
       await hmacSha256Hex('key', 'The quick brown fox jumps over the lazy dog'),
     ).toBe('f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8');
-  });
-
-  it('derives PBKDF2 hashes that depend on salt and password', async () => {
-    const salt = new Uint8Array(16).fill(1);
-    const a = await pbkdf2('pw', salt, 1000);
-    expect(await pbkdf2('pw', salt, 1000)).toBe(a);
-    expect(await pbkdf2('pw2', salt, 1000)).not.toBe(a);
-    expect(await pbkdf2('pw', new Uint8Array(16), 1000)).not.toBe(a);
   });
 
   it('encrypts with AES-GCM using a random IV', async () => {

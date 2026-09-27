@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Tests of the JSONLogic safe-subset evaluator.
+ */
+
 import {describe, expect, it} from 'vitest';
 import {AppError} from './errors';
 import {assertLogic, evalLogic, logicVars} from './json_logic';

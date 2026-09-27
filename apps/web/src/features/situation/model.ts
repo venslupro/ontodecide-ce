@@ -1,135 +1,114 @@
 /**
  * @fileoverview Situation view model and the pure realtime merge applied to
- * the overview cache (前端详细设计 §增量合并与渲染节流):
- * KPIs overwrite by id, alerts dedupe by id newest first (keep 200),
- * recommendation messages update the pending list and are invalidated.
+ * the overview cache (前端详细设计 §增量合并与渲染节流): KPIs overwrite by
+ * id, alerts dedupe by id and go to the head of the list (≤ 200 kept),
+ * recommendation messages update the pending list. The shared stream
+ * (`shared/ws`, ≤ 1 render per second) merges KPI / alert / snapshot frames
+ * and calls {@link mergeRecommendationFrames} through a registered merger.
  */
 
-import type {DataHealthDto} from '@ontodecide/integration/contract';
-import type {UsageStatus} from '@ontodecide/shared-kernel';
+import type {RecommendationDto} from '@ontodecide/decision/contract';
+import type {Quotas} from '@ontodecide/shared-kernel';
 import type {
   AlertDto,
-  CockpitLayout,
-  CockpitWidget,
+  KpiTrend,
   KpiValue,
   RecommendationSummary,
   SituationOverview,
-  WsMsg,
 } from '@ontodecide/situation/contract';
 
-/** Overview as served by the gateway BFF. */
-export type Overview = SituationOverview & {dataHealth?: DataHealthDto[]};
+/** A pending recommendation as listed on the cockpit. */
+export type PendingRec = Pick<
+  RecommendationDto,
+  'id' | 'status' | 'summary' | 'confidence' | 'rankedBy' | 'focus'
+> &
+  Partial<Pick<RecommendationDto, 'candidates' | 'ranking' | 'model'>> & {
+    expectedImpact?: number;
+    createdAt: string;
+    expiresAt: string;
+  };
 
-/** Alerts kept in the realtime stream. */
+/**
+ * `GET /situation/overview` as served by the gateway BFF: SITUATION.overview
+ * + DECISION.listRecommendations(Proposed, 5) + quotas.
+ */
+export type OverviewView = SituationOverview & {
+  pendingRecommendations?: PendingRec[];
+  quotas?: Quotas;
+};
+
+/** Alerts kept in the live stream. */
 export const ALERT_KEEP = 200;
-
-/** Result of merging a batch of frames. */
-export interface MergeResult {
-  overview: Overview | undefined;
-  /** Recommendation ids whose detail queries must be invalidated. */
-  invalidateRecs: string[];
-  usage?: UsageStatus;
-  /** Alert ids that are new in this batch (for the flash animation). */
-  newAlertIds: string[];
-  /** True when a snapshot replaced the cache. */
-  replaced: boolean;
-}
 
 function asArray<T>(d: unknown): T[] {
   return Array.isArray(d) ? (d as T[]) : d ? [d as T] : [];
 }
 
-function sortAlerts(list: AlertDto[]): AlertDto[] {
-  return [...list].sort((a, b) =>
-    a.raisedAt < b.raisedAt ? 1 : a.raisedAt > b.raisedAt ? -1 : 0,
-  );
+/** Severity ordering (higher first). */
+export const SEVERITY_RANK: Record<AlertDto['severity'], number> = {
+  CRITICAL: 4,
+  HIGH: 3,
+  MEDIUM: 2,
+  LOW: 1,
+};
+
+/** Sorts alerts most severe first, then newest first; keeps 200. */
+export function sortAlertsBySeverity(list: readonly AlertDto[]): AlertDto[] {
+  return [...list]
+    .sort((a, b) => {
+      const s =
+        (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0);
+      if (s !== 0) return s;
+      return a.raisedAt < b.raisedAt ? 1 : a.raisedAt > b.raisedAt ? -1 : 0;
+    })
+    .slice(0, ALERT_KEEP);
 }
 
-/** Merges realtime frames into the overview (pure). */
-export function mergeFrames(
-  prev: Overview | undefined,
-  frames: readonly WsMsg[],
-): MergeResult {
-  let ov = prev;
-  const invalidate = new Set<string>();
-  const newAlerts: string[] = [];
-  let usage: UsageStatus | undefined;
-  let replaced = false;
-  for (const f of frames) {
-    switch (f.type) {
-      case 'snapshot': {
-        // SituationRoom snapshots carry only {kpis, alerts}; keep the rest
-        // (recommendations, usage, data health) from the REST overview.
-        const snap = f.data as Partial<Overview>;
-        const base = ov ?? prev;
-        ov = {
-          ...base,
-          ...snap,
-          kpis: snap.kpis ?? base?.kpis ?? [],
-          alerts: snap.alerts ?? base?.alerts ?? [],
-          recommendations: snap.recommendations ?? base?.recommendations ?? [],
-          dataHealth: snap.dataHealth ?? base?.dataHealth,
-        } as Overview;
-        replaced = true;
-        if (snap.usage) usage = snap.usage;
-        break;
-      }
-      case 'kpi': {
-        if (!ov) break;
-        const byId = new Map(ov.kpis.map(k => [k.id, k] as const));
-        for (const k of asArray<KpiValue>(f.data))
-          byId.set(k.id, {...byId.get(k.id), ...k});
-        const order = ov.kpis.map(k => k.id);
-        for (const id of byId.keys()) if (!order.includes(id)) order.push(id);
-        ov = {...ov, kpis: order.map(id => byId.get(id)!)};
-        break;
-      }
-      case 'alert': {
-        if (!ov) break;
-        const incoming = asArray<AlertDto>(f.data);
-        const known = new Set(ov.alerts.map(a => a.id));
-        for (const a of incoming) if (!known.has(a.id)) newAlerts.push(a.id);
-        const ids = new Set(incoming.map(a => a.id));
-        ov = {
-          ...ov,
-          alerts: sortAlerts([
-            ...incoming,
-            ...ov.alerts.filter(a => !ids.has(a.id)),
-          ]).slice(0, ALERT_KEEP),
-        };
-        break;
-      }
-      case 'recommendation': {
-        const recs = asArray<RecommendationSummary>(f.data);
-        for (const r of recs) invalidate.add(r.id);
-        if (!ov) break;
-        const ids = new Set(recs.map(r => r.id));
-        const merged = [
-          ...recs.filter(r => r.status === 'Proposed'),
-          ...ov.recommendations.filter(r => !ids.has(r.id)),
-        ];
-        ov = {...ov, recommendations: merged};
-        break;
-      }
-      case 'usage': {
-        usage = f.data as UsageStatus;
-        if (ov) ov = {...ov, usage};
-        break;
-      }
-      default:
-        break;
-    }
-  }
+function summaryToPending(r: RecommendationSummary): PendingRec {
   return {
-    overview: ov,
-    invalidateRecs: [...invalidate],
-    usage,
-    newAlertIds: newAlerts,
-    replaced,
+    id: r.id,
+    status: r.status as PendingRec['status'],
+    summary: r.summary,
+    confidence: r.confidence,
+    rankedBy: r.rankedBy,
+    focus: r.focus,
+    expectedImpact: r.expectedImpact,
+    createdAt: r.createdAt,
+    expiresAt: r.expiresAt,
   };
 }
 
-/** KPI change vs previous (null when unknown). */
+/**
+ * Applies `recommendation` frames to the cockpit's pending list (pure):
+ * Proposed items go to the head (deduplicated by id), decided or expired
+ * ones leave the list, and the impacted objects follow the newest
+ * simulation. KPI / alert / snapshot frames are merged by the shared
+ * stream (`shared/ws`); this merger only adds what it does not know.
+ */
+export function mergeRecommendationFrames(
+  prev: OverviewView | undefined,
+  frames: readonly {type: string; data: unknown}[],
+): OverviewView | undefined {
+  if (!prev) return prev;
+  let ov = prev;
+  for (const f of frames) {
+    if (f.type !== 'recommendation') continue;
+    const recs = asArray<RecommendationSummary>(f.data).filter(r => !!r?.id);
+    if (!recs.length) continue;
+    const ids = new Set(recs.map(r => r.id));
+    ov = {
+      ...ov,
+      pendingRecommendations: [
+        ...recs.filter(r => r.status === 'Proposed').map(summaryToPending),
+        ...(ov.pendingRecommendations ?? []).filter(r => !ids.has(r.id)),
+      ],
+      impacted: recs.find(r => r.impacted?.length)?.impacted ?? ov.impacted,
+    };
+  }
+  return ov;
+}
+
+/** KPI change vs 24 h ago (null when unknown). */
 export function kpiDelta(
   k: Pick<KpiValue, 'value' | 'previous'>,
 ): {abs: number; rel: number | null} | null {
@@ -139,7 +118,7 @@ export function kpiDelta(
   return {abs, rel};
 }
 
-/** Whether a KPI change is good given its direction. */
+/** Whether a KPI change is good given its direction (null: unchanged). */
 export function kpiTrendIsGood(
   k: Pick<KpiValue, 'value' | 'previous' | 'higherIsBetter'>,
 ): boolean | null {
@@ -156,80 +135,39 @@ export function kpiOffTarget(
   return k.higherIsBetter ? k.value < k.target : k.value > k.target;
 }
 
-// ----------------------------------------------------------------------------
-// Cockpit view helpers
-// ----------------------------------------------------------------------------
-
-/** Severity ordering used by the alert stream (higher first). */
-export const SEVERITY_RANK: Record<AlertDto['severity'], number> = {
-  CRITICAL: 4,
-  HIGH: 3,
-  MEDIUM: 2,
-  LOW: 1,
-};
-
-/** Sorts alerts by severity (CRITICAL > HIGH > MEDIUM > LOW), then newest first; keeps {@link ALERT_KEEP}. */
-export function sortAlertsBySeverity(list: readonly AlertDto[]): AlertDto[] {
-  return [...list]
-    .sort((a, b) => {
-      const s =
-        (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0);
-      if (s !== 0) return s;
-      return a.raisedAt < b.raisedAt ? 1 : a.raisedAt > b.raisedAt ? -1 : 0;
-    })
-    .slice(0, ALERT_KEEP);
+/** Trend series of one KPI (empty when missing). */
+export function trendOf(
+  trends: readonly KpiTrend[] | undefined,
+  kpiId: string,
+): KpiTrend['points'] {
+  return trends?.find(t => t.kpiId === kpiId)?.points ?? [];
 }
 
-/** Built-in cockpit layout used when the tenant layout cannot be loaded. */
-export const DEFAULT_COCKPIT_LAYOUT: CockpitLayout = {
-  id: 'builtin-default',
-  name: 'Default',
-  columns: 12,
-  widgets: [
-    {id: 'w-kpi', kind: 'kpi', x: 0, y: 0, w: 12, h: 2},
-    {id: 'w-trend', kind: 'trend', x: 0, y: 2, w: 8, h: 4},
-    {id: 'w-alerts', kind: 'alerts', x: 8, y: 2, w: 4, h: 4},
-    {id: 'w-recs', kind: 'recommendations', x: 0, y: 6, w: 4, h: 4},
-    {id: 'w-impacted', kind: 'impacted', x: 4, y: 6, w: 4, h: 4},
-    {id: 'w-health', kind: 'dataHealth', x: 8, y: 6, w: 4, h: 4},
-  ],
-};
-
-/** Clamps widgets into the 12-column grid and orders them top-left first. */
-export function normalizeWidgets(
-  widgets: readonly CockpitWidget[],
-): CockpitWidget[] {
-  return widgets
-    .map(w => {
-      const x = Math.max(0, Math.min(11, Math.floor(w.x)));
-      const width = Math.max(1, Math.min(12 - x, Math.floor(w.w)));
-      return {
-        ...w,
-        x,
-        w: width,
-        y: Math.max(0, Math.floor(w.y)),
-        h: Math.max(1, Math.min(12, Math.floor(w.h))),
-      };
-    })
-    .sort((a, b) => a.y - b.y || a.x - b.x);
+/** Alert markers inside the trend window (time + short title). */
+export function alertMarkers(
+  alerts: readonly AlertDto[],
+  fromMs: number,
+  max = 5,
+): {ts: string; title: string; severity: AlertDto['severity']}[] {
+  return sortAlertsBySeverity(alerts)
+    .filter(a => Date.parse(a.raisedAt) >= fromMs)
+    .slice(0, max)
+    .map(a => ({ts: a.raisedAt, title: a.title, severity: a.severity}));
 }
 
-/** Splits a list into chunks of `size` (wall-mode KPI groups). */
-export function chunk<T>(list: readonly T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < list.length; i += Math.max(1, size))
-    out.push(list.slice(i, i + size));
-  return out;
+/** Expected impact of a pending recommendation (top candidate). */
+export function recImpact(r: PendingRec): number | null {
+  if (typeof r.expectedImpact === 'number') return r.expectedImpact;
+  const top = r.candidates?.find(c => c.id === r.ranking?.[0]);
+  return top ? top.expectedImpact : null;
 }
 
-/** Newest recommendation with status `Proposed`, if any. */
-export function newestProposed(
-  recs: readonly RecommendationSummary[],
-): RecommendationSummary | undefined {
-  return recs
-    .filter(r => r.status === 'Proposed')
-    .reduce<RecommendationSummary | undefined>(
-      (best, r) => (!best || r.createdAt > best.createdAt ? r : best),
-      undefined,
-    );
+/** Whether the workspace has no business data yet (sample-data CTA). */
+export function isEmptyWorkspace(
+  ov: Pick<OverviewView, 'kpis' | 'alerts'> | undefined,
+  objects: number | undefined,
+): boolean {
+  if (objects !== undefined) return objects === 0;
+  if (!ov) return false;
+  return ov.kpis.every(k => !k.value) && ov.alerts.length === 0;
 }

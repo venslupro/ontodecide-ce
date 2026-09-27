@@ -1,72 +1,96 @@
 /**
- * @fileoverview D1 row ⇄ domain mapping helpers.
+ * @fileoverview D1 row shapes of object-graph-db and their decoders.
  */
 
 import {parseJson} from '@ontodecide/shared-kernel';
 import type {Provenance, Rid} from '@ontodecide/shared-kernel';
-import type {HistoryEntry, StoredLink, StoredObject} from '../domain';
+import type {ActionLogDto} from '../contract/types';
+import type {StoredLink, StoredObject} from '../domain';
 
-/** Columns selected for objects (prefixed by alias `o`). */
+/** Columns selected for og_object rows (alias `o`). */
 export const OBJECT_COLUMNS =
-  'o.rid, o.tenant_id, o.object_type, o.primary_key, o.title, o.props, o.props_hash, o.provenance, o.prov_history, o.schema_version, o.version, o.updated_at';
+  'o.rid, o.object_type, o.primary_key, o.title, o.props, o.props_hash, ' +
+  'o.provenance, o.version, o.updated_at';
 
-/** og_object row. */
+/** An og_object row. */
 export interface ObjectRow {
   rid: string;
-  tenant_id: string;
   object_type: string;
   primary_key: string;
   title: string | null;
   props: string;
   props_hash: string;
   provenance: string;
-  prov_history: string | null;
-  schema_version: string;
   version: number;
   updated_at: number;
 }
 
-/** Maps an og_object row. */
+/** Decodes an og_object row. */
 export function toStoredObject(r: ObjectRow): StoredObject {
   return {
     rid: r.rid as Rid,
-    tenantId: r.tenant_id,
     type: r.object_type,
     primaryKey: r.primary_key,
     title: r.title ?? r.primary_key,
     props: parseJson<Record<string, unknown>>(r.props, {}),
-    propsHash: r.props_hash,
     provenance: parseJson<Record<string, Provenance>>(r.provenance, {}),
-    history: parseJson<Record<string, HistoryEntry[]>>(r.prov_history, {}),
-    schemaVersion: r.schema_version,
+    propsHash: r.props_hash,
     version: Number(r.version),
     updatedAt: Number(r.updated_at),
   };
 }
 
-/** og_link row. */
+/** An og_link row. */
 export interface LinkRow {
-  link_type: string;
   src_rid: string;
+  link_type: string;
   dst_rid: string;
   weight: number | null;
 }
 
-/** Maps an og_link row. */
+/** Decodes an og_link row. */
 export function toStoredLink(r: LinkRow): StoredLink {
   return {
-    type: r.link_type,
     src: r.src_rid as Rid,
+    type: r.link_type,
     dst: r.dst_rid as Rid,
     weight:
       r.weight === null || r.weight === undefined ? null : Number(r.weight),
   };
 }
 
-/** Splits a list into chunks. */
-export function chunks<T>(items: readonly T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size)
-    out.push(items.slice(i, i + size));
-  return out;
+/** An og_action_log row. */
+export interface ActionLogDbRow {
+  id: string;
+  action_type: string;
+  target_rid: string;
+  params: string | null;
+  before: string | null;
+  after: string | null;
+  actor: string;
+  actor_user_id: string | null;
+  recommendation_id: string | null;
+  executed_at: number;
+}
+
+/** Decodes an og_action_log row. */
+export function toActionLogDto(r: ActionLogDbRow): ActionLogDto {
+  return {
+    id: r.id,
+    actionType: r.action_type,
+    targetRid: r.target_rid as Rid,
+    params: parseJson(r.params, {}),
+    before: parseJson(r.before, {}),
+    after: parseJson(r.after, {}),
+    actor: r.actor,
+    ...(r.actor_user_id ? {actorUserId: r.actor_user_id} : {}),
+    ...(r.recommendation_id ? {recommendationId: r.recommendation_id} : {}),
+    executedAt: new Date(Number(r.executed_at)).toISOString(),
+  };
+}
+
+/** Whether a D1 error is a UNIQUE violation on the given table. */
+export function isUniqueViolation(e: unknown, table: string): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  return /UNIQUE constraint failed/i.test(m) && m.includes(`${table}.`);
 }

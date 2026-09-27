@@ -1,7 +1,7 @@
 /**
- * @fileoverview Test fixture: the supply-chain pack compiled into a
- * CompiledModel and the sample graph from samples/supply-chain/*.csv.
- * Test-only; not exported from the domain index.
+ * @fileoverview Test fixture: a small supply-chain ontology (compiled form)
+ * and graph. S1 (risk 80) and S2 (risk 20) supply M1, S3 (suspended)
+ * supplies M1, S4 supplies M2; M1 is used in P1 and P2, M2 in P2.
  */
 
 import type {Rid} from '@ontodecide/shared-kernel';
@@ -11,261 +11,305 @@ import type {
   GraphSlice,
 } from '@ontodecide/object-graph/contract';
 import type {
-  CompiledModel,
+  ActionTypeDef,
   CompiledObjectType,
-  SchemaDef,
+  CompiledSchema,
+  LinkTypeDef,
+  PropertyDef,
 } from '@ontodecide/ontology/contract';
-import {SUPPLY_CHAIN_PACK} from '../../../ontology/domain/packs/supply_chain';
 
-/** Minimal compiler equivalent to ontology-manager's for tests. */
-export function compileModel(
-  schema: SchemaDef,
-  tenantId = 't1',
-): CompiledModel {
-  const objectTypes: Record<string, CompiledObjectType> = {};
-  for (const ot of schema.objectTypes) {
-    objectTypes[ot.apiName] = {
-      ...ot,
-      schemaApi: schema.apiName,
-      propsByName: Object.fromEntries(ot.properties.map(p => [p.apiName, p])),
-      indexedProps: ot.properties.filter(p => p.indexed).map(p => p.apiName),
-      sensitiveProps: ot.properties
-        .filter(p => p.sensitive)
-        .map(p => p.apiName),
-    };
-  }
+/** RID of test object `n` of `type`. */
+export function rid(type: string, n: number): Rid {
+  return `ri.${type}.01K6A${String(n).padStart(21, '0')}` as Rid;
+}
+
+export const S1 = rid('Supplier', 1);
+export const S2 = rid('Supplier', 2);
+export const S3 = rid('Supplier', 3);
+export const S4 = rid('Supplier', 4);
+export const M1 = rid('Material', 1);
+export const M2 = rid('Material', 2);
+export const P1 = rid('Product', 1);
+export const P2 = rid('Product', 2);
+
+function prop(
+  apiName: string,
+  dataType: PropertyDef['dataType'],
+  extra: Partial<PropertyDef> = {},
+): PropertyDef {
+  return {apiName, displayName: apiName, dataType, ...extra};
+}
+
+function objectType(
+  apiName: string,
+  primaryKey: string,
+  properties: PropertyDef[],
+): CompiledObjectType {
   return {
-    tenantId,
-    version: schema.version ?? '1.0.0',
-    hash: 'test',
-    schemas: [{apiName: schema.apiName, version: schema.version ?? '1.0.0'}],
-    objectTypes,
-    linkTypes: Object.fromEntries(schema.linkTypes.map(l => [l.apiName, l])),
-    actionTypes: Object.fromEntries(
-      schema.actionTypes.map(a => [a.apiName, a]),
-    ),
-    functions: Object.fromEntries(schema.functions.map(f => [f.apiName, f])),
-    simulationKpis: schema.simulationKpis ?? [],
+    apiName,
+    displayName: apiName,
+    primaryKey,
+    titleProperty: 'name',
+    properties,
+    propsByName: Object.fromEntries(properties.map(p => [p.apiName, p])),
+    indexedProps: [],
+    sensitiveProps: properties.filter(p => p.sensitive).map(p => p.apiName),
+  };
+}
+
+const linkTypes: LinkTypeDef[] = [
+  {
+    apiName: 'supplies',
+    displayName: 'supplies',
+    from: 'Supplier',
+    to: 'Material',
+    cardinality: 'many',
+    propagation: {defaultWeight: 1},
+  },
+  {
+    apiName: 'usedIn',
+    displayName: 'usedIn',
+    from: 'Material',
+    to: 'Product',
+    cardinality: 'many',
+    propagation: {defaultWeight: 1},
+  },
+  {
+    apiName: 'locatedNear',
+    displayName: 'locatedNear',
+    from: 'Supplier',
+    to: 'Supplier',
+    cardinality: 'many',
+  },
+];
+
+const actionTypes: ActionTypeDef[] = [
+  {
+    apiName: 'switchSupplier',
+    displayName: {'zh-CN': '切换供应商', 'en-US': 'Switch supplier'},
+    targetType: 'Material',
+    parameters: [
+      {
+        apiName: 'newSupplier',
+        displayName: 'newSupplier',
+        dataType: 'objectRef:Supplier',
+        required: true,
+        suggest: {
+          objectType: 'Supplier',
+          filter: {op: 'eq', prop: 'status', value: 'active'},
+          orderBy: {prop: 'riskScore', dir: 'asc'},
+          sharesLinkWithTarget: {link: 'supplies', direction: 'in'},
+        },
+      },
+    ],
+    preconditions: [],
+    effects: [
+      {
+        kind: 'relink',
+        link: 'supplies',
+        direction: 'in',
+        toParam: 'newSupplier',
+      },
+    ],
+    impact: [{property: 'capacity', change: 0.5}],
+  },
+  {
+    apiName: 'increaseSafetyStock',
+    displayName: {'zh-CN': '提高安全库存', 'en-US': 'Increase safety stock'},
+    targetType: 'Product',
+    parameters: [
+      {
+        apiName: 'days',
+        displayName: 'days',
+        dataType: 'integer',
+        required: true,
+        defaultValue: 7,
+      },
+    ],
+    preconditions: [
+      {
+        expr: {
+          and: [
+            {'>': [{var: 'params.days'}, 0]},
+            {'<=': [{var: 'params.days'}, 30]},
+          ],
+        },
+        message: 'days 1-30',
+      },
+    ],
+    effects: [
+      {kind: 'increment', prop: 'inventoryDays', by: {var: 'params.days'}},
+    ],
+  },
+  {
+    apiName: 'flagSupplier',
+    displayName: {'zh-CN': '标记观察', 'en-US': 'Flag supplier'},
+    targetType: 'Supplier',
+    parameters: [
+      {apiName: 'reason', displayName: 'reason', dataType: 'string'},
+    ],
+    preconditions: [
+      {expr: {'!==': [{var: 'target.status'}, 'suspended']}, message: 'no'},
+    ],
+    effects: [{kind: 'set', prop: 'status', value: 'watch'}],
+  },
+];
+
+/** Compiled test schema. */
+export function testSchema(): CompiledSchema {
+  return {
+    templateId: 'supply-chain',
+    templateVersion: 'test',
+    custom: false,
+    etag: 0,
+    objectTypes: {
+      Supplier: objectType('Supplier', 'supplierId', [
+        prop('supplierId', 'string'),
+        prop('name', 'string'),
+        prop('riskScore', 'integer', {semanticTags: ['risk']}),
+        prop('capacity', 'double'),
+        prop('status', 'enum', {enumValues: ['active', 'watch', 'suspended']}),
+        prop('contactEmail', 'string', {sensitive: true}),
+      ]),
+      Material: objectType('Material', 'materialId', [
+        prop('materialId', 'string'),
+        prop('name', 'string'),
+        prop('capacity', 'double'),
+      ]),
+      Product: objectType('Product', 'productId', [
+        prop('productId', 'string'),
+        prop('name', 'string'),
+        prop('dailyDemand', 'double'),
+        prop('inventoryDays', 'double'),
+      ]),
+    },
+    linkTypes: Object.fromEntries(linkTypes.map(l => [l.apiName, l])),
+    actionTypes: Object.fromEntries(actionTypes.map(a => [a.apiName, a])),
+    functions: {},
+    simulationKpis: [
+      {
+        apiName: 'fulfillableDemand',
+        displayName: {'zh-CN': '可满足日需求', 'en-US': 'Fulfillable demand'},
+        objectType: 'Product',
+        property: 'dailyDemand',
+        agg: 'sum',
+        higherIsBetter: true,
+      },
+      {
+        apiName: 'healthyProducts',
+        displayName: 'healthyProducts',
+        objectType: 'Product',
+        agg: 'count',
+        higherIsBetter: true,
+      },
+    ],
     indexPlan: [],
   };
 }
 
-/** The compiled supply-chain model. */
-export function supplyChainModel(tenantId = 't1'): CompiledModel {
-  return compileModel(structuredClone(SUPPLY_CHAIN_PACK.schema), tenantId);
+/** A test object. */
+export interface TestObject {
+  rid: Rid;
+  type: string;
+  title: string;
+  props: Record<string, unknown>;
 }
 
-/** RID helper: `ri.<tenant>.<Type>.<pk>`. */
-export function rid(type: string, pk: string, tenantId = 't1'): Rid {
-  return `ri.${tenantId}.${type}.${pk}`;
-}
-
-const SUPPLIERS: [
-  string,
-  string,
-  string,
-  number,
-  number,
-  number,
-  string,
-  string,
-  string[],
-  number,
-][] = [
-  [
-    'S-001',
-    'Shenzhen Precision Parts',
-    'CN',
-    35,
-    1200,
-    0.96,
-    'active',
-    'ops@szpp.example',
-    ['M-100', 'M-101'],
-    0.7,
-  ],
-  [
-    'S-002',
-    'Hanoi Circuit Works',
-    'VN',
-    58,
-    800,
-    0.91,
-    'active',
-    'sales@hcw.example',
-    ['M-101', 'M-102'],
-    0.3,
-  ],
-  [
-    'S-003',
-    'Penang Semicon',
-    'MY',
-    22,
-    1500,
-    0.98,
-    'active',
-    'contact@penang.example',
-    ['M-102'],
-    0.7,
-  ],
-  [
-    'S-004',
-    'Osaka Battery Co',
-    'JP',
-    41,
-    600,
-    0.94,
-    'active',
-    'info@osakabat.example',
-    ['M-103'],
-    1,
-  ],
-  [
-    'S-005',
-    'Bangkok Metal Forming',
-    'TH',
-    18,
-    900,
-    0.97,
-    'active',
-    'hello@bmf.example',
-    ['M-100'],
-    0.3,
-  ],
-];
-
-const MATERIALS: [string, string, string, number, string[]][] = [
-  ['M-100', 'Aluminium housing', 'Mechanical', 42.5, ['P-900', 'P-901']],
-  ['M-101', 'Controller PCB', 'Electronics', 88, ['P-900']],
-  ['M-102', 'Power IC', 'Electronics', 12.3, ['P-900', 'P-902']],
-  ['M-103', 'Li-ion cell', 'Energy', 31, ['P-901', 'P-902']],
-];
-
-const PRODUCTS: [string, string, number, number, number, number][] = [
-  ['P-900', 'Edge Gateway X1', 320, 12, 5, 1299],
-  ['P-901', 'Handheld Scanner S2', 180, 6, 4, 899],
-  ['P-902', 'Smart Sensor Hub', 450, 9, 5, 459],
-];
-
-/** The full sample graph (5 suppliers, 4 materials, 3 products). */
-export function supplyChainGraph(tenantId = 't1'): GraphSlice {
-  const nodes: GraphNode[] = [];
-  const edges: GraphEdge[] = [];
-  for (const [
-    id,
-    name,
-    country,
-    riskScore,
-    capacity,
-    onTimeRate,
-    status,
-    contactEmail,
-    mats,
-    share,
-  ] of SUPPLIERS) {
-    nodes.push({
-      rid: rid('Supplier', id, tenantId),
+/** Objects of the fixture graph. */
+export function testObjects(): TestObject[] {
+  return [
+    {
+      rid: S1,
       type: 'Supplier',
-      title: name,
+      title: 'Alpha',
       props: {
-        supplierId: id,
-        name,
-        country,
-        riskScore,
-        capacity,
-        onTimeRate,
-        status,
-        contactEmail,
+        supplierId: 'S1',
+        name: 'Alpha',
+        riskScore: 80,
+        capacity: 100,
+        status: 'active',
+        contactEmail: 'alpha@example.com',
       },
-    });
-    for (const m of mats) {
-      edges.push({
-        type: 'supplies',
-        src: rid('Supplier', id, tenantId),
-        dst: rid('Material', m, tenantId),
-        weight: share,
-      });
-    }
-  }
-  for (const [id, name, category, unitCost, prods] of MATERIALS) {
-    nodes.push({
-      rid: rid('Material', id, tenantId),
+    },
+    {
+      rid: S2,
+      type: 'Supplier',
+      title: 'Beta',
+      props: {
+        supplierId: 'S2',
+        name: 'Beta',
+        riskScore: 20,
+        capacity: 80,
+        status: 'active',
+        contactEmail: 'beta@example.com',
+      },
+    },
+    {
+      rid: S3,
+      type: 'Supplier',
+      title: 'Gamma',
+      props: {
+        supplierId: 'S3',
+        name: 'Gamma',
+        riskScore: 5,
+        capacity: 50,
+        status: 'suspended',
+      },
+    },
+    {
+      rid: S4,
+      type: 'Supplier',
+      title: 'Delta',
+      props: {supplierId: 'S4', name: 'Delta', riskScore: 30, status: 'active'},
+    },
+    {
+      rid: M1,
       type: 'Material',
-      title: name,
-      props: {materialId: id, name, category, unitCost},
-    });
-    for (const p of prods) {
-      edges.push({
-        type: 'usedIn',
-        src: rid('Material', id, tenantId),
-        dst: rid('Product', p, tenantId),
-        weight: null,
-      });
-    }
-  }
-  for (const [
-    id,
-    name,
-    dailyDemand,
-    inventoryDays,
-    safetyStockDays,
-    revenuePerUnit,
-  ] of PRODUCTS) {
-    nodes.push({
-      rid: rid('Product', id, tenantId),
+      title: 'Steel',
+      props: {materialId: 'M1', name: 'Steel', capacity: 200},
+    },
+    {
+      rid: M2,
+      type: 'Material',
+      title: 'Glass',
+      props: {materialId: 'M2', name: 'Glass', capacity: 50},
+    },
+    {
+      rid: P1,
       type: 'Product',
-      title: name,
+      title: 'Car',
       props: {
-        productId: id,
-        name,
-        dailyDemand,
-        inventoryDays,
-        safetyStockDays,
-        revenuePerUnit,
+        productId: 'P1',
+        name: 'Car',
+        dailyDemand: 100,
+        inventoryDays: 10,
       },
-    });
-  }
-  return {nodes, edges};
+    },
+    {
+      rid: P2,
+      type: 'Product',
+      title: 'Bike',
+      props: {productId: 'P2', name: 'Bike', dailyDemand: 50, inventoryDays: 5},
+    },
+  ];
 }
 
-/** Outgoing BFS subgraph (what object-graph's impactSubgraph returns). */
-export function subgraph(
-  graph: GraphSlice,
-  roots: readonly Rid[],
-  linkTypes: readonly string[] = [],
-  maxHops = 3,
-  limit = 500,
-): GraphSlice {
-  const byRid = new Map(graph.nodes.map(n => [n.rid, n]));
-  const hop = new Map<Rid, number>();
-  const queue: Rid[] = [];
-  for (const r of roots) {
-    if (byRid.has(r) && !hop.has(r)) {
-      hop.set(r, 0);
-      queue.push(r);
-    }
-  }
-  const edges: GraphEdge[] = [];
-  for (let h = 0; h < queue.length; h++) {
-    const cur = queue[h];
-    const d = hop.get(cur)!;
-    if (d >= maxHops) continue;
-    for (const e of graph.edges) {
-      if (e.src !== cur) continue;
-      if (linkTypes.length && !linkTypes.includes(e.type)) continue;
-      if (!hop.has(e.dst)) {
-        if (hop.size >= limit) continue;
-        hop.set(e.dst, d + 1);
-        queue.push(e.dst);
-      }
-      edges.push(e);
-    }
-  }
-  return {
-    nodes: queue.map(r => ({
-      ...structuredClone(byRid.get(r)!),
-      hop: hop.get(r),
-    })),
-    edges: edges.filter(e => hop.has(e.src) && hop.has(e.dst)),
-  };
+/** Edges of the fixture graph. */
+export function testEdges(): GraphEdge[] {
+  return [
+    {type: 'supplies', src: S1, dst: M1, weight: 0.6},
+    {type: 'supplies', src: S2, dst: M1, weight: 0.4},
+    {type: 'supplies', src: S3, dst: M1, weight: 0.1},
+    {type: 'supplies', src: S4, dst: M2, weight: null},
+    {type: 'usedIn', src: M1, dst: P1, weight: 1},
+    {type: 'usedIn', src: M1, dst: P2, weight: 0.5},
+    {type: 'usedIn', src: M2, dst: P2, weight: 0.5},
+    {type: 'locatedNear', src: S1, dst: S4, weight: 1},
+  ];
+}
+
+/** The whole fixture graph as a slice (hop 0 for every node). */
+export function testSlice(): GraphSlice {
+  const nodes: GraphNode[] = testObjects().map(o => ({...o, hop: 0}));
+  return {nodes, edges: testEdges(), truncated: false};
 }

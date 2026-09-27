@@ -1,6 +1,6 @@
 /**
  * @fileoverview decision-engine service module (used by the Worker entry
- * point and the in-process test harness).
+ * point and the in-process test harness). No queue, no cron.
  */
 
 import type {ServiceModule} from '@ontodecide/shared-kernel';
@@ -10,15 +10,11 @@ import type {Env} from './env';
 
 export type {Overrides} from './container';
 
-/** Creates the service. `overrides.llm` replaces the whole provider chain. */
+/** Creates the service. */
 export function createService(
   env: Env,
   overrides: Overrides = {},
 ): ServiceModule<DecisionRpc> {
   const c = createContainer(env, overrides);
-  return {
-    rpc: c.rpc,
-    queue: batch => c.queueHandler(batch),
-    scheduled: (cron, now) => c.cron(cron, now),
-  };
+  return {rpc: c.rpc, lifecycle: c.lifecycle};
 }

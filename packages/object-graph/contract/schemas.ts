@@ -1,58 +1,31 @@
 /**
- * @fileoverview Zod schemas for object graph REST inputs.
+ * @fileoverview Zod schemas for object-graph REST inputs.
  */
 
 import {z} from 'zod';
 
-const filterExpr: z.ZodType<unknown> = z.lazy(() =>
-  z.union([
-    z.object({op: z.enum(['and', 'or']), args: z.array(filterExpr)}),
-    z.object({op: z.literal('not'), arg: filterExpr}),
-    z.object({
-      op: z.enum(['eq', 'neq', 'gt', 'gte', 'lt', 'lte']),
-      prop: z.string(),
-      value: z.union([z.string(), z.number(), z.boolean()]),
-    }),
-    z.object({
-      op: z.literal('in'),
-      prop: z.string(),
-      values: z.array(z.union([z.string(), z.number(), z.boolean()])),
-    }),
-    z.object({op: z.literal('contains'), prop: z.string(), value: z.string()}),
-    z.object({op: z.literal('exists'), prop: z.string()}),
-  ]),
-);
+const rid = z.string().regex(/^ri\.[A-Za-z][A-Za-z0-9_]*\.[0-9A-Z]{26}$/);
 
-export const filterExprSchema = filterExpr;
+/** RID path parameter. */
+export const ridSchema = rid;
 
-export const objectSetDefSchema = z.object({
-  objectType: z.string().min(1),
-  filter: filterExpr.optional(),
-  searchAround: z
-    .array(z.object({link: z.string(), direction: z.enum(['out', 'in'])}))
-    .max(3)
-    .optional(),
-  orderBy: z
-    .array(z.object({prop: z.string(), dir: z.enum(['asc', 'desc'])}))
-    .optional(),
-});
+/** PATCH /objects/{rid} body (application/merge-patch+json). */
+export const mergePatchSchema = z.record(z.string(), z.unknown());
 
-export const pageInputSchema = z
-  .object({
-    cursor: z.string().optional(),
-    limit: z.number().int().min(1).max(200).optional(),
-  })
-  .default({});
-
-export const saveObjectSetInputSchema = z.object({
-  name: z.string().min(1).max(100),
-  definition: objectSetDefSchema,
-});
-
-export const applyActionInputSchema = z.object({
-  target: z.string().startsWith('ri.'),
+/** POST /action-types/{id}/executions body. */
+export const executeActionSchema = z.object({
+  target: rid,
   params: z.record(z.string(), z.unknown()).default({}),
   recommendationId: z.string().optional(),
 });
 
-export const resolveMergeInputSchema = z.object({accept: z.boolean()});
+/** GET /objects/{rid}/links query. */
+export const linksQuerySchema = z.object({
+  depth: z.coerce.number().int().min(1).max(2).default(1),
+  linkTypes: z
+    .string()
+    .optional()
+    .transform(v => (v ? v.split(',').filter(Boolean) : undefined)),
+  direction: z.enum(['out', 'in', 'both']).default('both'),
+  limit: z.coerce.number().int().min(1).max(300).default(200),
+});

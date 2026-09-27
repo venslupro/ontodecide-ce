@@ -1,67 +1,58 @@
 /**
- * @fileoverview Wires every ontology use-case handler from its ports.
+ * @fileoverview Assembles the ontology use cases behind the OntologyRpc
+ * contract. The built-in template is seeded into `ont_template` on the
+ * first call of each isolate.
  */
 
-import {PackRegistry} from '../domain';
-import {ActiveModelLoader, GetActiveModelHandler} from './active_model';
-import {DiffHandler} from './diff_schema';
-import {EvaluateFunctionHandler} from './evaluate_function';
-import {GetCompiledSchemaHandler} from './get_compiled_schema';
-import {GetSchemaHandler} from './get_schema';
-import {ListSchemasHandler} from './list_schemas';
+import type {CallCtx} from '@ontodecide/shared-kernel';
+import type {OntologyRpc} from '../contract';
+import {DEFAULT_TEMPLATE} from '../domain';
+import {deleteDefinition, putDefinition} from './change_definition';
+import {getCompiledSchema} from './get_compiled_schema';
 import {
-  ExportPackHandler,
-  GetPackHandler,
-  ImportPackHandler,
-  ListPacksHandler,
-} from './packs';
+  getDefinition,
+  getOntology,
+  getTemplateSeeds,
+  listDefinitions,
+} from './get_schema';
 import type {OntologyDeps} from './ports';
-import {PublishHandler} from './publish';
-import {SaveDraftHandler} from './save_draft';
+import {TemplateSeeder} from './support';
 
-/** All ontology use-case handlers. */
-export interface OntologyHandlers {
-  listSchemas: ListSchemasHandler;
-  getSchema: GetSchemaHandler;
-  getCompiledSchema: GetCompiledSchemaHandler;
-  getActiveModel: GetActiveModelHandler;
-  saveDraft: SaveDraftHandler;
-  diff: DiffHandler;
-  publish: PublishHandler;
-  listPacks: ListPacksHandler;
-  getPack: GetPackHandler;
-  importPack: ImportPackHandler;
-  exportPack: ExportPackHandler;
-  evaluateFunction: EvaluateFunctionHandler;
-}
+/** The ontology use cases (same surface as the RPC contract). */
+export type OntologyHandlers = OntologyRpc;
 
-/** Builds the handlers; `registry` defaults to the built-in packs. */
-export function createOntologyHandlers(
-  deps: OntologyDeps,
-  registry: PackRegistry = new PackRegistry(),
-): OntologyHandlers {
-  const models = new ActiveModelLoader(deps);
-  const saveDraft = new SaveDraftHandler(deps);
-  const publish = new PublishHandler(deps, models);
-  const getPack = new GetPackHandler(deps, registry);
+/** Creates the use-case handlers. */
+export function createOntologyHandlers(deps: OntologyDeps): OntologyHandlers {
+  const seeder = new TemplateSeeder(deps.templates, deps.logger);
+  const seeded = () => seeder.ensure(DEFAULT_TEMPLATE);
   return {
-    listSchemas: new ListSchemasHandler(deps),
-    getSchema: new GetSchemaHandler(deps),
-    getCompiledSchema: new GetCompiledSchemaHandler(deps),
-    getActiveModel: new GetActiveModelHandler(models),
-    saveDraft,
-    diff: new DiffHandler(deps),
-    publish,
-    listPacks: new ListPacksHandler(deps, registry),
-    getPack,
-    importPack: new ImportPackHandler(
-      deps,
-      registry,
-      getPack,
-      saveDraft,
-      publish,
-    ),
-    exportPack: new ExportPackHandler(deps, registry),
-    evaluateFunction: new EvaluateFunctionHandler(models),
+    async getCompiledSchema(ctx: CallCtx) {
+      await seeded();
+      return getCompiledSchema(deps, ctx);
+    },
+    async getOntology(ctx) {
+      await seeded();
+      return getOntology(deps, ctx);
+    },
+    async getTemplateSeeds(templateId) {
+      await seeded();
+      return getTemplateSeeds(templateId);
+    },
+    async listDefinitions(ctx, kind) {
+      await seeded();
+      return listDefinitions(deps, ctx, kind);
+    },
+    async getDefinition(ctx, kind, id) {
+      await seeded();
+      return getDefinition(deps, ctx, kind, id);
+    },
+    async putDefinition(ctx, kind, id, def, ifMatch) {
+      await seeded();
+      return putDefinition(deps, ctx, kind, id, def, ifMatch);
+    },
+    async deleteDefinition(ctx, kind, id, ifMatch) {
+      await seeded();
+      return deleteDefinition(deps, ctx, kind, id, ifMatch);
+    },
   };
 }

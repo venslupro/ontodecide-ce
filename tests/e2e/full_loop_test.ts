@@ -1,334 +1,259 @@
 /**
- * @fileoverview The MVP closed loop (总体设计 6.3) end to end through the
- * gateway: login → pack → 3 sources → fusion → alert → recommendation →
- * approval → execution → evaluation.
+ * @fileoverview End-to-end core loop through the gateway (ARCHITECTURE.md
+ * 6): sign-up → sample data → domain events → cockpit alerts → scenario →
+ * recommendation (rule ranking, AI absent) → confirm → action executed as
+ * svc:decision-engine; plus workspace isolation and If-Match on objects.
  */
 
-import {beforeAll, describe, expect, it} from 'vitest';
-import type {TokenPair} from '../../packages/identity/contract/index';
-import type {
-  JobDto,
-  SourceDto,
-} from '../../packages/integration/contract/index';
-import type {
-  ObjectDto,
-  ObjectPage,
-} from '../../packages/object-graph/contract/index';
-import type {
-  AlertDto,
-  SituationOverview,
-} from '../../packages/situation/contract/index';
-import type {
-  RecommendationDto,
-  ScenarioResult,
-} from '../../packages/decision/contract/index';
-import type {CompiledModel} from '../../packages/ontology/contract/index';
-import {DAY_MS, HOUR_MS} from '../../packages/shared-kernel/index';
-import {
-  ADMIN_EMAIL,
-  ADMIN_PASSWORD,
-  createHarness,
-  type Harness,
-} from './harness';
-import {SOURCES, readSample} from './fixtures';
+import {describe, expect, it} from 'vitest';
+import {createSystem, rowsOf, signUp} from './harness';
 
-describe('closed loop', () => {
-  let h: Harness;
-  const sourceIds: Record<string, string> = {};
-  let s002: ObjectDto;
-  let alert: AlertDto;
-  let rec: RecommendationDto;
+interface ObjectItem {
+  rid: string;
+  type: string;
+  title: string;
+  props: Record<string, unknown>;
+  version: number;
+}
 
-  beforeAll(() => {
-    h = createHarness();
-  });
+describe('core loop', () => {
+  it('runs sign-up → sample → alert → scenario → recommendation → action', async () => {
+    const sys = await createSystem();
+    const owner = await signUp(sys, 'alice@example.com');
 
-  it('bootstraps the admin on first login and sets the refresh cookie', async () => {
-    const res = await h.api<TokenPair>('POST', '/auth/login', {
-      email: ADMIN_EMAIL,
-      password: ADMIN_PASSWORD,
-    });
-    expect(res.status).toBe(200);
-    expect(res.body.user.role).toBe('Admin');
-    expect(res.body).not.toHaveProperty('refreshToken');
-    expect(res.headers.get('set-cookie')).toMatch(/od_refresh=.*HttpOnly/i);
-    h.setToken(res.body.accessToken);
+    const me = await sys.api<{
+      role: string;
+      workspace: {kind: string; status: string; trialExpiresAt: string};
+      quotas: Record<string, {used: number; limit: number}>;
+    }>('GET', '/me', {token: owner.token});
+    expect(me.status).toBe(200);
+    expect(me.body.role).toBe('owner');
+    expect(me.body.workspace).toMatchObject({kind: 'trial', status: 'ACTIVE'});
+    expect(Date.parse(me.body.workspace.trialExpiresAt)).toBe(
+      sys.clock.now().getTime() + 72 * 3_600_000,
+    );
+    expect(me.body.quotas.objects).toEqual({used: 0, limit: 300});
 
-    const refreshed = await h.ok<TokenPair>('POST', '/auth/refresh');
-    h.setToken(refreshed.accessToken);
-    const me = await h.ok<{email: string}>('GET', '/me');
-    expect(me.email).toBe(ADMIN_EMAIL);
-  });
-
-  it('rejects anonymous calls with Problem Details', async () => {
-    const r = await h.api<{code: string}>(
+    // First cockpit open initializes KPIs and sample automations.
+    const empty = await sys.api<{initialized: boolean; kpis: unknown[]}>(
       'GET',
-      '/objects/Supplier',
-      undefined,
+      '/situation/overview?range=24h',
+      {token: owner.token},
+    );
+    expect(empty.status).toBe(200);
+    expect(empty.body.initialized).toBe(true);
+    expect(empty.body.kpis.length).toBeGreaterThan(0);
+
+    // Sample scenario: 80 objects / 160 links, once per workspace.
+    const sample = await sys.api('POST', '/workspace/sample-data', {
+      token: owner.token,
+    });
+    expect(sample.status).toBe(202);
+    const again = await sys.api<{code: string}>(
+      'POST',
+      '/workspace/sample-data',
+      {token: owner.token},
+    );
+    expect(again.status).toBe(409);
+    expect(again.body.code).toBe('CONFLICT');
+    expect(await rowsOf(sys.dbs.objects, 'og_object', owner.tid)).toBe(80);
+    expect(await rowsOf(sys.dbs.objects, 'og_link', owner.tid)).toBe(160);
+
+    await sys.drain();
+    expect(sys.deadLetters()).toBe(0);
+    // Delivered outbox rows are deleted.
+    expect(await rowsOf(sys.dbs.objects, 'domain_event', owner.tid)).toBe(0);
+
+    const ov = await sys.api<{
+      alerts: {severity: string; rid: string | null; status: string}[];
+      pendingRecommendations: unknown[];
+      quotas: Record<string, {used: number}>;
+    }>('GET', '/situation/overview?range=24h', {token: owner.token});
+    expect(ov.status).toBe(200);
+    const high = ov.body.alerts.filter(a => a.severity === 'HIGH');
+    expect(high.length).toBeGreaterThan(0);
+    expect(ov.body.quotas.objects.used).toBe(80);
+    expect(ov.body.pendingRecommendations).toEqual([]);
+
+    // The riskiest supplier is the focus.
+    const suppliers = await sys.api<{items: ObjectItem[]}>(
+      'GET',
+      '/objects?type=Supplier&limit=100',
+      {token: owner.token},
+    );
+    expect(suppliers.status).toBe(200);
+    const focus = [...suppliers.body.items].sort(
+      (a, b) => Number(b.props.riskScore) - Number(a.props.riskScore),
+    )[0];
+    expect(Number(focus.props.riskScore)).toBeGreaterThanOrEqual(70);
+
+    const links = await sys.api<{nodes: unknown[]; edges: unknown[]}>(
+      'GET',
+      `/objects/${focus.rid}/links?depth=2`,
+      {token: owner.token},
+    );
+    expect(links.status).toBe(200);
+    expect(links.body.edges.length).toBeGreaterThan(0);
+
+    const scenario = await sys.api<{
+      id: string;
+      result: {baseline: object; scenario: object; affected: unknown[]};
+    }>('POST', '/scenarios', {
+      token: owner.token,
+      body: {
+        name: 'Supplier outage',
+        perturbations: [{rid: focus.rid, property: 'capacity', change: -0.6}],
+      },
+    });
+    expect(scenario.status).toBe(201);
+    expect(scenario.body.result.affected.length).toBeGreaterThan(0);
+
+    const rec = await sys.api<{
+      id: string;
+      status: string;
+      rankedBy: string;
+      ranking: string[];
+      candidates: {id: string; actionType: string; target: string}[];
+    }>('POST', '/recommendations', {
+      token: owner.token,
+      body: {focus: focus.rid, scenarioId: scenario.body.id},
+    });
+    expect(rec.status).toBe(201);
+    expect(rec.body.status).toBe('Proposed');
+    expect(rec.body.rankedBy).toBe('rules');
+    expect(rec.body.ranking.length).toBeGreaterThan(0);
+
+    const pending = await sys.api<{pendingRecommendations: {id: string}[]}>(
+      'GET',
+      '/situation/overview?range=24h',
+      {token: owner.token},
+    );
+    expect(pending.body.pendingRecommendations.map(r => r.id)).toContain(
+      rec.body.id,
+    );
+
+    // Decision requires an Idempotency-Key; a replay returns the same result.
+    const noKey = await sys.api(
+      'POST',
+      `/recommendations/${rec.body.id}/decision`,
       {
-        authorization: 'Bearer nope',
+        token: owner.token,
+        body: {decision: 'confirm'},
       },
     );
-    expect(r.status).toBe(401);
-    expect(r.headers.get('content-type')).toMatch(/problem\+json/);
-    expect(r.body.code).toBe('AUTH_INVALID');
-  });
-
-  it('imports the supply-chain pack (schema + automations + KPIs)', async () => {
-    await h.ok('POST', '/ontology/packs:import', {packId: 'supply-chain'});
-    const model = await h.ok<CompiledModel>('GET', '/ontology/model');
-    expect(Object.keys(model.objectTypes).sort()).toEqual([
-      'Material',
-      'Product',
-      'Supplier',
-    ]);
-    const automations = await h.ok<unknown[]>('GET', '/automations');
-    expect(automations).toHaveLength(2);
-    const kpis = await h.ok<unknown[]>('GET', '/kpis');
-    expect(kpis).toHaveLength(4);
-  });
-
-  it('fuses three sources into one object graph', async () => {
-    for (const s of SOURCES) {
-      const src = await h.ok<SourceDto>('POST', '/sources', s.def);
-      sourceIds[s.file] = src.id;
-      const res = await h.api<{jobId: string}>(
-        'POST',
-        `/sources/${src.id}/batches`,
-        {seq: 0, last: true, records: readSample(s.file)},
-        {'idempotency-key': `load-${s.file}`},
-      );
-      expect(res.status).toBe(202);
-      await h.drain();
-      const job = await h.ok<JobDto>('GET', `/jobs/${res.body.jobId}`);
-      expect(job.status).toBe('Succeeded');
-      expect(job.rejected).toBe(0);
-      expect(job.received).toBe(readSample(s.file).length);
-    }
-    const suppliers = await h.ok<ObjectPage>(
-      'GET',
-      '/objects/Supplier?limit=50',
-    );
-    const materials = await h.ok<ObjectPage>(
-      'GET',
-      '/objects/Material?limit=50',
-    );
-    const products = await h.ok<ObjectPage>('GET', '/objects/Product?limit=50');
-    expect(suppliers.items).toHaveLength(5);
-    expect(materials.items).toHaveLength(4);
-    expect(products.items).toHaveLength(3);
-    // Stub objects created for link targets were filled by later sources.
-    expect(
-      materials.items.every(m => typeof m.props.category === 'string'),
-    ).toBe(true);
-
-    s002 = suppliers.items.find(o => o.primaryKey === 'S-002')!;
-    const detail = await h.ok<ObjectDto>(
-      'GET',
-      `/objects/rid/${encodeURIComponent(s002.rid)}?expand=links&depth=2`,
-    );
-    expect(detail.links?.some(l => l.type === 'supplies')).toBe(true);
-    expect(detail.provenance.riskScore.sourceId).toBe(
-      sourceIds['suppliers.csv'],
-    );
-  });
-
-  it('skips unchanged records on re-ingest (props_hash)', async () => {
-    const res = await h.ok<{jobId: string}>(
+    expect(noKey.status).toBe(400);
+    const key = 'e2e-confirm-000000000001';
+    const confirmed = await sys.api<{status: string; decidedBy: string}>(
       'POST',
-      `/sources/${sourceIds['products.csv']}/batches`,
+      `/recommendations/${rec.body.id}/decision`,
       {
-        seq: 0,
-        last: true,
-        records: readSample('products.csv'),
+        token: owner.token,
+        body: {decision: 'confirm'},
+        headers: {'idempotency-key': key},
       },
     );
-    await h.drain();
-    const job = await h.ok<JobDto>('GET', `/jobs/${res.jobId}`);
-    expect(job.skipped).toBe(3);
-    expect(job.upserted + job.merged).toBe(0);
-  });
-
-  it('computes KPIs on the cockpit overview', async () => {
-    const overview = await h.ok<SituationOverview & {dataHealth: unknown[]}>(
-      'GET',
-      '/situation/overview',
-    );
-    const demand = overview.kpis.find(k =>
-      JSON.stringify(k.name).includes('Total daily demand'),
-    );
-    expect(demand?.value).toBe(320 + 180 + 450);
-    expect(overview.dataHealth).toHaveLength(3);
-  });
-
-  it('simulates a supplier disruption deterministically', async () => {
-    const result = await h.ok<ScenarioResult>('POST', '/scenarios:run', {
-      perturbations: [{rid: s002.rid, property: 'capacity', change: -0.6}],
-    });
-    expect(result.scenario.fulfillableDemand).toBeLessThan(
-      result.baseline.fulfillableDemand,
-    );
-    expect(result.affected.some(a => a.type === 'Product')).toBe(true);
-  });
-
-  it('raises a HIGH alert and a recommendation when a supplier becomes risky', async () => {
-    const risky = readSample('suppliers.csv')
-      .filter(r => r.supplierId === 'S-002')
-      .map(r => ({...r, riskScore: '86'}));
-    await h.ok('POST', `/sources/${sourceIds['suppliers.csv']}/batches`, {
-      seq: 0,
-      last: true,
-      records: risky,
-    });
-    await h.drain();
-
-    const alerts = await h.ok<AlertDto[]>('GET', '/alerts?status=OPEN');
-    const high = alerts.filter(a => a.severity === 'HIGH');
-    expect(high).toHaveLength(1);
-    alert = high[0];
-    expect(alert.rid).toBe(s002.rid);
-
-    const recs = await h.ok<RecommendationDto[]>(
-      'GET',
-      '/recommendations?status=Proposed',
-    );
-    rec = recs.find(r => r.alertId === alert.id)!;
-    expect(rec).toBeDefined();
-    expect(rec.focus).toBe(s002.rid);
-    expect(rec.actions.length).toBeGreaterThan(0);
-    expect(rec.evidence.length).toBeGreaterThan(0);
-    // No LLM is configured → deterministic rule-based fallback.
-    expect(rec.model).toBe('rules');
-
-    const overview = await h.ok<SituationOverview>(
-      'GET',
-      '/situation/overview',
-    );
-    expect(overview.recommendations.some(r => r.id === rec.id)).toBe(true);
-  });
-
-  it('dedupes the alert while it is open', async () => {
-    const again = readSample('suppliers.csv')
-      .filter(r => r.supplierId === 'S-002')
-      .map(r => ({...r, riskScore: '90'}));
-    await h.ok('POST', `/sources/${sourceIds['suppliers.csv']}/batches`, {
-      seq: 0,
-      last: true,
-      records: again,
-    });
-    await h.drain();
-    const alerts = await h.ok<AlertDto[]>('GET', '/alerts?status=OPEN');
-    const high = alerts.filter(a => a.severity === 'HIGH');
-    expect(high).toHaveLength(1);
-    expect(high[0].hits).toBeGreaterThan(1);
-    const recs = await h.ok<RecommendationDto[]>('GET', '/recommendations');
-    expect(recs.filter(r => r.alertId === alert.id)).toHaveLength(1);
-  });
-
-  it('refuses to apply an approval-required action without a voucher', async () => {
-    const top = rec.actions.find(a => a.rank === 1)!;
-    const r = await h.api<{code: string}>(
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.status).toBe('Executed');
+    expect(confirmed.body.decidedBy).toBe('owner');
+    const replay = await sys.api<{status: string}>(
       'POST',
-      `/actions/${top.actionType}/apply`,
+      `/recommendations/${rec.body.id}/decision`,
       {
-        target: top.target,
-        params: top.params,
+        token: owner.token,
+        body: {decision: 'confirm'},
+        headers: {'idempotency-key': key},
       },
     );
-    expect(r.status).toBe(409);
-    expect(r.body.code).toBe('APPROVAL_REQUIRED');
+    expect(replay.body.status).toBe('Executed');
+
+    const top = rec.body.candidates.find(c => c.id === rec.body.ranking[0])!;
+    const log = await sys.api<{
+      items: {actor: string; recommendationId: string}[];
+    }>('GET', `/objects/${top.target}/actions`, {token: owner.token});
+    expect(log.status).toBe(200);
+    expect(log.body.items).toHaveLength(1);
+    expect(log.body.items[0]).toMatchObject({
+      actor: 'svc:decision-engine',
+      recommendationId: rec.body.id,
+    });
+    await sys.drain();
+    expect(sys.deadLetters()).toBe(0);
   });
 
-  it('approves and executes the recommendation (idempotently)', async () => {
-    const approved = await h.ok<RecommendationDto>(
-      'POST',
-      `/recommendations/${rec.id}/approve`,
-      undefined,
-      {'idempotency-key': `approve-${rec.id}`},
-    );
-    expect(approved.status).toBe('Executed');
-    const replay = await h.api<RecommendationDto>(
-      'POST',
-      `/recommendations/${rec.id}/approve`,
-      undefined,
-      {'idempotency-key': `approve-${rec.id}`},
-    );
-    expect(replay.status).toBe(200);
-    expect(replay.headers.get('idempotent-replay')).toBe('true');
+  it('isolates workspaces and enforces If-Match on objects', async () => {
+    const sys = await createSystem();
+    const a = await signUp(sys, 'a@example.com', '198.51.100.31');
+    const b = await signUp(sys, 'b@example.com', '198.51.100.32');
+    await sys.api('POST', '/workspace/sample-data', {token: a.token});
 
-    const second = await h.api<{code: string}>(
-      'POST',
-      `/recommendations/${rec.id}/approve`,
-    );
-    expect(second.status).toBe(409);
-    expect(second.body.code).toBe('INVALID_TRANSITION');
-
-    const top = approved.actions.find(a => a.rank === 1)!;
-    const log = await h.ok<{actionType: string; recommendationId?: string}[]>(
+    const list = await sys.api<{items: ObjectItem[]}>(
       'GET',
-      `/objects/rid/${encodeURIComponent(top.target)}/actions`,
+      '/objects?type=Supplier',
+      {token: a.token},
     );
-    expect(
-      log.some(
-        l => l.actionType === top.actionType && l.recommendationId === rec.id,
-      ),
-    ).toBe(true);
-    await h.drain();
-  });
-
-  it('evaluates the outcome after 24 hours', async () => {
-    h.clock.advance(DAY_MS + HOUR_MS);
-    await h.cron('decision', '0 1 * * *');
-    // The 15-minute access token expired; renew it with the 7-day refresh cookie.
-    const expired = await h.api<{code: string}>(
+    const obj = list.body.items[0];
+    // Workspace B cannot see A's object: same 404 as a missing one.
+    const foreign = await sys.api<{code: string}>(
       'GET',
-      `/recommendations/${rec.id}`,
-    );
-    expect(expired.body.code).toBe('AUTH_EXPIRED');
-    h.setToken((await h.ok<TokenPair>('POST', '/auth/refresh')).accessToken);
-    const evaluated = await h.ok<RecommendationDto>(
-      'GET',
-      `/recommendations/${rec.id}`,
-    );
-    expect(evaluated.status).toBe('Evaluated');
-    expect(evaluated.outcome).toBeDefined();
-  });
-
-  it('keeps tenants isolated and enforces roles', async () => {
-    const viewer = await h.ok<{user: {id: string}; temporaryPassword: string}>(
-      'POST',
-      '/users',
+      `/objects/${obj.rid}`,
       {
-        email: 'viewer@ontodecide.local',
-        name: 'Viewer',
-        role: 'Viewer',
-        password: 'Viewer12345A',
+        token: b.token,
       },
     );
-    expect(viewer.user.id).toBeTruthy();
-    h.clearAuth();
-    const login = await h.ok<TokenPair>('POST', '/auth/login', {
-      email: 'viewer@ontodecide.local',
-      password: 'Viewer12345A',
+    expect(foreign.status).toBe(404);
+    expect(foreign.body.code).toBe('NOT_FOUND');
+    const bList = await sys.api<{items: unknown[]}>('GET', '/objects', {
+      token: b.token,
     });
-    h.setToken(login.accessToken);
-    const r = await h.api<{code: string}>('POST', '/sources', SOURCES[0].def);
-    expect(r.status).toBe(403);
-    // Viewer lacks the PII marking: contactEmail is hidden.
-    const obj = await h.ok<ObjectDto>(
-      'GET',
-      `/objects/rid/${encodeURIComponent(s002.rid)}`,
-    );
-    expect(obj.props.contactEmail).toBeUndefined();
-    expect(obj.hiddenProps).toContain('contactEmail');
+    expect(bList.body.items).toEqual([]);
+
+    const got = await sys.api<ObjectItem>('GET', `/objects/${obj.rid}`, {
+      token: a.token,
+    });
+    expect(got.headers.get('etag')).toBe(`"v${got.body.version}"`);
+    const etag = got.headers.get('etag')!;
+    const patch = (ifMatch: string) =>
+      sys.api<ObjectItem & {code?: string}>('PATCH', `/objects/${obj.rid}`, {
+        token: a.token,
+        body: {status: 'watch'},
+        headers: {
+          'content-type': 'application/merge-patch+json',
+          'if-match': ifMatch,
+        },
+      });
+    const first = await patch(etag);
+    expect(first.status).toBe(200);
+    expect(first.body.props.status).toBe('watch');
+    // A second tab still holding the old ETag gets 412.
+    const stale = await patch(etag);
+    expect(stale.status).toBe(412);
+    expect(stale.body.code).toBe('PRECONDITION_FAILED');
   });
 
-  it('serves an OpenAPI 3.1 document', async () => {
-    const doc = await h.ok<{openapi: string; paths: Record<string, unknown>}>(
-      'GET',
-      '/openapi.json',
+  it('rejects foreign origins, missing tokens and owner Act-as', async () => {
+    const sys = await createSystem();
+    const owner = await signUp(sys, 'c@example.com');
+    const cross = await sys.api<{code: string}>(
+      'POST',
+      '/workspace/sample-data',
+      {
+        token: owner.token,
+        headers: {origin: 'https://evil.example'},
+      },
     );
-    expect(doc.openapi).toMatch(/^3\.1/);
-    expect(Object.keys(doc.paths).length).toBeGreaterThan(50);
+    expect(cross.status).toBe(403);
+    const anon = await sys.api<{code: string; traceId: string}>('GET', '/me');
+    expect(anon.status).toBe(401);
+    expect(anon.headers.get('content-type')).toContain(
+      'application/problem+json',
+    );
+    expect(anon.body.code).toBe('UNAUTHENTICATED');
+    expect(anon.body.traceId).toBeTruthy();
+    const actAs = await sys.api<{code: string}>('GET', '/me', {
+      token: owner.token,
+      headers: {'x-act-as-tenant': owner.tid},
+    });
+    expect(actAs.status).toBe(403);
+    expect(actAs.body.code).toBe('FORBIDDEN');
   });
 });
