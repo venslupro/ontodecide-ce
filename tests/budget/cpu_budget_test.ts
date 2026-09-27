@@ -27,6 +27,12 @@ const FACTOR = Number(
   process.env.CPU_BUDGET_FACTOR ?? (process.env.CI ? '3' : '2'),
 );
 const BUDGET_MS = 8 * FACTOR;
+/**
+ * Coverage instrumentation inflates CPU time several-fold, so the coverage
+ * run skips this file (CPU_BUDGET_SKIP=1) and CI runs it separately without
+ * instrumentation.
+ */
+const SKIP = process.env.CPU_BUDGET_SKIP === '1';
 const ZIP_BUDGET_MS = 10 * FACTOR;
 const WARMUP = 2;
 const RUNS = 7;
@@ -83,7 +89,7 @@ function materials(run: number): UpsertCmd[] {
   }));
 }
 
-describe('CPU budget', () => {
+describe.skipIf(SKIP)('CPU budget', () => {
   let sys: System;
   let tid: string;
   let rid: Rid;

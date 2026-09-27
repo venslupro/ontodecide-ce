@@ -112,9 +112,12 @@ describe('notifications bell', () => {
     const user = userEvent.setup();
     const {router} = renderApp('/account');
     const n = openCount();
-    const bell = await screen.findByRole('button', {
-      name: `通知（${n} 条未读）`,
-    });
+    // The count merges three async queries; allow slow CI runners.
+    const bell = await screen.findByRole(
+      'button',
+      {name: `通知（${n} 条未读）`},
+      {timeout: 5000},
+    );
     expect(within(bell).getByTestId('notification-count')).toHaveTextContent(
       String(n),
     );
@@ -133,7 +136,11 @@ describe('notifications bell', () => {
       expect(router.state.location.pathname).toMatch(/^\/objects\//),
     );
     expect(
-      await screen.findByRole('button', {name: `通知（${n - 1} 条未读）`}),
+      await screen.findByRole(
+        'button',
+        {name: `通知（${n - 1} 条未读）`},
+        {timeout: 5000},
+      ),
     ).toBeInTheDocument();
     const stored = JSON.parse(
       localStorage.getItem(`od-notif-seen:${OWNER_TID}`) ?? '[]',
@@ -145,7 +152,11 @@ describe('notifications bell', () => {
     const user = userEvent.setup();
     const {router} = renderApp('/account');
     await user.click(
-      await screen.findByRole('button', {name: /^通知（\d+ 条未读）$/}),
+      await screen.findByRole(
+        'button',
+        {name: /^通知（\d+ 条未读）$/},
+        {timeout: 5000},
+      ),
     );
     await user.click(await screen.findByRole('button', {name: '全部标为已读'}));
     await waitFor(() =>
@@ -164,7 +175,11 @@ describe('notifications bell', () => {
     renderApp('/account');
     const n = openCount() - 2;
     expect(
-      await screen.findByRole('button', {name: `通知（${n} 条未读）`}),
+      await screen.findByRole(
+        'button',
+        {name: `通知（${n} 条未读）`},
+        {timeout: 5000},
+      ),
     ).toBeInTheDocument();
   });
 });

@@ -51,6 +51,9 @@ jobs:
         run: node scripts/check_openapi.mjs apps/api-gateway/openapi.yaml
       - name: Tests with coverage gate (domain ≥ 80 % lines)
         run: pnpm test:coverage
+      # CPU budgets need uninstrumented code, so they run on their own.
+      - name: CPU budgets (no coverage instrumentation)
+        run: pnpm test:cpu
       - name: Script self-tests
         run: pnpm test:scripts
       - name: Build web
