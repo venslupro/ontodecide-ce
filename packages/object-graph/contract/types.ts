@@ -41,6 +41,14 @@ export interface ObjectDto {
   updatedAt: string;
   /** Properties whose stored value no longer matches the ontology type. */
   invalidProps?: string[];
+  /**
+   * Values of the ontology's declarative functions bound to this object type
+   * (JSONLogic over `props`), keyed by function apiName. Null when a function
+   * fails to evaluate.
+   */
+  derived?: Record<string, unknown>;
+  /** `GET /objects/{rid}?expand=links&depth=` only (api-gateway BFF). */
+  links?: GraphSlice;
 }
 
 /** Page of objects. */

@@ -6,7 +6,9 @@
  * and writes need it ACTIVE (409 CONFLICT). Owners sending the header get
  * 403. The first entry within the status cache window records
  * `act_as.enter` through IDENTITY.audit (failure → 503 UNAVAILABLE).
- * `admin` routes never act as another tenant and ignore the header.
+ * `admin` routes never act as another tenant and ignore the header. An
+ * admin session held by the recovery / passkey-setup gate cannot act as a
+ * tenant at all (403). The ctx carries the token's `sid`.
  */
 
 import {ACT_AS_HEADER, AppError, type CallCtx} from '@ontodecide/shared-kernel';
@@ -24,6 +26,7 @@ export function actAs(deps: GatewayDeps): Middleware {
       actor: {role: claims.role, userId: claims.sub, actingAs: false},
       requestId: s.requestId,
       locale: s.locale,
+      sid: claims.sid,
     };
     s.ctx = base;
     const target = s.request.headers.get(ACT_AS_HEADER)?.trim();
@@ -32,6 +35,20 @@ export function actAs(deps: GatewayDeps): Middleware {
       throw new AppError('FORBIDDEN', 'Act-as is for the admin only');
     }
     if (s.scope !== 'workspace' || s.route?.ownAccount) return next();
+    const gate = s.adminStatus;
+    if (gate?.recoveryPending || gate?.setupIncomplete) {
+      throw new AppError(
+        'FORBIDDEN',
+        gate.recoveryPending ? 'RECOVERY_PENDING' : 'PASSKEY_SETUP_INCOMPLETE',
+        {
+          extras: {
+            reason: gate.recoveryPending
+              ? 'RECOVERY_PENDING'
+              : 'PASSKEY_SETUP_INCOMPLETE',
+          },
+        },
+      );
+    }
     if (!/^[0-9A-Z]{26}$/.test(target)) throw new AppError('NOT_FOUND');
     const entry = await deps.actAs.get(target);
     if (!entry.status || entry.status.kind !== 'trial') {

@@ -153,7 +153,8 @@
     "overLimitReason": {
       "importRows": "Over limit: {left} import rows left today",
       "objects": "Over limit: room for {left} more objects",
-      "batchMax": "Over limit: at most {left} rows per day"
+      "batchMax": "Over limit: at most {left} rows per day",
+      "links": "Over limit: room for {left} more links"
     },
     "backToMapping": "Back to mapping",
     "rejectedNote": "Rejected rows are still submitted and count toward today's import rows; the server reports the same reasons."

@@ -1,6 +1,6 @@
 # Deploy (production only). Stages:
 #
-#   Build → Approve → services (dependency order) → web
+#   Build → Approve → services (dependency order) → web → smoke
 #
 # Build runs on every branch (pull requests) and on main: it renders the
 # production Wrangler configs from Terraform outputs, dry-runs every Worker
@@ -31,6 +31,8 @@
 #   api-gateway         → all six services above
 #   web (Pages)         → api-gateway (creates the Pages project if missing;
 #                         with APP_DOMAIN: pure static + custom domain)
+#   smoke               → web: scripts/smoke.mjs against the production URL
+#                         (read-only pre-launch checks; non-blocking)
 name: Deploy
 
 on:
@@ -326,3 +328,35 @@ jobs:
       - name: Deploy Pages
         working-directory: apps/web
         run: npx wrangler pages deploy dist --project-name ontodecide-ce --branch main
+
+  smoke:
+    name: Post-deploy smoke (non-blocking)
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Reports problems as warnings; a failed smoke never marks the rollout
+    # failed (it is already live) but must be looked at.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ env.SHA }}
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Smoke (scripts/smoke.mjs, read-only)
+        id: smoke
+        run: |
+          if [[ -n "${APP_DOMAIN}" ]]; then
+            base="https://app.${APP_DOMAIN}"
+            # With a custom domain *.pages.dev must answer 301 to it.
+            export SMOKE_PAGES_URL='https://ontodecide-ce.pages.dev'
+          else
+            base='https://ontodecide-ce.pages.dev'
+          fi
+          export SMOKE_BASE_URL="${base}" SMOKE_ORIGIN="${base}" SMOKE_READONLY=1
+          node scripts/smoke.mjs
+      - name: Report
+        if: failure() && steps.smoke.outcome == 'failure'
+        run: echo '::warning::Post-deploy smoke checks failed (see the smoke step)'

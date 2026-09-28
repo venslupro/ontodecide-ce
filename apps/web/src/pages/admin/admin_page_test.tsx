@@ -180,6 +180,105 @@ describe('AdminPage', () => {
     expect(req.headers['x-step-up']).toBe('su-1');
   });
 
+  it('deletes with archive (default) without a reason', async () => {
+    installWebAuthn();
+    const user = userEvent.setup();
+    renderAdmin();
+    await openManage(user, 'wang.yun@example.com', '删除账户');
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('可选，写入审计日志')).toBeInTheDocument();
+    const del = within(dialog).getByRole('button', {name: '验证并删除'});
+    expect(del).toBeEnabled();
+    await user.click(del);
+    await waitFor(() =>
+      expect(recorded('DELETE', '/admin/users/u1')).toHaveLength(1),
+    );
+    const [req] = recorded('DELETE', '/admin/users/u1');
+    expect(req.path).toBe('/admin/users/u1?archive=true');
+    expect(req.body).toBeUndefined();
+    expect(req.headers['x-step-up']).toBe('su-1');
+  });
+
+  it('shows objects / links per workspace (— for ARCHIVE_ONLY)', async () => {
+    renderAdmin();
+    const row = (await screen.findByText('wang.yun@example.com')).closest(
+      'tr',
+    )!;
+    expect(within(row).getByText('212 / 540')).toBeInTheDocument();
+    expect(
+      screen.getByRole('columnheader', {name: '对象 / 关系'}),
+    ).toBeInTheDocument();
+    const gone = screen.getByText('（账户已删除）').closest('tr')!;
+    expect(within(gone).getByText('—')).toBeInTheDocument();
+  });
+
+  it('ARCHIVE_ONLY rows have a manage menu: download ZIP and delete archive', async () => {
+    installWebAuthn();
+    const user = userEvent.setup();
+    renderAdmin();
+    await user.click(
+      await screen.findByRole('button', {
+        name: '管理 ws-01J8AAAAAAAAAAAAAAAAAAA2M',
+      }),
+    );
+    expect(
+      await screen.findByRole('menuitem', {name: '下载 ZIP'}),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', {name: '删除归档'}));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', {name: '删除归档'}));
+    await waitFor(() =>
+      expect(
+        recorded('DELETE', '/admin/archives/ws-01J8AAAAAAAAAAAAAAAAAAA2M'),
+      ).toHaveLength(1),
+    );
+    expect(recorded('DELETE', '/admin/archives/')[0].headers['x-step-up']).toBe(
+      'su-1',
+    );
+  });
+
+  it('opens the account details (GET /admin/users/{uid})', async () => {
+    const user = userEvent.setup();
+    renderAdmin();
+    await openManage(user, 'wang.yun@example.com', '账户详情');
+    const dialog = await screen.findByRole('dialog', {name: '账户详情'});
+    expect(
+      await within(dialog).findByText('Asia/Shanghai'),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('wang.yun@example.com'),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('212 / 540')).toBeInTheDocument();
+    expect(within(dialog).getByText('未到期')).toBeInTheDocument();
+    expect(recorded('GET', '/admin/users/u1')).toHaveLength(1);
+    expect(
+      recorded('GET', '/admin/users/u1')[0].headers['x-act-as-tenant'],
+    ).toBeUndefined();
+  });
+
+  it('shows operational warning chips from the overview', async () => {
+    const {server} = await import('../../test/server');
+    const {http, HttpResponse} = await import('msw');
+    const {overview} = await import('../../test/fixtures/platform');
+    server.use(
+      http.get('*/api/v1/admin/overview', () =>
+        HttpResponse.json({
+          ...overview(),
+          analyticsConfigured: false,
+          stuckArchives: 2,
+          signKeyRotationDue: true,
+        }),
+      ),
+    );
+    renderAdmin();
+    const list = await screen.findByRole('list', {name: '运维提醒'});
+    expect(within(list).getByText(/未配置账户分析/)).toBeInTheDocument();
+    expect(
+      within(list).getByText(/2 个归档卡住超过 24 小时/),
+    ).toBeInTheDocument();
+    expect(within(list).getByText(/B2 签名密钥需要轮换/)).toBeInTheDocument();
+  });
+
   it('revokes sessions with an Idempotency-Key and no step-up', async () => {
     const {get} = installWebAuthn();
     const user = userEvent.setup();

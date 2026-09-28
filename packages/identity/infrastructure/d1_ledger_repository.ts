@@ -145,6 +145,14 @@ export class D1LedgerRepository
       tenantId,
     ).run();
   }
+
+  async deleteOrphans(): Promise<number> {
+    const r = await this.sql(
+      `DELETE FROM purge_ledger WHERE phase = 'account_deleted'
+       AND NOT EXISTS (SELECT 1 FROM archive_index a WHERE a.tenant_id = purge_ledger.tenant_id)`,
+    ).run();
+    return r.meta.changes;
+  }
 }
 
 interface ArchiveRow {
@@ -244,11 +252,17 @@ export class D1ArchiveIndexRepository
   }
 
   async finalDelete(tenantId: string, now: number): Promise<void> {
+    // While the saga is still purging (phase ≠ account_deleted) its ledger
+    // must survive: only the ZIP index goes, the saga finishes the deletion.
     await this.db.batch([
       this.sql('DELETE FROM archive_index WHERE tenant_id = ?1', tenantId),
-      this.sql('DELETE FROM purge_ledger WHERE tenant_id = ?1', tenantId),
       this.sql(
-        `INSERT INTO tenant_tombstone (tenant_id, deleted_at) VALUES (?1, ?2)
+        "DELETE FROM purge_ledger WHERE tenant_id = ?1 AND phase = 'account_deleted'",
+        tenantId,
+      ),
+      this.sql(
+        `INSERT INTO tenant_tombstone (tenant_id, deleted_at)
+         SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM purge_ledger WHERE tenant_id = ?1)
          ON CONFLICT (tenant_id) DO UPDATE SET deleted_at = excluded.deleted_at`,
         tenantId,
         now,

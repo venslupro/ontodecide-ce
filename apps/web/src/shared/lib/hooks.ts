@@ -46,6 +46,10 @@ export function useInterval(fn: () => void, ms: number | null): void {
 /** Seconds left until `until` (epoch ms), ticking every second. */
 export function useCountdown(until: number | null): number {
   const [now, setNow] = useState(() => Date.now());
+  // A new target restarts from the real clock (not the last tick).
+  useEffect(() => {
+    setNow(Date.now());
+  }, [until]);
   useInterval(() => setNow(Date.now()), until && until > now ? 1000 : null);
   return until ? Math.max(0, Math.ceil((until - now) / 1000)) : 0;
 }

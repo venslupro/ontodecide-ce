@@ -29,6 +29,8 @@ export interface IdentityConfig {
   emailEncKey: string;
   bootstrapAdminEmail: string | null;
   bootstrapSetupCode: string | null;
+  /** B2_SIGN_KEY_ID (rotation check; only its hash is stored). */
+  b2SignKeyId?: string | null;
 }
 
 /** Admin archive links (POST /admin/archives/{tid}/download-link). */

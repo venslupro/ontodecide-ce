@@ -16,6 +16,7 @@ import type {
 } from '@ontodecide/shared-kernel';
 import type {
   AdminAuditDto,
+  AdminSessionStatus,
   AdminUserDto,
   AdminUserPatch,
   AdminUserRow,
@@ -61,6 +62,11 @@ export interface IdentityRpc {
   logout(ctx: CallCtx, sid: string): Promise<void>;
   /** api-gateway checks every admin request (revocation is immediate). */
   verifyAdminSession(sid: string): Promise<boolean>;
+  /**
+   * Like {@link verifyAdminSession}, plus the recovery / passkey-setup state
+   * that restricts what the session may do (api-gateway, every admin call).
+   */
+  adminSessionStatus(sid: string): Promise<AdminSessionStatus>;
   /** WebAuthn options for admin login (`login`) or a step-up (`step_up`). */
   passkeyOptions(
     auth: {preAuth: string} | {ctx: CallCtx},

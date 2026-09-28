@@ -1,19 +1,22 @@
 /**
  * @fileoverview 56 px top bar: global search, realtime status, 中文 | EN,
- * and the account chip (e-mail + 所有者 Owner / 平台管理员 Admin) with
- * account and sign-out entries.
+ * notifications bell, and the account chip (e-mail + 所有者 Owner / 平台管理员
+ * Admin) with account, "About" (build version) and sign-out entries.
  */
 
 import {useQueryClient} from '@tanstack/react-query';
 import {Link, useNavigate} from '@tanstack/react-router';
-import {LogOut, User} from 'lucide-react';
+import {Info, LogOut, User} from 'lucide-react';
+import {useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useSession} from '../../entities/session/store';
 import {logout} from '../../features/identity/api';
 import {LangSwitch} from '../../features/identity/components/lang_switch';
 import {cn} from '../../shared/lib/cn';
+import {APP_VERSION} from '../../shared/lib/version';
 import {releaseAll, useRealtimeStatus} from '../../shared/ws/stream';
 import type {WsState} from '../../shared/ws/ws_client';
+import {Dialog, DialogContent} from '../../shared/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown_menu';
 import {GlobalSearch} from './global_search';
+import {NotificationBell} from './notification_bell';
 
 const DOT: Record<WsState, string> = {
   idle: 'bg-dim',
@@ -50,9 +54,31 @@ export function RealtimeBadge() {
   );
 }
 
+/** "About" dialog: product and build version (`__APP_VERSION__`). */
+export function AboutDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange(v: boolean): void;
+}) {
+  const {t} = useTranslation('common');
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent title={t('about.title')} size="sm">
+        <p className="text-sm text-muted">{t('about.body')}</p>
+        <p className="mt-3 font-mono text-sm text-text">
+          {t('about.version', {version: APP_VERSION})}
+        </p>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** Account chip + menu. */
 export function AccountChip() {
   const {t} = useTranslation('common');
+  const [about, setAbout] = useState(false);
   const me = useSession(s => s.me);
   const role = useSession(s => s.role);
   const qc = useQueryClient();
@@ -70,46 +96,53 @@ export function AccountChip() {
     await navigate({to: '/login'});
   };
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        className="flex items-center gap-2.5 rounded-[10px] px-1.5 py-1 text-left hover:bg-panel-2"
-        aria-label={t('account.menu')}
-      >
-        <span
-          aria-hidden
-          className={cn(
-            'flex size-9 items-center justify-center rounded-full text-sm font-semibold text-white',
-            role === 'admin'
-              ? 'bg-[linear-gradient(135deg,var(--blue),var(--violet))]'
-              : 'bg-[linear-gradient(135deg,var(--violet),var(--blue))]',
-          )}
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          className="flex items-center gap-2.5 rounded-[10px] px-1.5 py-1 text-left hover:bg-panel-2"
+          aria-label={t('account.menu')}
         >
-          {(email[0] ?? '?').toUpperCase()}
-        </span>
-        <span className="hidden leading-tight md:block">
-          <span className="block max-w-56 truncate text-sm text-text">
-            {email}
+          <span
+            aria-hidden
+            className={cn(
+              'flex size-9 items-center justify-center rounded-full text-sm font-semibold text-white',
+              role === 'admin'
+                ? 'bg-[linear-gradient(135deg,var(--blue),var(--violet))]'
+                : 'bg-[linear-gradient(135deg,var(--violet),var(--blue))]',
+            )}
+          >
+            {(email[0] ?? '?').toUpperCase()}
           </span>
-          <span className="block text-[11px] text-muted">
-            {role === 'admin' ? t('role.adminFull') : t('role.ownerFull')}
+          <span className="hidden leading-tight md:block">
+            <span className="block max-w-56 truncate text-sm text-text">
+              {email}
+            </span>
+            <span className="block text-[11px] text-muted">
+              {role === 'admin' ? t('role.adminFull') : t('role.ownerFull')}
+            </span>
           </span>
-        </span>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent>
-        <DropdownMenuLabel>{email}</DropdownMenuLabel>
-        <DropdownMenuItem asChild>
-          <Link to="/account">
-            <User aria-hidden />
-            {t('nav.account')}
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void signOut()}>
-          <LogOut aria-hidden />
-          {t('actions.signOut')}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuLabel>{email}</DropdownMenuLabel>
+          <DropdownMenuItem asChild>
+            <Link to="/account">
+              <User aria-hidden />
+              {t('nav.account')}
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setAbout(true)}>
+            <Info aria-hidden />
+            {t('about.menu')}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => void signOut()}>
+            <LogOut aria-hidden />
+            {t('actions.signOut')}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <AboutDialog open={about} onOpenChange={setAbout} />
+    </>
   );
 }
 
@@ -121,6 +154,7 @@ export function TopBar() {
       <RealtimeBadge />
       <div className="ml-auto flex items-center gap-3">
         <LangSwitch />
+        <NotificationBell />
         <AccountChip />
       </div>
     </header>

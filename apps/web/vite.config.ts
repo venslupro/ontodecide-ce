@@ -1,7 +1,10 @@
 /**
  * @fileoverview Vite build for the OntoDecide CE SPA (Cloudflare Pages
  * project `ontodecide-ce`). Pages are lazily imported per route, so each
- * route becomes its own chunk; heavy libraries get stable chunks. In
+ * route becomes its own chunk; heavy libraries get stable chunks. A second
+ * HTML entry, `ended.html`, is the framework-free /ended page that
+ * Cloudflare Pages serves for a hard load of `/ended` (≤ 60 KB JS gzip,
+ * 前端详细设计 表 1; checked by `scripts/check_bundle.mjs`). In
  * development `/api` (REST and the WebSocket stream) is proxied to the
  * local api-gateway (`wrangler dev`, 127.0.0.1:8787) so the browser stays
  * same-origin exactly like production.
@@ -40,6 +43,10 @@ export default defineConfig({
     chunkSizeWarningLimit: 900,
     reportCompressedSize: true,
     rolldownOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        ended: fileURLToPath(new URL('./ended.html', import.meta.url)),
+      },
       output: {
         codeSplitting: {
           groups: [

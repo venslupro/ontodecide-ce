@@ -227,6 +227,45 @@ describe('CloudflareAnalytics', () => {
   });
 });
 
+describe('CloudflareAnalytics failures', () => {
+  const ok = {
+    workers: [{sum: {requests: 1}}],
+    d1: [{sum: {rowsWritten: 1}}],
+    ai: [{sum: {totalNeurons: 1}}],
+    queues: [{sum: {billableOperations: 1}}],
+  };
+  const run = (body: unknown, status = 200) =>
+    new CloudflareAnalytics(
+      'acc',
+      'tok',
+      new FetchMock(() => Response.json(body, {status})).fetch,
+    ).dailyUsage('2026-09-24');
+
+  it('throws on GraphQL errors, HTTP errors and unknown fields (never zeros)', async () => {
+    await expect(
+      run({data: {viewer: {accounts: [ok]}}, errors: [{message: 'x'}]}),
+    ).rejects.toThrow(/errors/);
+    await expect(run({}, 500)).rejects.toThrow(/500/);
+    await expect(run({data: {viewer: {accounts: []}}})).rejects.toThrow(
+      /account/,
+    );
+    await expect(
+      run({data: {viewer: {accounts: [{...ok, d1: undefined}]}}}),
+    ).rejects.toThrow(/d1/);
+    await expect(
+      run({
+        data: {viewer: {accounts: [{...ok, ai: [{sum: {neurons: 3}}]}]}},
+      }),
+    ).rejects.toThrow(/ai/);
+    expect(await run({data: {viewer: {accounts: [ok]}}})).toEqual({
+      workers: 1,
+      d1Writes: 1,
+      neurons: 1,
+      queues: 1,
+    });
+  });
+});
+
 describe('SimpleWebAuthn', () => {
   it('requires user verification and rejects malformed responses', async () => {
     const w = new SimpleWebAuthn({

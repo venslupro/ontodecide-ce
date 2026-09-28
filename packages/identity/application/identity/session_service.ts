@@ -15,7 +15,12 @@ import {
   type Clock,
 } from '@ontodecide/shared-kernel';
 import type {IssuedSession, RefreshResult, RequestMeta} from '../../contract';
-import {sessionExpiry, trialUsable} from '../../domain';
+import {
+  UPGRADED_RECOVERY_AMR,
+  recoveryPending,
+  sessionExpiry,
+  trialUsable,
+} from '../../domain';
 import type {WorkspaceDirectory} from '../tenancy/workspace_directory';
 import type {AccountService} from './account_service';
 import type {
@@ -101,7 +106,7 @@ export class SessionService {
       refreshToken,
       refreshExpiresAt: s.expiresAt,
       amr,
-      me: await this.accounts.me(a),
+      me: await this.accounts.me(a, s.sessionId),
     };
   }
 
@@ -160,12 +165,18 @@ export class SessionService {
     await this.sessions.delete(sid, ctx.actor.userId ?? ctx.sub);
   }
 
+  /** The live session `sid` when it belongs to the (unbanned) admin. */
+  async adminSessionOf(sid: string): Promise<SessionRecord | null> {
+    if (typeof sid !== 'string' || sid === '') return null;
+    const s = await this.sessions.findById(sid);
+    if (!s || s.expiresAt <= this.now()) return null;
+    const a = await this.accounts.accounts.findById(s.userId);
+    return a && a.role === 'admin' && a.bannedAt === null ? s : null;
+  }
+
   /** Whether an admin session is still valid (checked on every request). */
   async verifyAdmin(sid: string): Promise<boolean> {
-    const s = await this.sessions.findById(sid);
-    if (!s || s.expiresAt <= this.now()) return false;
-    const a = await this.accounts.accounts.findById(s.userId);
-    return !!a && a.role === 'admin' && a.bannedAt === null;
+    return (await this.adminSessionOf(sid)) !== null;
   }
 
   /** Active sessions of a user. */
@@ -178,12 +189,35 @@ export class SessionService {
     return this.sessions.deleteByUser(userId);
   }
 
+  /** The live session `sid` of `userId` (null when gone or foreign). */
+  async liveSession(
+    sid: string | undefined,
+    userId: string,
+  ): Promise<SessionRecord | null> {
+    if (typeof sid !== 'string' || sid === '') return null;
+    const s = await this.sessions.findById(sid);
+    if (!s || s.userId !== userId || s.expiresAt <= this.now()) return null;
+    return s;
+  }
+
   /**
-   * Whether the admin holds a live session signed in with a recovery code
-   * (read from D1, never from the caller): such a session may bind a new
-   * passkey without a step-up.
+   * Whether the caller's own session `sid` (read from D1, never from the
+   * token) was signed in with a recovery code and has not bound a passkey
+   * yet: only such a session may bind a new passkey without a step-up.
    */
-  recoverySessionActive(userId: string): Promise<boolean> {
-    return this.sessions.hasActiveRecoverySession(userId, this.now());
+  async recoverySessionActive(
+    userId: string,
+    sid: string | undefined,
+  ): Promise<boolean> {
+    const s = await this.liveSession(sid, userId);
+    return !!s && recoveryPending(s.amr);
+  }
+
+  /**
+   * After a recovery session bound a new passkey it counts as a passkey
+   * session (amr otp + passkey): the next refresh issues such a token.
+   */
+  async upgradeRecovery(sid: string): Promise<void> {
+    await this.sessions.setAmr(sid, [...UPGRADED_RECOVERY_AMR]);
   }
 }

@@ -1,8 +1,11 @@
 /**
  * @fileoverview PlatformAdmin maintenance run by the cron: controlled admin
- * changes written by the ops script (24 h cool-down, original address
- * notified), the hourly account-wide analytics check (≥ 80 % closes
- * sign-up) and the daily audit anchor in B2.
+ * changes written by the ops script `scripts/admin_pending_change.mjs`
+ * (24 h cool-down, original address notified; a new e-mail arrives as
+ * `{"emailEnc": AES-GCM(EMAIL_ENC_KEY, normalized e-mail)}`), the hourly
+ * account-wide analytics check (≥ 80 % closes sign-up; a failed read keeps
+ * the last snapshot), the B2 signing-key age check (every 12 ticks) and the
+ * daily audit anchor in B2.
  */
 
 import {
@@ -27,11 +30,13 @@ import type {
   BlobStore,
   PasskeyRepository,
   PendingChangeRepository,
+  SystemFlagRepository,
   UsageCounter,
 } from '../ports';
 import type {Secrets} from '../secrets';
 import {ANALYTICS_AT_KEY, ANALYTICS_KEYS} from './admin_service';
 import type {AuditService} from './audit_service';
+import {signKeyFlag, signKeyRotationDue} from './ops_flags';
 
 /** Collaborators of {@link MaintenanceService}. */
 export interface MaintenanceDeps {
@@ -42,8 +47,11 @@ export interface MaintenanceDeps {
   notification: NotificationService;
   audit: AuditService;
   usage: UsageCounter;
+  flags: SystemFlagRepository;
   blobs: BlobStore;
   analytics: AnalyticsPort | null;
+  /** B2_SIGN_KEY_ID (only its hash is stored). */
+  signKeyId: string | null;
   secrets: Secrets;
   clock: Clock;
   logger: Logger;
@@ -87,7 +95,7 @@ export class MaintenanceService {
       if (c.notifiedAt === null) continue;
       if (now < c.requestedAt + PENDING_CHANGE_COOLDOWN_MS) continue;
       if (c.kind === 'email') {
-        const email = parseJson<{email?: string}>(c.payload, {}).email;
+        const email = await this.newEmailOf(c.payload);
         if (!email) {
           this.d.logger.error('admin.pending_change_invalid', {id: c.id});
           continue;
@@ -111,16 +119,44 @@ export class MaintenanceService {
     }
   }
 
-  /** Hourly: account-wide usage snapshot; ≥ 80 % closes sign-up for today. */
+  /**
+   * The new address of an `email` change: `{"emailEnc"}` (written by the
+   * ops script, AES-GCM with EMAIL_ENC_KEY) or a legacy `{"email"}`.
+   */
+  private async newEmailOf(payload: string | null): Promise<string | null> {
+    const p = parseJson<{email?: unknown; emailEnc?: unknown}>(payload, {});
+    if (typeof p.emailEnc === 'string' && p.emailEnc !== '') {
+      try {
+        const email = await this.d.secrets.decryptEmail(p.emailEnc);
+        return email.includes('@') ? email : null;
+      } catch {
+        return null;
+      }
+    }
+    return typeof p.email === 'string' && p.email.includes('@')
+      ? p.email
+      : null;
+  }
+
+  /**
+   * Hourly: account-wide usage snapshot; ≥ 80 % closes sign-up for today.
+   * Without CF_ANALYTICS_TOKEN / CF_ACCOUNT_ID nothing is recorded
+   * (overview: analyticsConfigured false, analyticsAt null). A failed or
+   * malformed GraphQL answer logs `analytics.failed` and keeps the last
+   * snapshot (never zeros).
+   */
   async analyticsCheck(): Promise<boolean> {
-    if (!this.d.analytics) return false;
+    if (!this.d.analytics) {
+      this.d.logger.warn('analytics.not_configured');
+      return false;
+    }
     const now = this.now();
     const day = utcDay(new Date(now));
     let snapshot: Partial<Record<AnalyticsMetric, number>>;
     try {
       snapshot = await this.d.analytics.dailyUsage(day);
     } catch (e) {
-      this.d.logger.warn('admin.analytics_failed', {
+      this.d.logger.error('analytics.failed', {
         error: String(e).slice(0, 120),
       });
       return false;
@@ -160,6 +196,24 @@ export class MaintenanceService {
       await this.d.usage.adjust(day, 'audit_anchor', -1);
       throw e;
     }
+  }
+
+  /**
+   * Every 12 ticks: records when the active B2 signing key was first seen
+   * and logs `b2.sign_key_rotation_due` once it is older than ~30 days
+   * (the overview shows `signKeyRotationDue`). Returns whether it is due.
+   */
+  async signKeyCheck(): Promise<boolean> {
+    if (!this.d.signKeyId) return false;
+    const now = this.now();
+    const key = await signKeyFlag(this.d.signKeyId);
+    await this.d.flags.setOnce(key, 0, now);
+    const f = await this.d.flags.get(key);
+    if (!f || !signKeyRotationDue(f.at, now)) return false;
+    this.d.logger.warn('b2.sign_key_rotation_due', {
+      ageDays: Math.floor((now - f.at) / DAY_MS),
+    });
+    return true;
   }
 
   /** Whether this cron tick is the first of its hour. */

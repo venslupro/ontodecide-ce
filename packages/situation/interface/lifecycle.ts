@@ -16,7 +16,7 @@ export function createSituationLifecycle(
       'exportTenant' | 'purgeTenant' | 'countTenant' | 'closeStreams'
     >
   >,
-): Required<TenantLifecycleRpc> {
+): Required<Omit<TenantLifecycleRpc, 'tenantStats'>> {
   return {
     async exportTenant(tid, _cursor) {
       const text = await rooms(tid).exportTenant(tid);

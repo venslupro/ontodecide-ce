@@ -66,6 +66,13 @@ export interface MeDto {
   passkeys?: number;
   /** Admin only: recovery codes left. */
   recoveryCodesLeft?: number;
+  /** When the current session (refresh token) expires; admin ≤ 8 h. */
+  sessionExpiresAt?: string;
+  /**
+   * Admin only: the session was opened with a recovery code and must bind a
+   * new passkey before anything else is allowed.
+   */
+  recoveryPending?: boolean;
 }
 
 /** An issued session. api-gateway turns `refreshToken` into the cookie. */
@@ -128,6 +135,19 @@ export interface PasskeyRegistered {
   session?: IssuedSession;
 }
 
+/**
+ * State of an admin session, checked by api-gateway on every admin request.
+ * `recoveryPending`: opened with a recovery code and no passkey bound since
+ * (only GET /me, the passkey list / options / registration and logout are
+ * allowed). `setupIncomplete`: fewer than 2 passkeys or no recovery codes
+ * issued yet (only GET /me, passkey registration, step-up and logout).
+ */
+export interface AdminSessionStatus {
+  valid: boolean;
+  recoveryPending: boolean;
+  setupIncomplete: boolean;
+}
+
 /** Status of a workspace for api-gateway (Act-as checks, cached ≤ 60 s). */
 export interface WorkspaceStatusDto {
   kind: WorkspaceKind;
@@ -160,6 +180,15 @@ export interface PlatformOverview {
   freeQuota: {key: FreeQuotaKey; used: number; limit: number}[];
   /** When the account-wide analytics were last read. */
   analyticsAt: string | null;
+  /**
+   * False when CF_ANALYTICS_TOKEN / CF_ACCOUNT_ID are not configured (the
+   * hourly free-tier check cannot run; `analyticsAt` stays null).
+   */
+  analyticsConfigured?: boolean;
+  /** Archive sagas whose current step has failed for ≥ 24 h. */
+  stuckArchives?: number;
+  /** The active B2 signing key is older than ~30 days (rotate it). */
+  signKeyRotationDue?: boolean;
   recentActions: {
     at: string;
     action: string;
@@ -179,6 +208,9 @@ export interface AdminUserRow {
   zipExpiresAt: string | null;
   sessions: number;
   banned: boolean;
+  /** Objects / links held by the workspace (0 once purged). */
+  objects: number;
+  links: number;
 }
 
 /** GET /admin/users/{uid}. */

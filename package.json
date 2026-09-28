@@ -2,7 +2,7 @@
   "name": "ontodecide-ce",
   "version": "2.4.0",
   "private": true,
-  "description": "OntoDecide CE — ontology-driven decision intelligence on the Cloudflare free tier.",
+  "description": "OntoDecide CE \u2014 ontology-driven decision intelligence on the Cloudflare free tier.",
   "type": "module",
   "packageManager": "pnpm@9.12.0",
   "engines": {
@@ -16,25 +16,31 @@
     "format": "prettier --write .",
     "test": "vitest run && pnpm test:scripts",
     "test:scripts": "node --test 'scripts/*_test.mjs'",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "CPU_BUDGET_SKIP=1 vitest run --coverage",
     "test:e2e": "pnpm --filter @ontodecide/web test:e2e",
     "build:web": "pnpm --filter @ontodecide/web build",
     "gen:wrangler": "node scripts/gen_wrangler.mjs",
     "gen:secrets": "node scripts/gen_secrets.mjs",
     "dev": "bash scripts/dev.sh",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "test:cpu": "vitest run --project backend tests/budget/cpu_budget_test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260923.1",
+    "@seriousme/openapi-schema-validator": "^2.11.0",
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^4.1.11",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^2.1.1",
     "dependency-cruiser": "^18.4.0",
     "eslint": "^9.37.0",
+    "fflate": "^0.8.3",
     "gts": "^7.0.0",
     "prettier": "^3.6.2",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.1",
     "vitest": "^4.1.11",
-    "wrangler": "^4.137.0"
+    "wrangler": "^4.137.0",
+    "yaml": "^2.9.1"
   }
 }

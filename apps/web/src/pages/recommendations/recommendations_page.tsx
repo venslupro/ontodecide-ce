@@ -32,7 +32,7 @@ import {
   useSearchPatch,
 } from '../../features/object-graph/search_params';
 import {isApiError} from '../../shared/api/errors';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {cn} from '../../shared/lib/cn';
 import {fmt} from '../../shared/lib/format';
 import {Button} from '../../shared/ui/button';
@@ -59,6 +59,7 @@ function RecList({tab, selectedId}: {tab: RecTab; selectedId?: string}) {
   if (q.error)
     return (
       <ErrorView
+        traceId={errorTraceId(q.error)}
         title={t('list.error')}
         detail={errorMessage(q.error, t)}
         onRetry={() => void q.refetch()}
@@ -141,6 +142,7 @@ function DetailPane({id}: {id?: string}) {
     return (
       <Card className="p-5">
         <ErrorView
+          traceId={errorTraceId(q.error)}
           title={
             isApiError(q.error, 'NOT_FOUND')
               ? t('detail.notFound')

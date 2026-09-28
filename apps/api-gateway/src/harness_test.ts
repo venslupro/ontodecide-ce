@@ -138,6 +138,11 @@ export function makeGateway(
     const audits: TestGateway['audits'] = [];
     const identity: Fake<IdentityRpc> = {
       verifyAdminSession: async () => true,
+      adminSessionStatus: async () => ({
+        valid: true,
+        recoveryPending: false,
+        setupIncomplete: false,
+      }),
       workspaceStatus: async tid =>
         tid === TARGET_TID ? {kind: 'trial', status: 'ACTIVE'} : null,
       audit: async (ctx, entry) => {

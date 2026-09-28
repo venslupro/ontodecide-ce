@@ -6,12 +6,15 @@
  * impact graph; right: 基线 / 情景 / 情景 + 动作 comparison computed by the
  * deterministic simulator. 「生成 AI 建议」 shows today's remaining AI
  * rankings; when used up the recommendation is still generated, rule ranked.
+ * 「保存情景」 names the scenario: saving = running it with that name
+ * (POST /scenarios stores every run), confirmed with a toast and badge.
+ * 「延误时长」 perturbations are converted with the objects' current values.
  */
 
 import {resolveText} from '@ontodecide/shared-kernel';
 import {useQueries} from '@tanstack/react-query';
 import {useLocation, useNavigate, useParams} from '@tanstack/react-router';
-import {BarChart3, Play, Sparkles} from 'lucide-react';
+import {BarChart3, Play, Save, Sparkles} from 'lucide-react';
 import {useEffect, useMemo, useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {isExhausted, useQuotas} from '../../entities/quota';
@@ -39,6 +42,8 @@ import {
   candidateKey,
   candidateOptions,
   type CandidateSelection,
+  type CurrentValue,
+  draftChange,
   isCompleteDraft,
   newPerturbation,
   type PerturbationDraft,
@@ -58,11 +63,14 @@ import {
   QuotaNotice,
   QuotaRemaining,
 } from '../../features/situation/components/quota_notice';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {isApiError} from '../../shared/api/errors';
 import {StatusBadge} from '../../shared/ui/badge';
 import {Button} from '../../shared/ui/button';
 import {Card, Panel} from '../../shared/ui/card';
+import {Dialog, DialogContent} from '../../shared/ui/dialog';
+import {Field, Input} from '../../shared/ui/input';
+import {toast} from '../../shared/ui/toast';
 import {EmptyState, ErrorView} from '../../shared/ui/empty_state';
 import {PageHeader} from '../../shared/ui/page_header';
 import {NativeSelect} from '../../shared/ui/select';
@@ -92,6 +100,9 @@ export function ScenarioPage() {
   const [selection, setSelection] = useState<CandidateSelection>({});
   const [initFor, setInitFor] = useState<string | null>(null);
   const [pickedCandidate, setPickedCandidate] = useState<string>();
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [savedId, setSavedId] = useState<string | null>(null);
 
   // Load the stored scenario into the editor (once per id).
   useEffect(() => {
@@ -172,10 +183,38 @@ export function ScenarioPage() {
     ? result?.withActions?.[shownCandidate]
     : undefined;
 
-  const canRun = drafts.some(isCompleteDraft);
+  const current = useMemo<CurrentValue>(() => {
+    const byRid = new Map<string, Record<string, unknown>>(
+      objects.filter(o => o.data).map(o => [o.data!.rid, o.data!.props]),
+    );
+    return (rid, prop) => byRid.get(rid)?.[prop];
+  }, [objects]);
+  const unitOf = (rid: string, prop: string) =>
+    model.byName[typeOfRid(rid) ?? '']?.properties.find(p => p.apiName === prop)
+      ?.unit;
+  const runnable = drafts.filter(
+    d =>
+      isCompleteDraft(d) &&
+      draftChange(d, current, unitOf(d.rid, d.property)) !== null,
+  );
+  const canRun = runnable.length > 0;
+  const input = (name?: string) =>
+    toScenarioInput(drafts, selection, options, name, current, unitOf);
   const onRun = () => {
-    run.mutate(toScenarioInput(drafts, selection, options), {
+    run.mutate(input(), {
       onSuccess: s => void navigate({to: '/scenarios/$id', params: {id: s.id}}),
+    });
+  };
+  const onSave = () => {
+    const name = saveName.trim();
+    if (!name) return;
+    run.mutate(input(name), {
+      onSuccess: s => {
+        setSaveOpen(false);
+        setSavedId(s.id);
+        toast.success(t('save.saved', {name: s.name}));
+        void navigate({to: '/scenarios/$id', params: {id: s.id}});
+      },
     });
   };
 
@@ -199,6 +238,7 @@ export function ScenarioPage() {
   if (id && scenario.error)
     return (
       <ErrorView
+        traceId={errorTraceId(scenario.error)}
         title={t('loadError')}
         detail={errorMessage(scenario.error, t)}
         onRetry={
@@ -216,16 +256,34 @@ export function ScenarioPage() {
         title={dto?.name ?? t('newTitle')}
         description={dto ? undefined : t('description')}
         badges={
-          result ? (
-            <StatusBadge level={RISK_LEVEL[result.riskLevel]}>
-              {t(`riskLevel.${result.riskLevel}`)}
-            </StatusBadge>
+          result || (savedId && savedId === id) ? (
+            <>
+              {result && (
+                <StatusBadge level={RISK_LEVEL[result.riskLevel]}>
+                  {t(`riskLevel.${result.riskLevel}`)}
+                </StatusBadge>
+              )}
+              {savedId && savedId === id && (
+                <StatusBadge level="good">{t('save.savedBadge')}</StatusBadge>
+              )}
+            </>
           ) : undefined
         }
         actions={
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-2">
               <QuotaRemaining quota="aiRecsToday" />
+              <Button
+                variant="outline"
+                disabled={!canRun || run.isPending}
+                onClick={() => {
+                  setSaveName(dto?.name ?? '');
+                  setSaveOpen(true);
+                }}
+              >
+                <Save aria-hidden />
+                {t('save.button')}
+              </Button>
               <Button
                 variant="primary"
                 loading={generate.isPending}
@@ -257,6 +315,7 @@ export function ScenarioPage() {
             onChange={setDrafts}
             model={model}
             titles={titles}
+            current={current}
           />
           <CandidateList
             options={options}
@@ -275,6 +334,12 @@ export function ScenarioPage() {
               {t('run')}
             </Button>
             {!canRun && <p className="text-xs text-dim">{t('runHint')}</p>}
+            {canRun &&
+              runnable.length < drafts.filter(isCompleteDraft).length && (
+                <p className="text-xs text-warn">
+                  {t('perturb.delayNoCurrent')}
+                </p>
+              )}
             {run.error && (
               <p role="alert" className="text-xs text-crit">
                 {errorMessage(run.error, t)}
@@ -282,6 +347,52 @@ export function ScenarioPage() {
             )}
           </div>
         </Card>
+
+        <Dialog open={saveOpen} onOpenChange={setSaveOpen}>
+          <DialogContent
+            title={t('save.title')}
+            description={t('save.hint')}
+            size="sm"
+            footer={
+              <>
+                <Button variant="ghost" onClick={() => setSaveOpen(false)}>
+                  {t('common:actions.cancel')}
+                </Button>
+                <Button
+                  variant="primary"
+                  loading={run.isPending}
+                  disabled={!saveName.trim() || run.isPending}
+                  onClick={onSave}
+                >
+                  {t('save.submit')}
+                </Button>
+              </>
+            }
+          >
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                onSave();
+              }}
+            >
+              <Field label={t('save.nameLabel')} htmlFor="scenario-name">
+                <Input
+                  id="scenario-name"
+                  maxLength={120}
+                  autoFocus
+                  placeholder={t('save.namePlaceholder')}
+                  value={saveName}
+                  onChange={e => setSaveName(e.target.value)}
+                />
+              </Field>
+            </form>
+            {run.error && saveOpen && (
+              <p role="alert" className="mt-2 text-xs text-crit">
+                {errorMessage(run.error, t)}
+              </p>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <ImpactPanel result={result} focusRid={dto?.perturbations[0]?.rid} />
 

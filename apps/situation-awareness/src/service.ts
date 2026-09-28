@@ -16,7 +16,7 @@ export {createRoomCore} from './container';
 
 /** The service with every entry point present. */
 export interface SituationService extends ServiceModule<SituationRpc> {
-  lifecycle: Required<TenantLifecycleRpc>;
+  lifecycle: Required<Omit<TenantLifecycleRpc, 'tenantStats'>>;
   queue: NonNullable<ServiceModule<SituationRpc>['queue']>;
   fetch: NonNullable<ServiceModule<SituationRpc>['fetch']>;
 }

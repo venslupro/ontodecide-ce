@@ -33,9 +33,19 @@ export interface SessionState {
   actAs?: ActAsTarget;
   /** serverTime − localTime, from response Date headers. */
   clockSkewMs: number;
-  /** Admin only: epoch ms when the 8-hour admin session ends. */
+  /**
+   * Admin only: server-time epoch ms when the 8-hour admin session ends,
+   * started locally at sign-in. `me.sessionExpiresAt` wins when present
+   * (see {@link adminSessionEnd}); this is the fallback.
+   */
   adminSessionEndsAt?: number;
+  /**
+   * Admin session gate hit by a request (403 RECOVERY_PENDING /
+   * PASSKEY_SETUP_INCOMPLETE); see {@link adminSetupNeeded}.
+   */
+  adminGate?: 'recovery' | 'setup';
   sidebarCollapsed: boolean;
+  setAdminGate(gate: 'recovery' | 'setup' | undefined): void;
   setGrant(grant: {accessToken: string; expiresIn: number; me?: Me}): void;
   setMe(me: Me): void;
   signOut(): void;
@@ -87,7 +97,11 @@ export const useSession = create<SessionState>(set => ({
       me: undefined,
       actAs: undefined,
       adminSessionEndsAt: undefined,
+      adminGate: undefined,
     });
+  },
+  setAdminGate(gate) {
+    set({adminGate: gate});
   },
   setActAs(target) {
     set({actAs: target});
@@ -119,6 +133,40 @@ export function useIsAdmin(): boolean {
 /** Server-corrected now (ms). */
 export function serverNow(): number {
   return Date.now() + useSession.getState().clockSkewMs;
+}
+
+/**
+ * Whether the admin must bind a passkey before anything else (前端详细设计
+ * 6.3.7; 风险表 "首次登录流程可重入"):
+ * - `recovery`: signed in with a recovery code (`me.recoveryPending`, or the
+ *   gateway answered 403 RECOVERY_PENDING) — bind a new passkey, no step-up;
+ * - `setup`: fewer than 2 passkeys or no recovery codes yet (or 403
+ *   PASSKEY_SETUP_INCOMPLETE) — bind another one after a step-up.
+ * null when nothing is required (and always for owners).
+ */
+export function adminSetupNeeded(
+  s: Pick<SessionState, 'role' | 'me' | 'adminGate'>,
+): 'recovery' | 'setup' | null {
+  if (s.role !== 'admin') return null;
+  if (s.me?.recoveryPending || s.adminGate === 'recovery') return 'recovery';
+  const me = s.me;
+  if (s.adminGate === 'setup') return 'setup';
+  if (me && me.passkeys !== undefined && me.passkeys < 2) return 'setup';
+  if (me && me.recoveryCodesLeft === 0) return 'setup';
+  return null;
+}
+
+/**
+ * When the admin session ends (server-time epoch ms): GET /me
+ * `sessionExpiresAt` — which survives page reloads — else the local 8 h
+ * timer started at sign-in. undefined for owners.
+ */
+export function adminSessionEnd(
+  s: Pick<SessionState, 'role' | 'me' | 'adminSessionEndsAt'>,
+): number | undefined {
+  if (s.role !== 'admin') return undefined;
+  const at = s.me?.sessionExpiresAt ? Date.parse(s.me.sessionExpiresAt) : NaN;
+  return Number.isNaN(at) ? s.adminSessionEndsAt : at;
 }
 
 /**

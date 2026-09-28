@@ -42,7 +42,7 @@ import {
   useLooseSearch,
 } from '../../features/object-graph/search_params';
 import {useAckAlert, useAlerts} from '../../features/situation/api';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {isApiError} from '../../shared/api/errors';
 import {Badge, SeverityBadge} from '../../shared/ui/badge';
 import {Button} from '../../shared/ui/button';
@@ -124,6 +124,7 @@ export function ObjectViewPage() {
   if (obj.error || !obj.data)
     return (
       <ErrorView
+        traceId={errorTraceId(obj.error)}
         detail={errorMessage(obj.error, t)}
         onRetry={() => void obj.refetch()}
       />
@@ -232,7 +233,10 @@ export function ObjectViewPage() {
           }
         >
           {links.error ? (
-            <ErrorView detail={errorMessage(links.error, t)} />
+            <ErrorView
+              traceId={errorTraceId(links.error)}
+              detail={errorMessage(links.error, t)}
+            />
           ) : (
             <LinkGraph
               slice={links.data}

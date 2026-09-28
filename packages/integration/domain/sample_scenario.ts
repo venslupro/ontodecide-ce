@@ -274,11 +274,13 @@ export function sampleDatasets(): SampleDataset[] {
 export const SAMPLE_ROWS = 80;
 
 /**
- * Estimated D1 rows written by object-graph for one sample load (objects,
- * index rows, links, provenance; 详细设计 6.11.3 ≈ 1,100), charged against
- * the global daily seed budget.
+ * D1 rows written by one sample load, charged against the global daily seed
+ * budget. The design estimates ≈ 1,100 (详细设计 6.11.3); the write-budget
+ * regression (tests/budget/write_budget_test.ts) measures ≈ 1,275 because
+ * every secondary index row is billed (UNIQUE(type, primary key),
+ * ix_prop_value, ix_link_dst), so the reservation uses the measured value.
  */
-export const SAMPLE_SEED_ROWS = 1100;
+export const SAMPLE_SEED_ROWS = 1300;
 
 /** Renders a dataset as CSV (header from the first row). */
 export function toCsv(rows: readonly Row[]): string {

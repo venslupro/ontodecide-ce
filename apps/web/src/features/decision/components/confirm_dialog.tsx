@@ -17,6 +17,7 @@ import {useTranslation} from 'react-i18next';
 import {idempotencyKey} from '../../../shared/api/client';
 import {errorMessage} from '../../../shared/api/error_message';
 import {isApiError} from '../../../shared/api/errors';
+import {useRetryAfter} from '../../../shared/api/rate_limit';
 import {Button} from '../../../shared/ui/button';
 import {Dialog, DialogContent} from '../../../shared/ui/dialog';
 import {toast} from '../../../shared/ui/toast';
@@ -68,8 +69,10 @@ function ConfirmContent({
   const decide = useDecide();
   const top = topCandidate(rec);
   const conflict = isApiError(error, 'CONFLICT');
+  const limit = useRetryAfter('decision');
 
   const submit = () => {
+    if (limit.limited) return;
     setError(null);
     decide.mutate(
       {id: rec.id, decision: 'confirm', idempotencyKey: key},
@@ -80,6 +83,7 @@ function ConfirmContent({
           onOpenChange(false);
         },
         onError: e => {
+          limit.trap(e);
           setError(e);
           if (isApiError(e, 'CONFLICT'))
             void qc.invalidateQueries({queryKey: decisionKeys.rec(rec.id)});
@@ -101,10 +105,14 @@ function ConfirmContent({
             <Button
               variant="primary"
               loading={decide.isPending}
-              disabled={decide.isPending}
+              disabled={decide.isPending || limit.limited}
               onClick={submit}
             >
-              {error ? t('confirm.retry') : t('confirm.submit')}
+              {limit.limited
+                ? t('common:rateLimit.retryIn', {seconds: limit.seconds})
+                : error
+                  ? t('confirm.retry')
+                  : t('confirm.submit')}
             </Button>
           )}
         </>

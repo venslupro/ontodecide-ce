@@ -2,13 +2,16 @@
  * @fileoverview Stored object and link shapes and the read projection that
  * turns stored rows into DTOs against the current ontology (详细设计 6.11.3):
  * properties absent from the ontology are dropped, values that no longer
- * match their declared type are reported in `invalidProps`.
+ * match their declared type are reported in `invalidProps`, and the
+ * ontology's declarative functions are evaluated into `derived`.
  */
 
+import {evalLogic} from '@ontodecide/shared-kernel';
 import type {Provenance, Rid} from '@ontodecide/shared-kernel';
 import type {
   CompiledObjectType,
   CompiledSchema,
+  FunctionDef,
   PropertyDef,
 } from '@ontodecide/ontology/contract';
 import type {GraphNode, ObjectDto} from '../contract/types';
@@ -98,12 +101,67 @@ export function projectProps(
   return out;
 }
 
+/**
+ * Declarative functions grouped by object type, computed once per compiled
+ * schema object (the schema provider loads one per call, so a list of ≤ 300
+ * objects groups once). evalLogic interprets the JSON expression directly;
+ * there is nothing further to precompile.
+ */
+const FUNCTIONS_BY_TYPE = new WeakMap<
+  CompiledSchema,
+  Map<string, FunctionDef[]>
+>();
+
+function functionsOf(schema: CompiledSchema, type: string): FunctionDef[] {
+  let byType = FUNCTIONS_BY_TYPE.get(schema);
+  if (!byType) {
+    byType = new Map();
+    for (const fn of Object.values(schema.functions ?? {})) {
+      if (!fn.objectType) continue;
+      const list = byType.get(fn.objectType) ?? [];
+      list.push(fn);
+      byType.set(fn.objectType, list);
+    }
+    FUNCTIONS_BY_TYPE.set(schema, byType);
+  }
+  return byType.get(type) ?? [];
+}
+
+/**
+ * Evaluates the declarative functions bound to an object type (详细设计
+ * 6.11.1, JSONLogic safe subset, ≤ 1,000 steps each) over its projected
+ * properties. A function that throws yields null. Undefined when the type
+ * has no functions.
+ */
+export function deriveValues(
+  schema: CompiledSchema,
+  type: string,
+  props: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const fns = functionsOf(schema, type);
+  if (!fns.length) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const fn of fns) {
+    try {
+      const v = evalLogic(fn.expr, props);
+      out[fn.apiName] =
+        v === undefined || (typeof v === 'number' && !Number.isFinite(v))
+          ? null
+          : v;
+    } catch {
+      out[fn.apiName] = null;
+    }
+  }
+  return out;
+}
+
 /** Builds the DTO of a stored object. */
 export function toObjectDto(
   schema: CompiledSchema,
   o: StoredObject,
 ): ObjectDto {
   const p = projectProps(schema.objectTypes[o.type], o.props, o.provenance);
+  const derived = deriveValues(schema, o.type, p.props);
   return {
     rid: o.rid,
     type: o.type,
@@ -114,6 +172,7 @@ export function toObjectDto(
     version: o.version,
     updatedAt: new Date(o.updatedAt).toISOString(),
     ...(p.invalidProps.length ? {invalidProps: p.invalidProps} : {}),
+    ...(derived ? {derived} : {}),
   };
 }
 

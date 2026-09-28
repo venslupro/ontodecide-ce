@@ -22,7 +22,15 @@
     "remove": "移除扰动 {index}",
     "change": "相对变化",
     "sliderLabel": "扰动 {index} 相对变化",
-    "empty": "添加至少一项扰动后运行推演"
+    "empty": "添加至少一项扰动后运行推演",
+    "mode": "扰动方式",
+    "delay": "延误时长",
+    "delayValue": "+{days, number} 天",
+    "delayDays": "延误天数",
+    "delayPickProperty": "选择时间属性（如交付周期）后换算为相对变化",
+    "delayConverted": "+{days, number} 天 ≈ {pct}（当前 {current} {unit}）",
+    "delayNoCurrent": "该对象当前值缺失或不为正数，无法换算为相对变化",
+    "delayCapped": "超过当前值的 100%，按 +100% 推演"
   },
   "candidates": {
     "title": "候选动作（来自本体）",
@@ -63,5 +71,15 @@
     "generate": "生成 AI 建议",
     "rulesHint": "今日 AI 额度已用完，仍可生成，结果将按规则排序",
     "needFocus": "先选择扰动对象"
+  },
+  "save": {
+    "button": "保存情景",
+    "title": "保存情景",
+    "nameLabel": "情景名称",
+    "namePlaceholder": "例如：S-017 产能下降影响评估",
+    "hint": "保存即按当前扰动与候选动作运行一次推演，并以该名称存储",
+    "submit": "保存",
+    "saved": "情景「{name}」已保存",
+    "savedBadge": "已保存"
   }
 }

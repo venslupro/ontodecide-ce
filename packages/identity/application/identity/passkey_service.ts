@@ -4,6 +4,15 @@
  * BOOTSTRAP_ADMIN_SETUP_CODE; the second one yields 10 recovery codes (only
  * hashes stored); login and step-up use user-verifying assertions; sign
  * counters must increase; at least 2 passkeys must remain.
+ *
+ * Session gate (enforced here for every admin RPC and in api-gateway): a
+ * recovery-code session may only read /me, list / register passkeys and log
+ * out until it binds a new passkey (then its session row is upgraded to
+ * amr otp + passkey; the next refresh issues such a token). While the admin
+ * has fewer than 2 passkeys or no recovery codes, only /me, passkey
+ * registration, step-up and logout work (FORBIDDEN, reason
+ * PASSKEY_SETUP_INCOMPLETE). Sign-ins, step-ups and passkey changes are
+ * written to admin_audit (no personal data).
  */
 
 import {
@@ -13,6 +22,7 @@ import {
   type Logger,
 } from '@ontodecide/shared-kernel';
 import type {
+  AdminSessionStatus,
   IssuedSession,
   PasskeyDto,
   PasskeyRegistered,
@@ -28,8 +38,11 @@ import {
   credentialIdOf,
   generateRecoveryCode,
   normalizeRecoveryCode,
+  passkeySetupIncomplete,
+  recoveryPending,
   signCountOk,
 } from '../../domain';
+import type {AuditService} from '../platform_admin/audit_service';
 import type {NotificationService} from '../notification/notification_service';
 import type {WorkspaceDirectory} from '../tenancy/workspace_directory';
 import type {
@@ -54,9 +67,37 @@ export interface PasskeyDeps {
   notification: NotificationService;
   tokens: TokenService;
   secrets: Secrets;
+  audit: AuditService;
   clock: Clock;
   logger: Logger;
   setupCode: string | null;
+}
+
+/** RPC methods a recovery-code session may call before binding a passkey. */
+export const RECOVERY_METHODS: ReadonlySet<string> = new Set([
+  'getMe',
+  'usage',
+  'logout',
+  'adminListPasskeys',
+  'adminPasskeyOptions',
+  'adminAddPasskey',
+]);
+
+/** RPC methods allowed while the admin's passkey setup is incomplete. */
+export const SETUP_METHODS: ReadonlySet<string> = new Set([
+  ...RECOVERY_METHODS,
+  'passkeyOptions',
+  'passkeyAssertion',
+]);
+
+/** Reason extras of the gate refusals. */
+export const GATE_REASON = {
+  recovery: 'RECOVERY_PENDING',
+  setup: 'PASSKEY_SETUP_INCOMPLETE',
+} as const;
+
+function gateError(reason: string): AppError {
+  return new AppError('FORBIDDEN', reason, {extras: {reason}});
 }
 
 /** Authentication source of an admin call. */
@@ -104,6 +145,50 @@ export class PasskeyService {
     return this.admin(ctx.actor.userId ?? ctx.sub).catch(() => {
       throw new AppError('FORBIDDEN');
     });
+  }
+
+  /** Whether the admin still needs a second passkey / recovery codes. */
+  async setupIncomplete(userId: string): Promise<boolean> {
+    const [count, rec] = await Promise.all([
+      this.d.passkeys.count(userId),
+      this.d.passkeys.recoveryStats(),
+    ]);
+    return passkeySetupIncomplete(count, rec.total);
+  }
+
+  /** IdentityRpc.adminSessionStatus (api-gateway, every admin request). */
+  async sessionStatus(sid: string): Promise<AdminSessionStatus> {
+    const s = await this.d.sessions.adminSessionOf(sid);
+    if (!s)
+      return {valid: false, recoveryPending: false, setupIncomplete: false};
+    return {
+      valid: true,
+      recoveryPending: recoveryPending(s.amr),
+      setupIncomplete: await this.setupIncomplete(s.userId),
+    };
+  }
+
+  /**
+   * Refuses an admin RPC that the caller's session may not use yet
+   * (recovery pending → {@link RECOVERY_METHODS}; setup incomplete →
+   * {@link SETUP_METHODS}). Non-admin callers pass through.
+   */
+  async gate(method: string, ctx: CallCtx | undefined): Promise<void> {
+    if (!ctx || ctx.actor?.role !== 'admin') return;
+    const userId = ctx.actor.userId ?? ctx.sub;
+    if (ctx.sid !== undefined) {
+      const s = await this.d.sessions.liveSession(ctx.sid, userId);
+      if (!s) {
+        if (method === 'logout') return;
+        throw new AppError('UNAUTHENTICATED', 'Admin session revoked');
+      }
+      if (recoveryPending(s.amr) && !RECOVERY_METHODS.has(method)) {
+        throw gateError(GATE_REASON.recovery);
+      }
+    }
+    if (!SETUP_METHODS.has(method) && (await this.setupIncomplete(userId))) {
+      throw gateError(GATE_REASON.setup);
+    }
   }
 
   private async checkSetupCode(
@@ -225,6 +310,11 @@ export class PasskeyService {
       throw new AppError('FORBIDDEN', 'SETUP_CODE_USED');
     }
     await this.d.passkeys.insert({...rec, lastUsedAt: this.now()});
+    await this.d.audit.append({
+      action: 'passkey.add',
+      targetTenantId: a.tenantId,
+      reason: 'setup',
+    });
     const session = await this.adminSession(
       a,
       ['otp', 'passkey'],
@@ -257,11 +347,21 @@ export class PasskeyService {
     stepUp: string | undefined,
   ): Promise<PasskeyRegistered> {
     const a = await this.requireAdmin(ctx);
-    // After a recovery-code sign-in no passkey may be left for a step-up.
-    const recovering = await this.d.sessions.recoverySessionActive(a.userId);
+    // After a recovery-code sign-in no passkey may be left for a step-up:
+    // only the caller's own, not yet upgraded recovery session skips it.
+    const recovering = await this.d.sessions.recoverySessionActive(
+      a.userId,
+      ctx.sid,
+    );
     if (!recovering)
       await this.d.tokens.verifyStepUp(stepUp || undefined, a.userId);
     const rec = await this.register(a, credential, label);
+    if (recovering) await this.d.sessions.upgradeRecovery(ctx.sid!);
+    await this.d.audit.append({
+      action: 'passkey.add',
+      targetTenantId: a.tenantId,
+      reason: recovering ? 'recovery' : null,
+    });
     const total = await this.d.passkeys.count(a.userId);
     const out: PasskeyRegistered = {passkey: toDto(rec), total};
     const stats = await this.d.passkeys.recoveryStats();
@@ -304,6 +404,10 @@ export class PasskeyService {
     ) {
       throw new AppError('CONFLICT', 'MIN_PASSKEYS');
     }
+    await this.d.audit.append({
+      action: 'passkey.delete',
+      targetTenantId: a.tenantId,
+    });
   }
 
   /** POST /auth/passkeys/options (login) and step-up options. */
@@ -378,6 +482,10 @@ export class PasskeyService {
       throw new AppError('UNAUTHENTICATED', 'PASSKEY_COUNTER');
     }
     if (purpose === 'step_up') {
+      await this.d.audit.append({
+        action: 'admin.step_up',
+        targetTenantId: a.tenantId,
+      });
       return {
         stepUpToken: await this.d.tokens.stepUp(a.userId),
         expiresIn: TOKEN_TTL.stepUpS,
@@ -415,6 +523,11 @@ export class PasskeyService {
   ): Promise<IssuedSession> {
     const w = await this.d.workspaces.get(a.tenantId);
     if (!w) throw new AppError('INTERNAL', 'ADMIN_WORKSPACE_MISSING');
+    await this.d.audit.append({
+      action: 'admin.login',
+      targetTenantId: a.tenantId,
+      reason: method,
+    });
     const session = await this.d.sessions.issue(a, w, amr, meta);
     if (newDevice) {
       const c = await this.d.accounts.contactOf(a);

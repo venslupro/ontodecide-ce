@@ -719,8 +719,12 @@ paths:
     get:
       tags: [objects]
       operationId: getObject
-      summary: Object detail
-      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      summary: Object detail (optionally with its links)
+      parameters:
+        - {name: expand, in: query, description: '`links` adds the link slice around the object', schema: {type: string, enum: [links]}}
+        - {name: depth, in: query, description: Link depth with `expand=links`, schema: {type: integer, minimum: 1, maximum: 2, default: 1}}
+        - {name: linkTypes, in: query, description: Comma-separated link types with `expand=links`, schema: {type: string}}
+        - {$ref: '#/components/parameters/ActAsTenant'}
       responses:
         '200':
           description: Object
@@ -1577,6 +1581,13 @@ components:
             properties:
               path: {type: string}
               message: {type: string}
+        reason:
+          type: string
+          description: >-
+            FORBIDDEN on admin-token routes: the admin must finish passkey setup
+            (at least 2 passkeys and recovery codes) or, after a recovery-code
+            sign-in, bind a new passkey first.
+          enum: [PASSKEY_SETUP_INCOMPLETE, RECOVERY_PENDING]
       additionalProperties: true
     Ulid: {type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'}
     Rid: {type: string, pattern: '^ri\.[A-Za-z][A-Za-z0-9_]*\.[0-9A-Z]{26}$'}
@@ -1727,6 +1738,8 @@ components:
         sessions: {$ref: '#/components/schemas/Used'}
         passkeys: {type: integer, description: Admin only}
         recoveryCodesLeft: {type: integer, description: Admin only}
+        sessionExpiresAt: {type: string, format: date-time, description: When the current session expires (admin ≤ 8 h)}
+        recoveryPending: {type: boolean, description: Admin only; signed in with a recovery code and must bind a new passkey first}
     MeWithQuotas:
       allOf:
         - {$ref: '#/components/schemas/Me'}
@@ -2011,6 +2024,13 @@ components:
         version: {type: integer}
         updatedAt: {type: string, format: date-time}
         invalidProps: {type: array, items: {type: string}}
+        derived:
+          type: object
+          additionalProperties: true
+          description: Values of the ontology's declarative functions bound to this object type, keyed by function apiName (null when a function fails)
+        links:
+          $ref: '#/components/schemas/GraphSlice'
+          description: Only with `expand=links`
     ObjectPage:
       type: object
       required: [items, nextCursor]
@@ -2338,8 +2358,18 @@ components:
     # —— admin ——
     PlatformOverview:
       type: object
-      required: [activeTrials, signupsToday, archives, purgeBacklog, signup, freeQuota, analyticsAt, recentActions]
+      required: [activeTrials, signupsToday, archives, purgeBacklog, signup, freeQuota, analyticsAt, recentActions, analyticsConfigured, stuckArchives, signKeyRotationDue]
       properties:
+        analyticsConfigured:
+          type: boolean
+          description: False when CF_ANALYTICS_TOKEN / CF_ACCOUNT_ID are not set (the 80% check is off).
+        stuckArchives:
+          type: integer
+          minimum: 0
+          description: Workspaces whose archive step has failed for more than 24 hours.
+        signKeyRotationDue:
+          type: boolean
+          description: The active B2 signing key is older than 30 days.
         activeTrials: {$ref: '#/components/schemas/Used'}
         signupsToday: {$ref: '#/components/schemas/Used'}
         archives: {$ref: '#/components/schemas/Used'}
@@ -2371,7 +2401,7 @@ components:
               kind: {type: string, enum: [modify, delete, enter, view]}
     AdminUserRow:
       type: object
-      required: [userId, tenantId, email, status, trialExpiresAt, zipExpiresAt, sessions, banned]
+      required: [userId, tenantId, email, status, trialExpiresAt, zipExpiresAt, sessions, banned, objects, links]
       properties:
         userId: {type: [string, 'null']}
         tenantId: {$ref: '#/components/schemas/Ulid'}
@@ -2381,6 +2411,8 @@ components:
         zipExpiresAt: {type: [string, 'null'], format: date-time}
         sessions: {type: integer}
         banned: {type: boolean}
+        objects: {type: integer, description: Objects held by the workspace (0 once purged)}
+        links: {type: integer, description: Links held by the workspace (0 once purged)}
     AdminUser:
       allOf:
         - {$ref: '#/components/schemas/AdminUserRow'}

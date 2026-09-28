@@ -75,6 +75,51 @@ describe('SqliteD1', () => {
       expect(() => createTestD1(d)).not.toThrow();
     }
   });
+
+  it('counts index entries in rows_written like D1', async () => {
+    const d1 = new SqliteD1();
+    d1.raw.exec(
+      'CREATE TABLE r (id TEXT PRIMARY KEY, a TEXT, b TEXT, UNIQUE (a)); ' +
+        'CREATE INDEX ix_b ON r (b); ' +
+        'CREATE TABLE w (t TEXT, k TEXT, v TEXT, PRIMARY KEY (t, k)) WITHOUT ROWID; ' +
+        'CREATE INDEX ix_v ON w (t, v); ' +
+        'CREATE TABLE p (id INTEGER PRIMARY KEY, x TEXT)',
+    );
+    const db = d1.asD1();
+    const run = async (sql: string, ...b: unknown[]) =>
+      (
+        await db
+          .prepare(sql)
+          .bind(...b)
+          .run()
+      ).meta.rows_written;
+    // rowid table: row + PK autoindex + UNIQUE autoindex + ix_b.
+    expect(await run('INSERT INTO r VALUES (?, ?, ?)', '1', 'x', 'y')).toBe(4);
+    // Only ix_b's column changes.
+    expect(await run("UPDATE r SET b = 'z' WHERE id = '1'")).toBe(2);
+    // No indexed column changes.
+    expect(await run("UPDATE r SET b = 'z' WHERE id = '1'")).toBe(1);
+    // WITHOUT ROWID: the primary key is the table; ix_v counts once.
+    expect(await run("INSERT INTO w VALUES ('t', 'k', 'v')")).toBe(2);
+    expect(await run("UPDATE w SET v = 'u'")).toBe(2);
+    expect(await run('DELETE FROM w')).toBe(2);
+    // INTEGER PRIMARY KEY is the rowid: no extra index.
+    expect(await run("INSERT INTO p (x) VALUES ('a')")).toBe(1);
+    // Nothing matched → nothing written; reads write nothing.
+    expect(await run("DELETE FROM r WHERE id = 'none'")).toBe(0);
+    expect((await db.prepare('SELECT * FROM r').all()).meta.rows_written).toBe(
+      0,
+    );
+    // RETURNING writes are billed too.
+    const ret = await db
+      .prepare("INSERT INTO p (x) VALUES ('b') RETURNING id")
+      .all();
+    expect(ret.meta.rows_written).toBe(1);
+    // Tables created later are metered as well.
+    await db.exec('CREATE TABLE late (id TEXT PRIMARY KEY)');
+    expect(await run("INSERT INTO late VALUES ('1')")).toBe(2);
+    expect(d1.rowsWritten).toBe(4 + 2 + 1 + 2 + 2 + 2 + 1 + 1 + 2);
+  });
 });
 
 describe('QueueBus', () => {

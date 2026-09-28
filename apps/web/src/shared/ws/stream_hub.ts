@@ -7,6 +7,10 @@
  * the leader tab closes its lock is released and another tab takes over.
  * Every tab reports its visibility; when all tabs have been hidden for 5
  * minutes the leader disconnects, and reconnects as soon as one is visible.
+ * Every tab answers a newcomer's `hello` with its visibility, and a new
+ * leader asks all tabs to re-announce (`probe`), so a hand-over never
+ * starts from an incomplete picture. Frames the leader produces itself
+ * (e.g. polling-fallback results) fan out like WebSocket frames.
  */
 
 import {WS_DEFAULTS, type WsFrame, type WsState} from './ws_client';
@@ -67,6 +71,7 @@ type HubMsg =
   | {t: 'ended'}
   | {t: 'hello'; id: string}
   | {t: 'vis'; id: string; visible: boolean}
+  | {t: 'probe'; id: string}
   | {t: 'bye'; id: string};
 
 function defaultLocks(): LockManagerLike | null {
@@ -189,6 +194,8 @@ export class StreamHub {
         this.o.onEnded();
       },
     });
+    // Learn the visibility of every tab that is already open.
+    this.post({t: 'probe', id: this.id});
     this.client.start();
     this.checkVisibility();
   }
@@ -207,10 +214,12 @@ export class StreamHub {
         if (!this.leader) this.o.onEnded();
         break;
       case 'hello':
-        if (this.leader) {
-          this.post({t: 'state', state: this.state});
-          this.post({t: 'vis', id: this.id, visible: this.isVisible()});
-        }
+        // Every tab introduces itself to the newcomer (it may lead later).
+        if (this.leader) this.post({t: 'state', state: this.state});
+        this.post({t: 'vis', id: this.id, visible: this.isVisible()});
+        break;
+      case 'probe':
+        this.post({t: 'vis', id: this.id, visible: this.isVisible()});
         break;
       case 'vis':
         this.visible.set(msg.id, msg.visible);

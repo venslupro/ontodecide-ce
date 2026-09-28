@@ -45,7 +45,7 @@ import {
   serverIssues,
   withDefinition,
 } from '../../features/ontology/model';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {isApiError} from '../../shared/api/errors';
 import {Badge} from '../../shared/ui/badge';
 import {Button} from '../../shared/ui/button';
@@ -217,6 +217,7 @@ export function OntologyPage() {
   if (q.isError || !o) {
     return (
       <ErrorView
+        traceId={errorTraceId(q.error)}
         detail={errorMessage(q.error, t)}
         onRetry={() => void q.refetch()}
       />

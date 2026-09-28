@@ -236,13 +236,86 @@ export const CANDIDATE_ACTIONS_MAX = 10;
 /** Slider step (percent). */
 export const CHANGE_STEP_PCT = 5;
 
-/** An editable perturbation (change in percent −100..100). */
+/** Perturbation kind (前端 情景推演: 相对变化 or 延误时长). */
+export type PerturbationMode = 'relative' | 'delay';
+
+/**
+ * An editable perturbation: a relative change in percent −100..100, or a
+ * delay in days on a time property (converted with the object's current
+ * value, see {@link delayToChange}).
+ */
 export interface PerturbationDraft {
   key: string;
   rid: string;
   property: string;
   changePct: number;
+  mode: PerturbationMode;
+  /** Delay in days (mode `delay`). */
+  delayDays: number;
 }
+
+/** Maximum delay that can be entered (days). */
+export const DELAY_DAYS_MAX = 365;
+
+/** Units meaning "hours" on a time property (the delay is in days). */
+const HOUR_UNITS = new Set(['h', 'hr', 'hrs', 'hour', 'hours', '小时', '时']);
+const TIME_NAME =
+  /(days?|lead|delay|duration|hours?|time|eta|transit|天|时长|周期)/i;
+const TIME_UNITS = new Set(['d', 'day', 'days', '天', '日', ...HOUR_UNITS]);
+
+/** Whether a numeric property holds a duration (lead time, delay, …). */
+export function isTimeProperty(p: {apiName: string; unit?: string}): boolean {
+  return (
+    TIME_UNITS.has((p.unit ?? '').trim().toLowerCase()) ||
+    TIME_NAME.test(p.apiName)
+  );
+}
+
+/** Numeric time properties of a type (all numeric ones when none match). */
+export function delayProperties<T extends {apiName: string; unit?: string}>(
+  numeric: readonly T[],
+): T[] {
+  const time = numeric.filter(isTimeProperty);
+  return time.length ? time : [...numeric];
+}
+
+/** Result of converting a delay into the relative change the API expects. */
+export interface DelayChange {
+  /** Relative change −1..1 (4 decimals). */
+  change: number;
+  /** The delay exceeded +100 % of the current value and was capped. */
+  capped: boolean;
+}
+
+/**
+ * Converts `delayDays` on a property whose current value is `current`
+ * (days, or hours when `unit` is an hour unit) into a relative change:
+ * delay / current, capped to −1..1 as the simulator does. null when the
+ * current value is missing, not a number or not positive.
+ */
+export function delayToChange(
+  delayDays: number,
+  current: unknown,
+  unit?: string,
+): DelayChange | null {
+  const cur = typeof current === 'number' ? current : Number(current);
+  if (current === null || current === undefined || current === '') return null;
+  if (!Number.isFinite(cur) || cur <= 0 || !Number.isFinite(delayDays))
+    return null;
+  const perUnit = HOUR_UNITS.has((unit ?? '').trim().toLowerCase()) ? 24 : 1;
+  const raw = (delayDays * perUnit) / cur;
+  const change = Math.round(Math.max(-1, Math.min(1, raw)) * 10_000) / 10_000;
+  return {change, capped: Math.abs(raw) > 1};
+}
+
+/** Clamps a delay to 0..{@link DELAY_DAYS_MAX} days (0.1-day steps). */
+export function clampDelay(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(DELAY_DAYS_MAX, Math.round(v * 10) / 10));
+}
+
+/** Current property value lookup (rid, property) → value. */
+export type CurrentValue = (rid: string, property: string) => unknown;
 
 let draftSeq = 0;
 
@@ -256,6 +329,8 @@ export function newPerturbation(
     rid: init.rid ?? '',
     property: init.property ?? '',
     changePct: clampPct(init.changePct ?? 0),
+    mode: init.mode ?? 'relative',
+    delayDays: clampDelay(init.delayDays ?? 0),
   };
 }
 
@@ -333,12 +408,28 @@ export function defaultParams(a: UiActionType): Record<string, unknown> {
 /** Selected candidate (key → parameters). */
 export type CandidateSelection = Record<string, Record<string, unknown>>;
 
+/**
+ * Relative change (−1..1) of a draft: the slider value, or the delay
+ * converted with the object's current value (null: cannot convert yet).
+ */
+export function draftChange(
+  d: PerturbationDraft,
+  current?: CurrentValue,
+  unit?: string,
+): number | null {
+  if (d.mode !== 'delay') return clampPct(d.changePct) / 100;
+  const c = delayToChange(d.delayDays, current?.(d.rid, d.property), unit);
+  return c ? c.change : null;
+}
+
 /** Builds the `POST /scenarios` body from the drafts and selections. */
 export function toScenarioInput(
   drafts: readonly PerturbationDraft[],
   selection: CandidateSelection,
   options: readonly CandidateOption[],
   name?: string,
+  current?: CurrentValue,
+  unitOf?: (rid: string, property: string) => string | undefined,
 ): ScenarioInput {
   const byKey = new Map(options.map(o => [o.key, o] as const));
   const candidateActions: CandidateActionInput[] = [];
@@ -358,11 +449,12 @@ export function toScenarioInput(
   }
   return {
     ...(name ? {name} : {}),
-    perturbations: drafts.filter(isCompleteDraft).map(d => ({
-      rid: d.rid as Rid,
-      property: d.property,
-      change: clampPct(d.changePct) / 100,
-    })),
+    perturbations: drafts.filter(isCompleteDraft).flatMap(d => {
+      const change = draftChange(d, current, unitOf?.(d.rid, d.property));
+      return change === null
+        ? []
+        : [{rid: d.rid as Rid, property: d.property, change}];
+    }),
     ...(candidateActions.length
       ? {candidateActions: candidateActions.slice(0, CANDIDATE_ACTIONS_MAX)}
       : {}),

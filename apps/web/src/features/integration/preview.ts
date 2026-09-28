@@ -4,8 +4,9 @@
  * chains of a mapping to parsed rows and performs the three CE row checks —
  * required, type (the shared `validateProps` coercion) and primary key
  * empty / duplicated within the file — plus the upload plan
- * (min(remaining import rows today, object headroom)); rows beyond it are
- * marked 「超出上限」 and are not submitted.
+ * (min(remaining import rows today, object headroom, link headroom for
+ * mappings with links)); rows beyond it are marked 「超出上限」 and are not
+ * submitted.
  */
 
 import type {MappingSpec, RejectDto} from '@ontodecide/integration/contract';
@@ -168,7 +169,35 @@ export function mapRowsPreview(
 }
 
 /** What limited the upload plan. */
-export type PlanLimit = 'importRows' | 'objects' | 'batchMax';
+export type PlanLimit = 'importRows' | 'objects' | 'links' | 'batchMax';
+
+/**
+ * Links each raw row would create under `spec` (multi-valued cells split),
+ * in file order. Empty when the mapping has no links.
+ */
+export function rowLinkCounts(
+  rows: readonly SourceRow[],
+  spec: Pick<MappingSpec, 'links'> | null | undefined,
+): number[] {
+  const links = spec?.links ?? [];
+  if (links.length === 0) return [];
+  return rows.map(raw =>
+    links.reduce((n, l) => n + linkKeys(raw[l.toKey], l.split).length, 0),
+  );
+}
+
+/** Largest prefix of rows whose links fit in `linksLeft`. */
+export function rowsWithinLinks(
+  linkCounts: readonly number[],
+  linksLeft: number,
+): number {
+  let sum = 0;
+  for (let i = 0; i < linkCounts.length; i++) {
+    sum += linkCounts[i];
+    if (sum > linksLeft) return i;
+  }
+  return linkCounts.length;
+}
 
 /** Upload plan of one file. */
 export interface UploadPlan {
@@ -191,22 +220,36 @@ export interface PlanQuota {
   importRowsLeft: number;
   /** Objects that can still be created (limit − objects). */
   objectsLeft: number;
+  /** Links that can still be created (limit − links). */
+  linksLeft?: number;
 }
 
 /** Seconds per batch used for the estimate. */
 export const SECONDS_PER_BATCH = 1;
 
-/** Computes the upload plan (前端详细设计 算法描述 文件导入 预检额度). */
+/**
+ * Computes the upload plan (前端详细设计 算法描述 文件导入 预检额度):
+ * min(import rows left today, objects left, rows whose links fit in the
+ * links left). `linkCounts` (see {@link rowLinkCounts}) is only given for
+ * mappings with links.
+ */
 export function planUpload(
   totalRows: number,
   quota: PlanQuota,
   batchRows: number = CE_LIMITS.batchRows,
+  linkCounts: readonly number[] = [],
 ): UploadPlan {
   const caps: [PlanLimit, number][] = [
     ['importRows', Math.max(0, quota.importRowsLeft)],
     ['objects', Math.max(0, quota.objectsLeft)],
-    ['batchMax', CE_LIMITS.importRowsDaily],
   ];
+  if (linkCounts.length > 0 && quota.linksLeft !== undefined) {
+    caps.push([
+      'links',
+      rowsWithinLinks(linkCounts, Math.max(0, quota.linksLeft)),
+    ]);
+  }
+  caps.push(['batchMax', CE_LIMITS.importRowsDaily]);
   let submitRows = totalRows;
   let limitedBy: PlanLimit | null = null;
   for (const [k, cap] of caps) {

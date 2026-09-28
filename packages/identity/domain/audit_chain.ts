@@ -25,7 +25,9 @@ export type AuditAction =
   | 'settings.update'
   | 'domains.replace'
   | 'passkey.add'
-  | 'passkey.delete';
+  | 'passkey.delete'
+  | 'admin.login'
+  | 'admin.step_up';
 
 /** Hashed content of one row. */
 export interface AuditRowContent {
@@ -83,7 +85,7 @@ export async function verifyChain(rows: readonly AuditRow[]): Promise<boolean> {
 export function auditKind(
   action: string,
 ): 'modify' | 'delete' | 'enter' | 'view' {
-  if (action === 'act_as.enter') return 'enter';
+  if (action === 'act_as.enter' || action === 'admin.login') return 'enter';
   if (action === 'email.view' || action === 'archive.download') return 'view';
   if (action.endsWith('.delete')) return 'delete';
   return 'modify';

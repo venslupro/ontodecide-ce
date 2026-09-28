@@ -10,8 +10,10 @@
 
 import {
   EXPORT_ORDER,
+  LIFECYCLE,
   PURGE_ORDER,
   isJsonLines,
+  utf8,
   type ArchiveFile,
   type LifecycleService,
 } from '@ontodecide/shared-kernel';
@@ -36,6 +38,31 @@ export const ARCHIVE_FORMAT_VERSION = 1;
 
 /** Upper bound of purged rows per service per step. */
 export const PURGE_STEP_ROWS = 500;
+
+/**
+ * Upper bound of B2 staging parts per archive. The ZIP step reads every
+ * part, uploads, HEADs and deletes the staging prefix in one invocation, so
+ * this bounds its subrequests (≤ 20 GET + PUT + HEAD + list + 20 DELETE).
+ */
+export const MAX_STAGING_PARTS = 20;
+
+/** The ZIP limit (修订说明书 9.6: ≤ 2 MB). */
+export const MAX_ARCHIVE_BYTES = LIFECYCLE.maxArchiveBytes;
+
+/** Room kept for ZIP headers, manifest.json and README.txt. */
+export const ZIP_OVERHEAD_BYTES = 64 * 1024;
+
+/** Text of a `.json` file that did not fit into the archive. */
+export const TRUNCATED_JSON = '{"truncated":true}';
+
+/** manifest.json note when files were truncated. */
+export const TRUNCATION_NOTE =
+  'Some files were truncated to keep the archive within the 2 MB limit ' +
+  '(files marked "truncated": true). / 为使归档不超过 2 MB，部分文件已截断' +
+  '（标记为 "truncated": true）。';
+
+/** Header suffix of a staging part cut short by the part budget. */
+const TRUNCATED_MARK = '\ttruncated';
 
 /** The persisted saga state. */
 export interface Ledger {
@@ -115,16 +142,116 @@ export function advancePurge(
     : {phase: 'purged', purgeSvc: svc};
 }
 
-/** Encodes a staging part: the file name on the first line, then the text. */
-export function encodePart(file: ArchiveFile, text: string): string {
-  return `${file}\n${text}`;
+/**
+ * Whether the page about to be staged for `svc` must be its last one, so
+ * that every later service still gets a part within
+ * {@link MAX_STAGING_PARTS}. Further pages of `svc` are then skipped and the
+ * file is marked truncated.
+ */
+export function isLastAllowedPart(
+  svc: LifecycleService,
+  parts: number,
+): boolean {
+  const later = EXPORT_ORDER.length - 1 - EXPORT_ORDER.indexOf(svc);
+  return parts + 1 + later >= MAX_STAGING_PARTS;
+}
+
+/**
+ * Encodes a staging part: the file name (plus a truncation mark) on the
+ * first line, then the text.
+ */
+export function encodePart(
+  file: ArchiveFile,
+  text: string,
+  truncated = false,
+): string {
+  return `${file}${truncated ? TRUNCATED_MARK : ''}\n${text}`;
+}
+
+/** A decoded staging part. */
+export interface StagedPart {
+  file: ArchiveFile;
+  text: string;
+  truncated?: boolean;
 }
 
 /** Decodes a staging part. */
-export function decodePart(part: string): {file: ArchiveFile; text: string} {
+export function decodePart(part: string): StagedPart {
   const nl = part.indexOf('\n');
-  if (nl < 0) return {file: part as ArchiveFile, text: ''};
-  return {file: part.slice(0, nl) as ArchiveFile, text: part.slice(nl + 1)};
+  const head = nl < 0 ? part : part.slice(0, nl);
+  const text = nl < 0 ? '' : part.slice(nl + 1);
+  if (head.endsWith(TRUNCATED_MARK)) {
+    return {
+      file: head.slice(0, -TRUNCATED_MARK.length) as ArchiveFile,
+      text,
+      truncated: true,
+    };
+  }
+  return {file: head as ArchiveFile, text};
+}
+
+/** Cuts a file to at most `maxBytes` (whole JSON Lines; JSON → marker). */
+export function truncateText(
+  file: ArchiveFile,
+  text: string,
+  maxBytes: number,
+): string {
+  if (utf8(text).byteLength <= maxBytes) return text;
+  if (!isJsonLines(file)) return TRUNCATED_JSON;
+  let out = '';
+  let used = 0;
+  for (const line of text.split('\n')) {
+    if (line === '') continue;
+    const n = utf8(line).byteLength + 1;
+    if (used + n > maxBytes) break;
+    out += line + '\n';
+    used += n;
+  }
+  return out;
+}
+
+/**
+ * Truncates the largest files until the total fits `budget` bytes.
+ * Returns the (new) files and the names that were cut.
+ */
+export function fitToBudget(
+  files: ReadonlyMap<ArchiveFile, string>,
+  budget: number,
+): {files: Map<ArchiveFile, string>; truncated: Set<ArchiveFile>} {
+  const out = new Map(files);
+  const sizes = new Map<ArchiveFile, number>();
+  let total = 0;
+  for (const [name, text] of out) {
+    const n = utf8(text).byteLength;
+    sizes.set(name, n);
+    total += n;
+  }
+  const truncated = new Set<ArchiveFile>();
+  const stuck = new Set<ArchiveFile>();
+  while (total > budget) {
+    let largest: ArchiveFile | null = null;
+    for (const [name, n] of sizes) {
+      if (stuck.has(name)) continue;
+      if (largest === null || n > sizes.get(largest)!) largest = name;
+    }
+    if (largest === null) break;
+    const size = sizes.get(largest)!;
+    const next = truncateText(
+      largest,
+      out.get(largest)!,
+      Math.max(0, size - (total - budget)),
+    );
+    const n = utf8(next).byteLength;
+    if (n >= size) {
+      stuck.add(largest);
+      continue;
+    }
+    out.set(largest, next);
+    sizes.set(largest, n);
+    truncated.add(largest);
+    total -= size - n;
+  }
+  return {files: out, truncated};
 }
 
 /**
@@ -132,7 +259,7 @@ export function decodePart(part: string): {file: ArchiveFile; text: string} {
  * newline boundary; a `.json` file is a single page.
  */
 export function assembleFiles(
-  parts: readonly {file: ArchiveFile; text: string}[],
+  parts: readonly StagedPart[],
 ): Map<ArchiveFile, string> {
   const out = new Map<ArchiveFile, string>();
   for (const p of parts) {
@@ -168,6 +295,8 @@ export interface ManifestFile {
   records: number;
   bytes: number;
   sha256: string;
+  /** Present when the file was cut to respect the archive limits. */
+  truncated?: true;
 }
 
 /** manifest.json content (no e-mail, no personal data). */
@@ -176,6 +305,8 @@ export interface Manifest {
   product: 'OntoDecide CE';
   exportedAt: string;
   files: ManifestFile[];
+  /** Present when files were truncated. */
+  notes?: string[];
 }
 
 /** Builds manifest.json. */
@@ -183,12 +314,14 @@ export function buildManifest(
   files: readonly ManifestFile[],
   exportedAt: Date,
 ): Manifest {
-  return {
+  const m: Manifest = {
     formatVersion: ARCHIVE_FORMAT_VERSION,
     product: 'OntoDecide CE',
     exportedAt: exportedAt.toISOString(),
     files: [...files],
   };
+  if (files.some(f => f.truncated)) m.notes = [TRUNCATION_NOTE];
+  return m;
 }
 
 /** Bilingual README.txt placed in every archive. */

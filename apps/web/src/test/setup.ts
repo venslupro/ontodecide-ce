@@ -7,6 +7,8 @@ import '@testing-library/jest-dom/vitest';
 import {cleanup} from '@testing-library/react';
 import {afterAll, afterEach, beforeAll} from 'vitest';
 import {useSession} from '../entities/session/store';
+import {resetRateLimits} from '../shared/api/rate_limit';
+import {useToastStore} from '../shared/ui/toast';
 import {NAMESPACES, i18n, initI18n} from '../shared/lib/i18n';
 import {releaseAll} from '../shared/ws/stream';
 import {resetDb} from './handlers';
@@ -93,6 +95,8 @@ beforeAll(() => server.listen({onUnhandledRequest: 'warn'}));
 afterEach(async () => {
   cleanup();
   releaseAll();
+  resetRateLimits();
+  useToastStore.setState({items: []});
   useSession.getState().signOut();
   useSession.getState().setClockSkew(0);
   if (i18n.language !== 'zh-CN') await i18n.changeLanguage('zh-CN');

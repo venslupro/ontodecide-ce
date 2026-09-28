@@ -1,7 +1,7 @@
 /**
  * @fileoverview PlatformAdmin repositories: platform_setting (+ blocklists),
- * admin_audit (append-only hash chain), admin_pending_change and the
- * read-only admin queries.
+ * admin_audit (append-only hash chain), admin_pending_change, system_flag
+ * bookkeeping and the read-only admin queries.
  */
 
 import {SystemRepository} from '@ontodecide/shared-kernel/d1';
@@ -15,6 +15,8 @@ import type {
   PendingChangeRepository,
   SettingsRepository,
   SettingsValues,
+  SystemFlag,
+  SystemFlagRepository,
 } from '../application';
 import {isUniqueViolation} from './d1_rows';
 
@@ -365,5 +367,52 @@ export class D1AdminQueryRepository
       limit,
     ).all<AuditDbRow>();
     return results.map(toAudit);
+  }
+}
+
+/** D1 system_flag (cron bookkeeping; no personal data). */
+export class D1SystemFlagRepository
+  extends SystemRepository
+  implements SystemFlagRepository
+{
+  async setOnce(key: string, value: number, at: number): Promise<boolean> {
+    const r = await this.sql(
+      `INSERT INTO system_flag (key, value, at) VALUES (?1, ?2, ?3)
+       ON CONFLICT (key) DO NOTHING`,
+      key,
+      value,
+      at,
+    ).run();
+    return r.meta.changes === 1;
+  }
+
+  async get(key: string): Promise<SystemFlag | null> {
+    const r = await this.sql(
+      'SELECT value, at FROM system_flag WHERE key = ?1',
+      key,
+    ).first<{value: number; at: number}>();
+    return r ? {value: r.value, at: r.at} : null;
+  }
+
+  async setValue(key: string, value: number): Promise<void> {
+    await this.sql(
+      'UPDATE system_flag SET value = ?2 WHERE key = ?1',
+      key,
+      value,
+    ).run();
+  }
+
+  async clear(key: string): Promise<void> {
+    await this.sql('DELETE FROM system_flag WHERE key = ?1', key).run();
+  }
+
+  async countPrefix(prefix: string, atOrBefore: number): Promise<number> {
+    const r = await this.sql(
+      `SELECT COUNT(*) AS n FROM system_flag
+       WHERE substr(key, 1, length(?1)) = ?1 AND at <= ?2`,
+      prefix,
+      atOrBefore,
+    ).first<{n: number}>();
+    return r?.n ?? 0;
   }
 }

@@ -61,7 +61,7 @@ import {
   sessionResultResponse,
   setupResponse,
 } from './auth_handlers';
-import {exportBff, getMeBff, overviewBff} from './bff';
+import {exportBff, getMeBff, getObjectWithLinksBff, overviewBff} from './bff';
 import {empty, json, jsonWithEtag} from './http';
 import {OPENAPI_YAML} from './openapi_spec';
 import {route, type AnyRoute, type RouteHandler} from './route_types';
@@ -113,6 +113,23 @@ export const objectsQuerySchema = pageQuerySchema.extend({
       return {prop, dir: dir as 'asc' | 'desc'};
     })
     .optional(),
+});
+
+/** GET /objects/{rid} query (详细设计 表 9: `expand=links&depth=1|2`). */
+export const objectQuerySchema = z.object({
+  expand: z.enum(['links']).optional(),
+  depth: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(2)
+    .default(1)
+    .transform(v => v as 1 | 2),
+  linkTypes: z
+    .string()
+    .max(1024)
+    .optional()
+    .transform(v => (v ? v.split(',').filter(Boolean) : undefined)),
 });
 
 const REC_STATUSES = [
@@ -643,7 +660,15 @@ export const ROUTES: AnyRoute[] = [
     scope: 'workspace',
     rate: ['read'],
     params: {rid: ridSchema},
+    query: objectQuerySchema,
     handler: async (env, i) => {
+      const {expand, depth, linkTypes} = i.query;
+      if (expand === 'links') {
+        return getObjectWithLinksBff(env, i.ctx!, i.params.rid as Rid, {
+          depth,
+          ...(linkTypes ? {linkTypes} : {}),
+        });
+      }
       const o = await env.OBJECTS.getObject(i.ctx!, i.params.rid as Rid);
       if (!o) throw new AppError('NOT_FOUND');
       return jsonWithEtag(o, o.version);

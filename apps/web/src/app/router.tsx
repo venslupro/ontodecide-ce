@@ -3,7 +3,9 @@
  * Every page is lazily imported (one chunk per route) and preloaded on
  * intent. Public pages (/signup, /login, /ended, /archive-deletions/:token)
  * render without the app shell; /ended and /archive-deletions need no
- * token. Business pages read params with `strict: false` hooks.
+ * token. The authenticated shell (AppLayout) is lazy too, so the public
+ * pages' first load stays small. Business pages read params with
+ * `strict: false` hooks.
  */
 
 import type {QueryClient} from '@tanstack/react-query';
@@ -19,7 +21,6 @@ import {
 import {exitActAs} from '../features/admin/act_as';
 import {PageLoader} from '../shared/ui/skeleton';
 import {guardApp, guardPublicAuth} from './guards';
-import {AppLayout} from './layouts/app_layout';
 import {RouteError} from './route_error';
 
 /** Router context. */
@@ -71,8 +72,8 @@ const authSearch = (s: Record<string, unknown>): AuthSearch => ({
   lang: str(s.lang),
 });
 
-const redirectSignedIn = () => {
-  const to = guardPublicAuth();
+const redirectSignedIn = async () => {
+  const to = await guardPublicAuth();
   if (to) throw redirect({to});
 };
 
@@ -119,7 +120,8 @@ const appRoute = createRoute({
       throw redirect({to: '/login', search: {next: d.next}});
     if (d.kind === 'ended') throw redirect({to: '/ended'});
   },
-  component: AppLayout,
+  // Lazy: /ended and /archive-deletions must not download the app shell.
+  component: page(() => import('./layouts/app_layout'), 'AppLayout'),
   errorComponent: RouteError,
   pendingComponent: PageLoader,
 });

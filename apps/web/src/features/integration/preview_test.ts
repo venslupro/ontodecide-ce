@@ -9,7 +9,14 @@ import type {MappingSpec} from '@ontodecide/integration/contract';
 import {describe, expect, it} from 'vitest';
 import {toUiModel} from '../../entities/schema/model';
 import {ontologyDto} from '../../test/fixtures/business';
-import {mapRowsPreview, planUpload, projectRows, validateRows} from './preview';
+import {
+  mapRowsPreview,
+  planUpload,
+  projectRows,
+  rowLinkCounts,
+  rowsWithinLinks,
+  validateRows,
+} from './preview';
 
 const supplier = toUiModel(ontologyDto, 'zh-CN').byName.Supplier;
 const SPEC: MappingSpec = {
@@ -126,6 +133,46 @@ describe('planUpload', () => {
       batches: 0,
       estimatedSeconds: 0,
     });
+  });
+});
+
+describe('link headroom (前端 预检额度: min(导入行, 对象, 关系))', () => {
+  const spec = {
+    links: [{type: 'supplies', toType: 'Material', toKey: 'skus', split: ';'}],
+  };
+  const rows = [{skus: 'M1;M2;M3'}, {skus: 'M4'}, {skus: ''}, {skus: 'M5;M6'}];
+
+  it('counts the links each row would create', () => {
+    expect(rowLinkCounts(rows, spec)).toEqual([3, 1, 0, 2]);
+    expect(rowLinkCounts(rows, {})).toEqual([]);
+    expect(rowsWithinLinks([3, 1, 0, 2], 4)).toBe(3);
+    expect(rowsWithinLinks([3, 1, 0, 2], 2)).toBe(0);
+    expect(rowsWithinLinks([3, 1, 0, 2], 100)).toBe(4);
+  });
+
+  it('caps the plan by the links left when the mapping has links', () => {
+    const counts = rowLinkCounts(rows, spec);
+    expect(
+      planUpload(
+        4,
+        {importRowsLeft: 100, objectsLeft: 100, linksLeft: 4},
+        100,
+        counts,
+      ),
+    ).toMatchObject({submitRows: 3, overLimitRows: 1, limitedBy: 'links'});
+    // Import rows still win when they are tighter.
+    expect(
+      planUpload(
+        4,
+        {importRowsLeft: 1, objectsLeft: 100, linksLeft: 4},
+        100,
+        counts,
+      ),
+    ).toMatchObject({submitRows: 1, limitedBy: 'importRows'});
+    // Without links in the mapping the link headroom is ignored.
+    expect(
+      planUpload(4, {importRowsLeft: 100, objectsLeft: 100, linksLeft: 0}),
+    ).toMatchObject({submitRows: 4, limitedBy: null});
   });
 });
 

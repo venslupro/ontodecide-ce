@@ -45,6 +45,7 @@ import {WIZARD_STEPS} from '../../features/integration/wizard';
 import {
   planUpload,
   projectRows,
+  rowLinkCounts,
   validateRows,
   type PlanQuota,
 } from '../../features/integration/preview';
@@ -57,6 +58,7 @@ import {
   type UploadState,
 } from '../../features/integration/upload';
 import {qk} from '../../shared/api/query_keys';
+import {useRetryAfter} from '../../shared/api/rate_limit';
 import {Button} from '../../shared/ui/button';
 import {PageHeader} from '../../shared/ui/page_header';
 import {Stepper} from '../../shared/ui/stepper';
@@ -101,6 +103,7 @@ export function ImportWizardPage() {
   const [runError, setRunError] = useState<unknown>(null);
   const upload = useRef<UploadState | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const runLimit = useRetryAfter('import.batch');
 
   const type = targetType ? model.byName[targetType] : undefined;
   const jobKey = file ? `${file.name}|${file.rows.length}|${targetType}` : '';
@@ -112,17 +115,24 @@ export function ImportWizardPage() {
       ? remaining(quotas.importRowsToday) + (job?.totalRows ?? 0)
       : CE_LIMITS.importRowsDaily,
     objectsLeft: quotas ? remaining(quotas.objects) : CE_LIMITS.objects,
+    linksLeft: quotas ? remaining(quotas.links) : CE_LIMITS.links,
   };
-  // A job created for the AI draft reserved its rows: they are the cap.
-  const plan = planUpload(
-    file?.rows.length ?? 0,
-    job ? {...quota, importRowsLeft: job.totalRows} : quota,
-  );
-
   const problems = type ? mappingProblems(rows, type) : [];
   const spec = useMemo(
     () => (type ? toMappingSpec(rows, type) : null),
     [rows, type],
+  );
+  // Link headroom counts only for mappings with links.
+  const linkCounts = useMemo(
+    () => (file && spec ? rowLinkCounts(file.rows, spec) : []),
+    [file, spec],
+  );
+  // A job created for the AI draft reserved its rows: they are the cap.
+  const plan = planUpload(
+    file?.rows.length ?? 0,
+    job ? {...quota, importRowsLeft: job.totalRows} : quota,
+    undefined,
+    linkCounts,
   );
   const validating = step >= 3 && problems.length === 0;
   const submitRows = plan.submitRows;
@@ -197,7 +207,7 @@ export function ImportWizardPage() {
   };
 
   const onRun = async () => {
-    if (!file || !spec) return;
+    if (!file || !spec || runLimit.limited) return;
     const ctrl = new AbortController();
     abort.current = ctrl;
     upload.current ??= newUploadState(job?.id ?? null);
@@ -222,6 +232,7 @@ export function ImportWizardPage() {
       void qc.invalidateQueries({queryKey: ['object']});
       void navigate({to: '/imports/$id', params: {id: final.id}});
     } catch (e) {
+      runLimit.trap(e);
       setRunError(e);
     } finally {
       setRunning(false);
@@ -326,6 +337,7 @@ export function ImportWizardPage() {
             progress={progress}
             runError={runError}
             canResume={canResume}
+            retryIn={runLimit.seconds}
             onRun={() => void onRun()}
             onCancel={() => abort.current?.abort()}
           />

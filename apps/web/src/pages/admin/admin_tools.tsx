@@ -24,7 +24,7 @@ import {
   adminPasskeyOptions,
 } from '../../features/identity/api';
 import {RecoveryCodes} from '../../features/identity/components/recovery_codes';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {fmt, shortTid} from '../../shared/lib/format';
 import {
   createPasskey,
@@ -235,6 +235,8 @@ function PasskeysDialog({
         e instanceof PasskeyError
           ? t('auth:passkeyFailed')
           : errorMessage(e, t),
+        undefined,
+        {traceId: errorTraceId(e)},
       );
     } finally {
       setBusy(false);

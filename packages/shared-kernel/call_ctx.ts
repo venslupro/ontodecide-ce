@@ -38,6 +38,11 @@ export interface CallCtx {
   actor: Actor;
   requestId: string;
   locale: Locale;
+  /**
+   * Session id (`sid` claim) of the human caller's access token, set by
+   * api-gateway; identity-access reads the caller's own session with it.
+   */
+  sid?: string;
 }
 
 /** Whether the value is a human role. */

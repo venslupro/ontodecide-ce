@@ -16,11 +16,11 @@ import {Clock, CloudOff, Download, RadioTower, ShieldCheck} from 'lucide-react';
 import {useState, type ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
 import {notifyAuthFailed} from '../../entities/session/lifecycle';
-import {useSession} from '../../entities/session/store';
+import {adminSessionEnd, useSession} from '../../entities/session/store';
 import {useTrialCountdown} from '../../entities/workspace/countdown';
 import {exitActAs} from '../../features/admin/act_as';
 import {exportWorkspace} from '../../features/identity/api';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {useRemaining} from '../../shared/lib/countdown';
 import {isoDay, saveBlob} from '../../shared/lib/download';
 import {fmt, shortTid} from '../../shared/lib/format';
@@ -75,7 +75,9 @@ export function ExpiryBanner({className}: {className?: string}) {
     try {
       saveBlob(await exportWorkspace(), `ontodecide-export-${isoDay()}.jsonl`);
     } catch (e) {
-      toast.error(errorMessage(e, t));
+      toast.error(errorMessage(e, t), undefined, {
+        traceId: errorTraceId(e),
+      });
     } finally {
       setBusy(false);
     }
@@ -135,9 +137,14 @@ function Strip({
   );
 }
 
-function AdminSessionStrip() {
+/**
+ * Admin 8 h session: warning in the last 10 minutes and forced re-login at
+ * the end. Uses GET /me `sessionExpiresAt` (survives reloads), else the
+ * local timer started at sign-in.
+ */
+export function AdminSessionStrip() {
   const {t} = useTranslation('common');
-  const endsAt = useSession(s => s.adminSessionEndsAt);
+  const endsAt = useSession(adminSessionEnd);
   const skew = useSession(s => s.clockSkewMs);
   const left = useRemaining(endsAt ?? null, skew, () => notifyAuthFailed());
   if (!endsAt || left <= 0 || left > 10 * 60_000) return null;

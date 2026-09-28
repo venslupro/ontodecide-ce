@@ -98,6 +98,7 @@ export function parseConfig(env: Env): IdentityConfig {
     emailEncKey: env.EMAIL_ENC_KEY,
     bootstrapAdminEmail: env.BOOTSTRAP_ADMIN_EMAIL?.trim() || null,
     bootstrapSetupCode: env.BOOTSTRAP_ADMIN_SETUP_CODE?.trim() || null,
+    b2SignKeyId: env.B2_SIGN_KEY_ID?.trim() || null,
   };
 }
 
@@ -202,6 +203,7 @@ export function createContainer(
         expired: r.expired,
         reminders: r.reminders,
         finalDeleted: r.finalDeleted,
+        signKeyChecked: r.signKeyChecked,
         errors: r.errors,
       });
     },

@@ -9,6 +9,7 @@ import {useId, useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {idempotencyKey} from '../../../shared/api/client';
 import {isApiError} from '../../../shared/api/errors';
+import {useRetryAfter} from '../../../shared/api/rate_limit';
 import {Button} from '../../../shared/ui/button';
 import {Dialog, DialogContent} from '../../../shared/ui/dialog';
 import {Field, Textarea} from '../../../shared/ui/input';
@@ -42,10 +43,11 @@ function RejectContent({
   const decide = useDecide();
   const trimmed = reason.trim();
   const conflict = isApiError(error, 'CONFLICT');
+  const limit = useRetryAfter('decision');
 
   const submit = () => {
     setTouched(true);
-    if (!trimmed) return;
+    if (!trimmed || limit.limited) return;
     setError(null);
     decide.mutate(
       {id: rec.id, decision: 'reject', reason: trimmed, idempotencyKey: key},
@@ -56,6 +58,7 @@ function RejectContent({
           onOpenChange(false);
         },
         onError: e => {
+          limit.trap(e);
           setError(e);
           if (isApiError(e, 'CONFLICT'))
             void qc.invalidateQueries({queryKey: decisionKeys.rec(rec.id)});
@@ -77,10 +80,12 @@ function RejectContent({
             <Button
               variant="danger"
               loading={decide.isPending}
-              disabled={decide.isPending || !trimmed}
+              disabled={decide.isPending || !trimmed || limit.limited}
               onClick={submit}
             >
-              {t('reject.submit')}
+              {limit.limited
+                ? t('common:rateLimit.retryIn', {seconds: limit.seconds})
+                : t('reject.submit')}
             </Button>
           )}
         </>

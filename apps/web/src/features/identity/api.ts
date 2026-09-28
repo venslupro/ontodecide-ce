@@ -12,7 +12,7 @@ import type {
 import type {Locale, Quotas} from '@ontodecide/shared-kernel';
 import {LIFECYCLE} from '@ontodecide/shared-kernel';
 import type {QueryClient} from '@tanstack/react-query';
-import {useSession, type Me} from '../../entities/session/store';
+import {serverNow, useSession, type Me} from '../../entities/session/store';
 import {api, apiRaw, idempotencyKey} from '../../shared/api/client';
 import {qk} from '../../shared/api/query_keys';
 
@@ -169,10 +169,14 @@ export function adminPasskeyOptions(): Promise<Record<string, unknown>> {
   });
 }
 
-/** POST /admin/passkeys (step-up required) → recovery codes on the 2nd. */
+/**
+ * POST /admin/passkeys → recovery codes when the admin reaches 2 passkeys
+ * without unused codes. A step-up is required, except for the caller's own
+ * recovery-code session (it has no passkey left to verify with).
+ */
 export function addAdminPasskey(
   credential: Record<string, unknown>,
-  stepUp: string,
+  stepUp: string | undefined,
   label?: string,
 ): Promise<{passkey: PasskeyDto; total: number; recoveryCodes?: string[]}> {
   return api.post(
@@ -193,7 +197,7 @@ export function applySession(s: BrowserSession, qc?: QueryClient): void {
   if (s.me) qc?.setQueryData(qk.me(), s.me);
   store.setAdminSessionEndsAt(
     useSession.getState().role === 'admin'
-      ? Date.now() + LIFECYCLE.adminSessionHours * 3_600_000
+      ? serverNow() + LIFECYCLE.adminSessionHours * 3_600_000
       : undefined,
   );
 }

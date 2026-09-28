@@ -1,0 +1,32 @@
+{
+  "ci": {
+    "collect": {
+      "startServerCommand": "pnpm --filter @ontodecide/web exec vite preview --port 4173 --strictPort",
+      "startServerReadyPattern": "4173",
+      "url": [
+        "http://localhost:4173/login",
+        "http://localhost:4173/signup",
+        "http://localhost:4173/ended"
+      ],
+      "numberOfRuns": 3,
+      "settings": {
+        "preset": "desktop",
+        "chromeFlags": "--no-sandbox --headless=new",
+        "blockedUrlPatterns": ["*challenges.cloudflare.com*"]
+      }
+    },
+    "assert": {
+      "assertions": {
+        "largest-contentful-paint": ["error", {"maxNumericValue": 2500, "aggregationMethod": "median-run"}],
+        "cumulative-layout-shift": ["warn", {"maxNumericValue": 0.1, "aggregationMethod": "median-run"}],
+        "total-blocking-time": ["warn", {"maxNumericValue": 200, "aggregationMethod": "median-run"}],
+        "categories:performance": ["warn", {"minScore": 0.9, "aggregationMethod": "median-run"}],
+        "resource-summary:script:size": ["warn", {"maxNumericValue": 256000}]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": ".lighthouseci"
+    }
+  }
+}

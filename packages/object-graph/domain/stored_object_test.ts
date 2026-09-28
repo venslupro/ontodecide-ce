@@ -1,13 +1,17 @@
 /**
- * @fileoverview Tests of the read projection, titles and index entries.
+ * @fileoverview Tests of the read projection, declarative functions,
+ * titles and index entries.
  */
 
 import {describe, expect, it} from 'vitest';
 import type {
   CompiledObjectType,
+  CompiledSchema,
+  FunctionDef,
   PropertyDef,
 } from '@ontodecide/ontology/contract';
 import {
+  deriveValues,
   indexEntries,
   projectProps,
   titleOf,
@@ -82,5 +86,87 @@ describe('titles and index rows', () => {
       {prop: 'flag', value: 0},
       {prop: 'geo', value: '{"lat":1,"lon":2}'},
     ]);
+  });
+});
+
+/** The two functions of the supply-chain template (packs/supply_chain.ts). */
+const SUPPLY_CHAIN_FUNCTIONS: FunctionDef[] = [
+  {
+    apiName: 'supplierRiskLevel',
+    objectType: 'Supplier',
+    expr: {
+      if: [
+        {'>=': [{var: 'riskScore'}, 70]},
+        'HIGH',
+        {'>=': [{var: 'riskScore'}, 40]},
+        'MEDIUM',
+        'LOW',
+      ],
+    },
+    returns: 'string',
+  },
+  {
+    apiName: 'stockCoverage',
+    objectType: 'Material',
+    expr: {'/': [{var: 'stock'}, {var: 'safetyStock'}]},
+    returns: 'double',
+  },
+];
+
+function schemaWith(fns: FunctionDef[]): CompiledSchema {
+  return {
+    functions: Object.fromEntries(fns.map(f => [f.apiName, f])),
+  } as unknown as CompiledSchema;
+}
+
+describe('deriveValues', () => {
+  const schema = schemaWith(SUPPLY_CHAIN_FUNCTIONS);
+
+  it('evaluates the functions bound to the object type', () => {
+    expect(deriveValues(schema, 'Supplier', {riskScore: 82})).toEqual({
+      supplierRiskLevel: 'HIGH',
+    });
+    expect(deriveValues(schema, 'Supplier', {riskScore: 45})).toEqual({
+      supplierRiskLevel: 'MEDIUM',
+    });
+    expect(deriveValues(schema, 'Supplier', {riskScore: 3})).toEqual({
+      supplierRiskLevel: 'LOW',
+    });
+    expect(
+      deriveValues(schema, 'Material', {stock: 150, safetyStock: 100}),
+    ).toEqual({stockCoverage: 1.5});
+  });
+
+  it('returns null for division by zero, missing inputs and failures', () => {
+    expect(
+      deriveValues(schema, 'Material', {stock: 5, safetyStock: 0}),
+    ).toEqual({stockCoverage: null});
+    const broken = schemaWith([
+      {
+        apiName: 'bad',
+        objectType: 'Supplier',
+        expr: {eval: ['x']} as never,
+        returns: 'string',
+      },
+      {
+        apiName: 'heavy',
+        objectType: 'Supplier',
+        // 2,000 nested additions exceed the 1,000-step limit.
+        expr: Array.from({length: 2000}).reduce<unknown>(
+          acc => ({'+': [acc, 1]}),
+          0,
+        ) as never,
+        returns: 'double',
+      },
+    ]);
+    expect(deriveValues(broken, 'Supplier', {})).toEqual({
+      bad: null,
+      heavy: null,
+    });
+  });
+
+  it('omits derived values for types without functions', () => {
+    expect(deriveValues(schema, 'Part', {stock: 1})).toBeUndefined();
+    expect(deriveValues(schemaWith([]), 'Supplier', {})).toBeUndefined();
   });
 });

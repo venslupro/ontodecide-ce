@@ -34,6 +34,10 @@ import {
   tabStatus,
   toRecTab,
   toScenarioInput,
+  clampDelay,
+  delayProperties,
+  delayToChange,
+  isTimeProperty,
   topCandidate,
 } from './model';
 
@@ -187,5 +191,46 @@ describe('routeId', () => {
     expect(routeId({}, '/recommendations/rec-203', 'recommendations')).toBe(
       'rec-203',
     );
+  });
+});
+
+describe('延误时长 perturbations', () => {
+  it('recognizes time properties by unit or name', () => {
+    expect(isTimeProperty({apiName: 'leadTimeDays'})).toBe(true);
+    expect(isTimeProperty({apiName: 'daysOfSupply', unit: 'd'})).toBe(true);
+    expect(isTimeProperty({apiName: 'eta', unit: 'h'})).toBe(true);
+    expect(isTimeProperty({apiName: 'capacityPerWeek'})).toBe(false);
+    const nums = [{apiName: 'onHand'}, {apiName: 'leadTimeDays'}];
+    expect(delayProperties(nums).map(p => p.apiName)).toEqual(['leadTimeDays']);
+    expect(delayProperties([{apiName: 'onHand'}])).toHaveLength(1);
+  });
+
+  it('converts days of delay into the relative change (capped at ±100%)', () => {
+    expect(delayToChange(3, 14)).toEqual({change: 0.2143, capped: false});
+    expect(delayToChange(1, 48, 'h')).toEqual({change: 0.5, capped: false});
+    expect(delayToChange(30, 10)).toEqual({change: 1, capped: true});
+    expect(delayToChange(3, 0)).toBeNull();
+    expect(delayToChange(3, null)).toBeNull();
+    expect(delayToChange(3, 'x')).toBeNull();
+    expect(clampDelay(0.84)).toBe(0.8);
+    expect(clampDelay(-2)).toBe(0);
+    expect(clampDelay(1000)).toBe(365);
+  });
+
+  it('builds the scenario body from delay drafts with the current value', () => {
+    const rid = 'ri.Supplier.01J9AAAAAAAAAAAAAAAAAAAAAA';
+    const d = newPerturbation({
+      rid,
+      property: 'leadTimeDays',
+      mode: 'delay',
+      delayDays: 7,
+    });
+    const body = toScenarioInput([d], {}, [], 'n', () => 14);
+    expect(body).toEqual({
+      name: 'n',
+      perturbations: [{rid, property: 'leadTimeDays', change: 0.5}],
+    });
+    // Without a current value the delay cannot be converted (skipped).
+    expect(toScenarioInput([d], {}, []).perturbations).toEqual([]);
   });
 });

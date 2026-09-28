@@ -149,12 +149,15 @@
     "ontology": "本体工作台",
     "automations": "自动化规则",
     "account": "账户与数据",
-    "admin": "平台管理"
+    "admin": "平台管理",
+    "pendingBadge": "{count, number} 条待确认"
   },
   "search": {
     "label": "全局检索",
     "placeholder": "搜索对象、RID、告警...",
-    "openRid": "打开"
+    "openRid": "打开",
+    "groupObjects": "对象",
+    "groupAlerts": "告警"
   },
   "realtime": {
     "idle": "未连接",
@@ -236,6 +239,27 @@
     "HTTP_ERROR": "服务器返回错误",
     "SERVER": "服务暂时出错，请稍后重试",
     "PAYLOAD_TOO_LARGE": "内容过大（请求体不能超过 512 KB）",
-    "RENDER": "页面出错了"
+    "RENDER": "页面出错了",
+    "traceId": "追踪编号",
+    "details": "详情"
+  },
+  "about": {
+    "title": "关于 OntoDecide 社区版",
+    "menu": "关于",
+    "version": "版本 {version}",
+    "body": "本体驱动的智能决策系统社区版。反馈问题时请附上版本号与错误详情中的追踪编号。"
+  },
+  "notifications": {
+    "label": "通知",
+    "labelUnread": "通知（{count, number} 条未读）",
+    "title": "通知",
+    "markAll": "全部标为已读",
+    "empty": "暂无未处理的告警或待确认建议",
+    "alert": "告警",
+    "recommendation": "待确认建议",
+    "new": "未读"
+  },
+  "rateLimit": {
+    "retryIn": "{seconds, number} 秒后可重试"
   }
 }

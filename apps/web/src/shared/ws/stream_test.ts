@@ -3,11 +3,15 @@
  */
 
 import {QueryClient} from '@tanstack/react-query';
-import {describe, expect, it} from 'vitest';
+import {http, HttpResponse} from 'msw';
+import {describe, expect, it, vi} from 'vitest';
+import {server} from '../../test/server';
 import {
   applyFrames,
   LIVE_ALERTS_MAX,
   mergeOverview,
+  POLL_FRAME,
+  pollOverview,
   prependById,
   registerStreamMerger,
   streamUrl,
@@ -99,5 +103,47 @@ describe('applyFrames', () => {
     );
     expect(qc.getQueryState(['me'])?.isInvalidated).toBe(true);
     expect(seen).toEqual([4]);
+  });
+});
+
+describe('polling fallback (GET /situation/overview, fanned out to followers)', () => {
+  it('fetches the 24 h overview and emits it as a poll frame', async () => {
+    let range: string | null = null;
+    server.use(
+      http.get('*/api/v1/situation/overview', ({request}) => {
+        range = new URL(request.url).searchParams.get('range');
+        return HttpResponse.json({kpis: [{id: 'k', value: 9}], alerts: []});
+      }),
+    );
+    const emit = vi.fn();
+    await pollOverview(emit);
+    expect(range).toBe('24h');
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: POLL_FRAME,
+        data: {kpis: [{id: 'k', value: 9}], alerts: []},
+      }),
+    );
+  });
+
+  it('a poll frame (leader or follower) replaces the overview and marks lists stale', () => {
+    const qc = new QueryClient();
+    qc.setQueryData(['situation', 'overview'], {kpis: [], alerts: []});
+    qc.setQueryData(['situation', 'overview', '7d'], {kpis: []});
+    qc.setQueryData(['situation', 'alerts', {status: 'OPEN'}], {pages: []});
+    qc.setQueryData(['decision', 'recs', 'Proposed'], {pages: []});
+    const polled = {kpis: [{id: 'k', value: 2}], alerts: [{id: 'a9'}]};
+    applyFrames(qc, [f(0, POLL_FRAME, polled)]);
+    expect(qc.getQueryData(['situation', 'overview'])).toEqual(polled);
+    expect(
+      qc.getQueryState(['situation', 'overview', '7d'])?.isInvalidated,
+    ).toBe(true);
+    expect(
+      qc.getQueryState(['situation', 'alerts', {status: 'OPEN'}])
+        ?.isInvalidated,
+    ).toBe(true);
+    expect(
+      qc.getQueryState(['decision', 'recs', 'Proposed'])?.isInvalidated,
+    ).toBe(true);
   });
 });

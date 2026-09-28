@@ -12,3 +12,9 @@
 
 /index.html
   Cache-Control: no-cache
+
+/ended.html
+  Cache-Control: no-cache
+
+/ended
+  Cache-Control: no-cache

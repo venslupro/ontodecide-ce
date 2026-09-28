@@ -153,7 +153,8 @@
     "overLimitReason": {
       "importRows": "超出上限：今日剩余导入行数 {left}",
       "objects": "超出上限：对象余量 {left}",
-      "batchMax": "超出上限：每天最多导入 {left} 行"
+      "batchMax": "超出上限：每天最多导入 {left} 行",
+      "links": "超出上限：关系余量 {left}"
     },
     "backToMapping": "返回修改映射",
     "rejectedNote": "被拒绝的行也会提交并计入今日导入行数，服务器会返回相同的拒绝原因。"

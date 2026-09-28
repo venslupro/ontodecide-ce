@@ -82,7 +82,8 @@
     "expired": "Expired, awaiting archive",
     "zipIn": "ZIP deleted in {days} d",
     "downloadZip": "Download ZIP",
-    "empty": "No workspaces"
+    "empty": "No workspaces",
+    "objectsLinks": "Objects / links"
   },
   "menu": {
     "trial": "Extend / shorten trial",
@@ -90,7 +91,10 @@
     "revoke": "Revoke sessions",
     "ban": "Ban e-mail",
     "unban": "Lift ban",
-    "delete": "Delete account"
+    "delete": "Delete account",
+    "details": "Account details",
+    "downloadZip": "Download ZIP",
+    "deleteArchive": "Delete archive"
   },
   "confirm": {
     "workspace": "Target workspace",
@@ -98,7 +102,8 @@
   },
   "reason": {
     "label": "Reason",
-    "required": "Required, recorded in the audit log"
+    "required": "Required, recorded in the audit log",
+    "optional": "Optional, written to the audit log"
   },
   "trial": {
     "title": "Change the trial end",
@@ -194,5 +199,31 @@
     "deleteTitle": "Delete passkey",
     "minTwo": "At least 2 passkeys must remain",
     "empty": "No passkeys"
+  },
+  "detail": {
+    "title": "Account details",
+    "audited": "Viewing account details is written to the admin audit log",
+    "email": "E-mail",
+    "status": "Status",
+    "locale": "Language",
+    "timeZone": "Time zone",
+    "verifiedAt": "E-mail verified",
+    "trialExpiresAt": "Trial ends",
+    "expiredAt": "Expired at",
+    "archivePhase": "Archive phase",
+    "sessions": "Active sessions",
+    "objectsLinks": "Objects / links",
+    "banned": "Banned",
+    "yes": "Yes",
+    "no": "No",
+    "none": "—",
+    "verified": "Verified",
+    "notExpired": "Not expired"
+  },
+  "warn": {
+    "label": "Operational warnings",
+    "analytics": "Account analytics not configured (hourly free-tier check cannot run)",
+    "stuckArchives": "{count, number} archives stuck for 24 h+",
+    "signKey": "B2 signing key rotation due"
   }
 }

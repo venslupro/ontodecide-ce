@@ -155,6 +155,14 @@ export class D1SessionRepository
     return r !== null;
   }
 
+  async setAmr(sessionId: string, amr: AuthMethod[]): Promise<void> {
+    await this.sql(
+      'UPDATE session SET amr = ?2 WHERE session_id = ?1',
+      sessionId,
+      JSON.stringify(amr),
+    ).run();
+  }
+
   async sweep(now: number): Promise<void> {
     await this.db.batch([
       this.sql('DELETE FROM session WHERE expires_at <= ?1', now),

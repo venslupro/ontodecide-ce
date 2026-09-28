@@ -24,7 +24,7 @@ import {
   useAdminSettings,
 } from '../../features/admin/api';
 import {AdminConfirmDialog} from '../../features/admin/components/confirm_dialog';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {cn} from '../../shared/lib/cn';
 import {fmt, shortTid} from '../../shared/lib/format';
 import {Badge} from '../../shared/ui/badge';
@@ -412,7 +412,9 @@ function ArchivesPanel() {
                     size="sm"
                     onClick={() =>
                       void downloadArchive(a.tenantId, e =>
-                        toast.error(errorMessage(e, t)),
+                        toast.error(errorMessage(e, t), undefined, {
+                          traceId: errorTraceId(e),
+                        }),
                       )
                     }
                   >
@@ -472,6 +474,30 @@ function ArchivesPanel() {
   );
 }
 
+/**
+ * Operational warnings of the overview: account analytics not configured,
+ * archive sagas stuck ≥ 24 h, B2 signing key due for rotation.
+ */
+export function PlatformWarnings({ov}: {ov?: PlatformOverview}) {
+  const {t} = useTranslation('admin');
+  if (!ov) return null;
+  const chips: string[] = [];
+  if (ov.analyticsConfigured === false) chips.push(t('warn.analytics'));
+  if ((ov.stuckArchives ?? 0) > 0)
+    chips.push(t('warn.stuckArchives', {count: ov.stuckArchives}));
+  if (ov.signKeyRotationDue) chips.push(t('warn.signKey'));
+  if (!chips.length) return null;
+  return (
+    <ul aria-label={t('warn.label')} className="flex flex-wrap gap-2">
+      {chips.map(c => (
+        <li key={c}>
+          <Badge tone="warn">● {c}</Badge>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Platform admin page. */
 export function AdminPage() {
   const {t} = useTranslation('admin');
@@ -484,6 +510,7 @@ export function AdminPage() {
         title={t('title')}
         actions={<AdminTools />}
       />
+      <PlatformWarnings ov={o} />
       {ov.isError && (
         <p role="alert" className="text-sm text-crit">
           {errorMessage(ov.error, t)}

@@ -251,4 +251,83 @@ describe('StreamHub', () => {
     a.stop();
     b.stop();
   });
+
+  it('follower tabs receive frames the leader produces itself (poll results)', async () => {
+    const bus = new Bus();
+    const locks = new FakeLocks();
+    const hA: {current?: ClientHandlers} = {};
+    const got: string[] = [];
+    const a = new StreamHub({
+      scope: 'ws1',
+      locks,
+      createChannel: () => new FakeChannel(bus),
+      visibility: null,
+      createClient: fakeClient([], hA),
+      onFrame: () => {},
+      onState: () => {},
+      onEnded: () => {},
+    });
+    const b = new StreamHub({
+      scope: 'ws1',
+      locks,
+      createChannel: () => new FakeChannel(bus),
+      visibility: null,
+      createClient: fakeClient([], {}),
+      onFrame: fr => got.push(fr.type),
+      onState: () => {},
+      onEnded: () => {},
+    });
+    a.start();
+    b.start();
+    await vi.advanceTimersByTimeAsync(0);
+    hA.current!.onState('polling');
+    hA.current!.onFrame({seq: 0, type: 'poll', data: {}, occurredAt: ''});
+    expect(got).toEqual(['poll']);
+    a.stop();
+    b.stop();
+  });
+
+  it('a new leader learns the visibility of tabs opened before it', async () => {
+    const bus = new Bus();
+    const locks = new FakeLocks();
+    // B never wins the lock (its request stays pending).
+    const never: LockManagerLike = {request: () => new Promise(() => {})};
+    const logC: string[] = [];
+    const visA = new Vis();
+    const visB = new Vis();
+    const visC = new Vis();
+    const hub = (vis: Vis, l: LockManagerLike, log: string[] = []): StreamHub =>
+      new StreamHub({
+        scope: 'ws1',
+        locks: l,
+        createChannel: () => new FakeChannel(bus),
+        visibility: vis,
+        createClient: fakeClient(log, {}),
+        onFrame: () => {},
+        onState: () => {},
+        onEnded: () => {},
+      });
+    visA.set('hidden');
+    visC.set('hidden');
+    const a = hub(visA, locks);
+    const b = hub(visB, never); // visible, opened before C
+    a.start();
+    b.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const c = hub(visC, locks, logC);
+    c.start();
+    await vi.advanceTimersByTimeAsync(0);
+    // A (hidden) leaves; C (hidden) takes over while B is still visible.
+    a.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(c.isLeader()).toBe(true);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(logC).toEqual(['start']);
+    // Once B hides too, C pauses after 5 minutes.
+    visB.set('hidden');
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(logC).toContain('pause');
+    b.stop();
+    c.stop();
+  });
 });

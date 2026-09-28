@@ -10,7 +10,7 @@ import userEvent from '@testing-library/user-event';
 import {http, HttpResponse} from 'msw';
 import {describe, expect, it, vi} from 'vitest';
 import {useSession} from '../../entities/session/store';
-import {S017} from '../../test/fixtures';
+import {M2231, S017} from '../../test/fixtures';
 import {businessDb} from '../../test/handlers/business';
 import {API, problem} from '../../test/handlers/problem';
 import {renderWithProviders} from '../../test/render';
@@ -122,6 +122,69 @@ describe('ScenarioPage', () => {
     );
     expect(
       await screen.findByRole('table', {name: 'KPI 对比表'}),
+    ).toBeInTheDocument();
+  });
+
+  it('延误时长: converts days of delay with the current value and shows both', async () => {
+    const user = userEvent.setup();
+    render(`/scenarios?rid=${M2231}`);
+    await screen.findByTestId('perturbation');
+    await user.click(await screen.findByRole('radio', {name: '延误时长'}));
+    expect(screen.getByRole('combobox', {name: '属性 1'})).toHaveValue(
+      'daysOfSupply',
+    );
+    const days = screen.getByLabelText('延误天数');
+    await user.clear(days);
+    await user.type(days, '0.8');
+    expect(screen.getByTestId('perturbation-value')).toHaveTextContent(
+      '+0.8 天',
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('delay-conversion')).toHaveTextContent(
+        '+0.8 天 ≈ +50%（当前 1.6 d）',
+      ),
+    );
+    await user.click(screen.getByRole('button', {name: '运行推演'}));
+    await waitFor(() =>
+      expect(
+        businessDb.requests.some(
+          r => r.method === 'POST' && r.path === '/scenarios',
+        ),
+      ).toBe(true),
+    );
+    const req = businessDb.requests.find(
+      r => r.method === 'POST' && r.path === '/scenarios',
+    )!;
+    expect(req.body).toMatchObject({
+      perturbations: [{rid: M2231, property: 'daysOfSupply', change: 0.5}],
+    });
+  });
+
+  it('保存情景: names the scenario, stores it (POST /scenarios) and confirms', async () => {
+    const user = userEvent.setup();
+    const {router} = render('/scenarios/scn-041');
+    await screen.findByRole('heading', {name: 'S-017 产能下降影响评估'});
+    await user.click(screen.getByRole('button', {name: '保存情景'}));
+    const dialog = await screen.findByRole('dialog', {name: '保存情景'});
+    const name = within(dialog).getByLabelText('情景名称');
+    expect(name).toHaveValue('S-017 产能下降影响评估');
+    await user.clear(name);
+    expect(within(dialog).getByRole('button', {name: '保存'})).toBeDisabled();
+    await user.type(name, '周会评估');
+    await user.click(within(dialog).getByRole('button', {name: '保存'}));
+    expect(
+      await screen.findByText('情景「周会评估」已保存'),
+    ).toBeInTheDocument();
+    const req = businessDb.requests.find(
+      r => r.method === 'POST' && r.path === '/scenarios',
+    )!;
+    expect(req.body).toMatchObject({name: '周会评估'});
+    await waitFor(() =>
+      expect(router.state.location.pathname).toMatch(/^\/scenarios\/scn-\d+$/),
+    );
+    expect(await screen.findByText('已保存')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', {name: '周会评估'}),
     ).toBeInTheDocument();
   });
 

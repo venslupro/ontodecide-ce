@@ -47,6 +47,7 @@ import {
   D1PendingChangeRepository,
   D1SessionRepository,
   D1SettingsRepository,
+  D1SystemFlagRepository,
   D1UsageCounter,
   D1WorkspaceRepository,
 } from '../infrastructure';
@@ -108,6 +109,9 @@ export function composeIdentity(o: IdentityOptions): IdentityServices {
   const auditRepo = new D1AuditRepository(db);
   const pendingRepo = new D1PendingChangeRepository(db);
   const queryRepo = new D1AdminQueryRepository(db);
+  const flagRepo = new D1SystemFlagRepository(db);
+  // The audit chain is written by Identity (passkeys, sign-ins) too.
+  const audit = new AuditService(auditRepo, clock);
 
   const secrets = new Secrets(cfg.emailPepper, cfg.emailEncKey);
   const tokens = new TokenService(cfg.signingKey, clock);
@@ -205,6 +209,7 @@ export function composeIdentity(o: IdentityOptions): IdentityServices {
     notification,
     tokens,
     secrets,
+    audit,
     clock,
     logger,
     setupCode: cfg.bootstrapSetupCode,
@@ -222,6 +227,7 @@ export function composeIdentity(o: IdentityOptions): IdentityServices {
   const trials = new TrialService({
     workspaces: workspaceRepo,
     archives: archiveRepo,
+    ledgers: ledgerRepo,
     blobs: o.blobs,
     lifecycles: o.lifecycles,
     accounts,
@@ -240,6 +246,7 @@ export function composeIdentity(o: IdentityOptions): IdentityServices {
     signer: o.signer,
     lifecycles: o.lifecycles,
     usage,
+    flags: flagRepo,
     accounts,
     notification,
     clock,
@@ -252,7 +259,6 @@ export function composeIdentity(o: IdentityOptions): IdentityServices {
   });
 
   // PlatformAdmin.
-  const audit = new AuditService(auditRepo, clock);
   const admin = new AdminService({
     passkeys,
     audit,
@@ -265,9 +271,13 @@ export function composeIdentity(o: IdentityOptions): IdentityServices {
     queries: queryRepo,
     settings: settingsRepo,
     usage,
+    flags: flagRepo,
+    lifecycles: o.lifecycles,
     signer: o.signer,
     secrets,
     clock,
+    analyticsConfigured: o.analytics !== null,
+    signKeyId: cfg.b2SignKeyId ?? null,
     purgeBacklogLimit: cfg.purgeBacklogLimit,
     trialHours: cfg.trialHours,
     archiveDays: cfg.archiveDays,
@@ -282,8 +292,10 @@ export function composeIdentity(o: IdentityOptions): IdentityServices {
     notification,
     audit,
     usage,
+    flags: flagRepo,
     blobs: o.blobs,
     analytics: o.analytics,
+    signKeyId: cfg.b2SignKeyId ?? null,
     secrets,
     clock,
     logger,

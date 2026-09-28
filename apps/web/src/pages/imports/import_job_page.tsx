@@ -10,7 +10,7 @@ import {useTranslation} from 'react-i18next';
 import {useImportJob} from '../../features/integration/api';
 import {JobStatusBadge} from '../../features/integration/components/job_status_badge';
 import {RejectedTable} from '../../features/integration/components/rejected_table';
-import {errorMessage} from '../../shared/api/error_message';
+import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {isApiError} from '../../shared/api/errors';
 import {fmt} from '../../shared/lib/format';
 import {Button} from '../../shared/ui/button';
@@ -48,6 +48,7 @@ export function ImportJobPage({jobId}: {jobId?: string} = {}) {
       <EmptyState title={t('job.notFound')} />
     ) : (
       <ErrorView
+        traceId={errorTraceId(q.error)}
         detail={errorMessage(q.error, t)}
         onRetry={() => void q.refetch()}
       />

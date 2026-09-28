@@ -1,5 +1,6 @@
 # Deploys one production Worker: install → render wrangler.jsonc from
-# Terraform outputs → D1 migrations → deploy → secrets.
+# Terraform outputs → D1 migrations → deploy (secrets included in the
+# deployed version).
 # The caller's job env provides the Cloudflare, Terraform-state and secret
 # values (see deploy.yml). Secrets that come from Terraform (Turnstile, B2
 # archive keys) are read from its sensitive outputs and masked.
@@ -84,30 +85,37 @@ runs:
         flags=()
         [[ "${D1_RESET_LEGACY:-}" != 'true' ]] || flags+=(--reset-legacy)
         node scripts/d1_migrate.mjs -c "${CONFIG}" "${flags[@]}"
-    - name: Deploy
-      shell: bash
-      run: npx wrangler deploy -c "apps/${{ inputs.worker }}/wrangler.jsonc"
-    - name: Upload secrets
-      if: inputs.secrets != ''
+    # Secrets ship with the deployed version itself (`wrangler deploy
+    # --secrets-file`, additive: omitted secrets keep their value), so a
+    # freshly created Worker — e.g. identity-access with its */2 cron —
+    # never runs a version without them. `wrangler secret bulk` would only
+    # work once the Worker exists, i.e. after its first deploy.
+    - name: Deploy (with secrets)
       shell: bash
       env:
         CONFIG: apps/${{ inputs.worker }}/wrangler.jsonc
         NAMES: ${{ inputs.secrets }}
         BOOTSTRAP_ADMIN_EMAIL: ${{ inputs.admin-email }}
       run: |
-        # shellcheck disable=SC2086  # NAMES is a word list.
-        json="$(node -e '
-          const out = {};
-          const skipped = [];
-          for (const k of process.argv.slice(1)) {
-            if (process.env[k]) out[k] = process.env[k];
-            else skipped.push(k);
-          }
-          if (skipped.length) console.error(`Not set (kept as is): ${skipped.join(" ")}`);
-          process.stdout.write(JSON.stringify(out));
-        ' ${NAMES})"
-        if [[ "${json}" == '{}' ]]; then
-          echo 'No secret values to upload.'
-        else
-          printf '%s' "${json}" | npx wrangler secret bulk -c "${CONFIG}"
+        flags=()
+        if [[ -n "${NAMES}" ]]; then
+          secrets_file="$(mktemp "${RUNNER_TEMP:-/tmp}/secrets.XXXXXX.json")"
+          chmod 600 "${secrets_file}"
+          trap 'rm -f "${secrets_file}"' EXIT
+          # shellcheck disable=SC2086  # NAMES is a word list.
+          node -e '
+            const out = {};
+            const skipped = [];
+            for (const k of process.argv.slice(2)) {
+              if (process.env[k]) out[k] = process.env[k];
+              else skipped.push(k);
+            }
+            if (skipped.length) console.error(`Not set (kept as is): ${skipped.join(" ")}`);
+            require("fs").writeFileSync(process.argv[1], JSON.stringify(out));
+            console.error(`Secrets in this version: ${Object.keys(out).join(" ") || "(none)"}`);
+          ' "${secrets_file}" ${NAMES}
+          if [[ "$(cat "${secrets_file}")" != '{}' ]]; then
+            flags+=(--secrets-file "${secrets_file}")
+          fi
         fi
+        npx wrangler deploy -c "${CONFIG}" "${flags[@]}"

@@ -145,6 +145,35 @@ describe('ETag responses', () => {
     expect((await problemOf(missing)).code).toBe('NOT_FOUND');
   });
 
+  it('objects: GET validates expand / depth / linkTypes', async () => {
+    const gw = await makeGateway({
+      objects: {
+        getObject: async () => object(5) as never,
+        getLinks: async () =>
+          ({nodes: [], edges: [], truncated: false}) as never,
+      },
+    });
+    const token = await ownerToken();
+    for (const q of ['expand=nodes', 'expand=links&depth=3', 'depth=0']) {
+      const res = await call(gw, 'GET', `/objects/${RID}?${q}`, {token});
+      expect(res.status).toBe(400);
+      expect((await problemOf(res)).code).toBe('VALIDATION_FAILED');
+    }
+    const ok = await call(
+      gw,
+      'GET',
+      `/objects/${RID}?expand=links&depth=2&linkTypes=supplies,dependsOn`,
+      {token},
+    );
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('etag')).toBe('"v5"');
+    expect(((await ok.json()) as {links: unknown}).links).toEqual({
+      nodes: [],
+      edges: [],
+      truncated: false,
+    });
+  });
+
   it('ontology: schema etag on reads and writes; PUT needs apiName = id', async () => {
     const putDefinition = vi.fn(async () => ({etag: 4}));
     const gw = await makeGateway({

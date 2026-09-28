@@ -57,6 +57,7 @@ export function PreviewStep({
   progress,
   runError,
   canResume,
+  retryIn = 0,
   onRun,
   onCancel,
 }: {
@@ -68,6 +69,8 @@ export function PreviewStep({
   progress: UploadProgress | null;
   runError: unknown;
   canResume: boolean;
+  /** Seconds left of a 429 RATE_LIMITED wait (0: may run). */
+  retryIn?: number;
   onRun: () => void;
   onCancel: () => void;
 }) {
@@ -188,10 +191,14 @@ export function PreviewStep({
             <Button
               variant="primary"
               onClick={onRun}
-              disabled={plan.submitRows === 0}
+              disabled={plan.submitRows === 0 || retryIn > 0}
             >
               {canResume ? <RotateCw aria-hidden /> : <Play aria-hidden />}
-              {canResume ? t('run.resume') : t('run.start')}
+              {retryIn > 0
+                ? t('common:rateLimit.retryIn', {seconds: retryIn})
+                : canResume
+                  ? t('run.resume')
+                  : t('run.start')}
             </Button>
           )}
         </div>
