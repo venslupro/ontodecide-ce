@@ -11,31 +11,37 @@
 #   --dry-run  Only list what would be deleted.
 #   --yes      Skip the confirmation prompt.
 #   --domain   The APP_DOMAIN in use (default: $APP_DOMAIN). Also deletes the
-#              zone records and rules Terraform created there (app CNAME,
-#              apex 100:: placeholder, _dmarc, mail records listed in
-#              $MAIL_DNS_RECORDS, redirect and rate-limit rulesets) and the
-#              pages.dev bulk redirect. Zone settings are left unchanged.
-#   --env-file Local credentials file (default .env.local), relative to the
+#              Workers Route, the zone records and rules Terraform created
+#              there (app CNAME, apex 100:: placeholder, _dmarc, mail records
+#              listed in $MAIL_DNS_RECORDS, redirect and rate-limit rulesets)
+#              and the pages.dev bulk redirect. Zone settings are left
+#              unchanged.
+#   --env-file Credentials file (default .env.local), relative to the
 #              current directory.
+#
+# Deleted, in dependency order (names as in infra/*.tf and
+# apps/*/wrangler.jsonc.tpl, prefix ontodecide-prd):
+#   Wrangler:  Pages project ontodecide-ce (with its custom domain),
+#              7 Workers (with their Durable Objects, crons and secrets)
+#   Terraform: 2 queues, 5 D1 databases, B2 archive bucket (emptied first)
+#              and its 3 keys, Turnstile widget, and with a domain the zone
+#              records and rules
+# A live run then lists everything again to verify nothing is left, and
+# only then hides the Terraform state file (earlier versions are kept).
+# If anything cannot be listed or deleted, the state is kept; fix it and
+# rerun (the script is idempotent).
+#
+# Self-contained; runs with macOS /bin/bash (3.2). Requires curl, jq and,
+# from the credentials file (KEY=value lines, chmod 600) or the
+# environment:
+#   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID  (the CI deploy token)
+#   B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY    (B2 master key)
+# The CI secret names (CF_API_TOKEN, B2_MASTER_KEY, …) are accepted too.
 #
 # Output is colored on a terminal; NO_COLOR=1 turns colors off and
 # FORCE_COLOR=1 keeps them when piped.
-#
-# Deleted, in dependency order: Pages project (with its custom domain),
-# 7 Workers, 2 queues, 5 D1 databases, B2 archive bucket (emptied first)
-# and its keys, Turnstile widget, zone records and rules, then the
-# Terraform state file (earlier versions are kept).
-#
-# Requires curl, jq and, from the credentials file (KEY=value lines,
-# chmod 600) or the environment:
-#   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
-#   B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY      (B2 master key)
-# The CI secret names (CF_API_TOKEN, B2_MASTER_KEY, …) are accepted too.
 
 set -euo pipefail
-
-# shellcheck source=scripts/lib/cloud.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/cloud.sh"
 
 readonly PROJECT="ontodecide"
 readonly ENVIRONMENT="prd"
@@ -44,6 +50,7 @@ readonly PAGES_PROJECT="ontodecide-ce" # exempt from the naming rule
 readonly STATE_BUCKET="ontodecide-ce-tfstate"
 readonly STATE_KEY="terraform.tfstate" # infra/versions.tf backend key
 readonly TOTAL_STEPS=10
+readonly CF_API="https://api.cloudflare.com/client/v4"
 
 readonly -a D1_SERVICES=(
   identity-access ontology-manager data-integration object-graph
@@ -57,7 +64,117 @@ readonly -a WORKERS=(
 readonly -a QUEUES=(domain-events dead-letter)
 readonly -a B2_KEYS=(archive-write archive-sign-a archive-sign-b)
 
+DRY_RUN=false
+ASSUME_YES=false
+ENV_FILE=".env.local"
 DOMAIN="${APP_DOMAIN:-}"
+
+# delete: normal run; verify: the second pass, where every resource still
+# found is a failure.
+MODE=delete
+
+# Progress counters, updated by step() and act().
+step_num=0
+step_items=0
+deleted_count=0
+planned_count=0
+failure_count=0
+
+# ---- Output ---------------------------------------------------------------
+
+# Sets the color codes: on a terminal or with FORCE_COLOR, never with
+# NO_COLOR (https://no-color.org).
+setup_colors() {
+  if [[ -z "${NO_COLOR:-}" ]] \
+    && { [[ -n "${FORCE_COLOR:-}" ]] \
+      || [[ -t 1 && "${TERM:-}" != dumb ]]; }; then
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    RED=$'\033[31m'
+    GREEN=$'\033[32m'
+    YELLOW=$'\033[33m'
+    CYAN=$'\033[36m'
+    RESET=$'\033[0m'
+  else
+    BOLD="" DIM="" RED="" GREEN="" YELLOW="" CYAN="" RESET=""
+  fi
+  readonly BOLD DIM RED GREEN YELLOW CYAN RESET
+}
+
+# Prints an error message to STDERR.
+err() {
+  printf '%s✗ error:%s %s\n' "${RED}${BOLD}" "${RESET}" "$*" >&2
+}
+
+# Prints a warning message to STDERR.
+warn() {
+  printf '%s! warning:%s %s\n' "${YELLOW}${BOLD}" "${RESET}" "$*" >&2
+}
+
+# Prints the header comment of this script as help text.
+usage() {
+  awk 'NR > 2 && /^#/ { sub(/^# ?/, ""); print; next } NR > 2 { exit }' \
+    "$0"
+}
+
+# Closes the current step, noting when it found nothing.
+step_end() {
+  if [[ "${MODE}" == delete ]] && ((step_num > 0 && step_items == 0)); then
+    printf '  %s– nothing to delete%s\n' "${DIM}" "${RESET}"
+  fi
+}
+
+# Starts the next numbered step, titled $1 (silent while verifying).
+step() {
+  [[ "${MODE}" == delete ]] || return 0
+  step_end
+  ((step_num += 1))
+  step_items=0
+  printf '\n%sStep %d/%d%s  %s%s%s\n' "${CYAN}${BOLD}" "${step_num}" \
+    "${TOTAL_STEPS}" "${RESET}" "${BOLD}" "$1" "${RESET}"
+}
+
+# Prints informational text $2 in color $1 inside the current step.
+note() {
+  ((step_items += 1))
+  printf '  %s%s%s\n' "$1" "$2" "${RESET}"
+}
+
+#######################################
+# Deletes one resource by running a command, unless --dry-run. While
+# verifying, only reports that the resource still exists.
+# Arguments:
+#   Resource description, then the command and its arguments.
+#######################################
+act() {
+  local what="$1"
+  shift
+  ((step_items += 1))
+  if [[ "${MODE}" == verify ]]; then
+    printf '  %s✗ still exists%s %s\n' "${RED}${BOLD}" "${RESET}" \
+      "${what}" >&2
+    ((failure_count += 1))
+  elif [[ "${DRY_RUN}" == true ]]; then
+    printf '  %s○ would delete%s %s\n' "${YELLOW}" "${RESET}" "${what}"
+    ((planned_count += 1))
+  elif "$@"; then
+    printf '  %s✓ deleted%s      %s\n' "${GREEN}" "${RESET}" "${what}"
+    ((deleted_count += 1))
+  else
+    printf '  %s✗ failed%s       %s\n' "${RED}${BOLD}" "${RESET}" \
+      "${what}" >&2
+    ((failure_count += 1))
+  fi
+}
+
+# Records that resources $1 could not be listed (the error is on STDERR);
+# they are kept, and so is the Terraform state.
+list_failed() {
+  note "${RED}${BOLD}" "✗ could not list $1; nothing deleted here"
+  ((failure_count += 1))
+}
+
+# ---- Configuration --------------------------------------------------------
 
 parse_args() {
   while (($# > 0)); do
@@ -73,7 +190,7 @@ parse_args() {
         shift
         ;;
       -h | --help)
-        usage "$0"
+        usage
         exit 0
         ;;
       *)
@@ -83,55 +200,386 @@ parse_args() {
     esac
     shift
   done
-  readonly DRY_RUN ASSUME_YES ENV_FILE DOMAIN
+  readonly DRY_RUN ASSUME_YES ENV_FILE
 }
 
-# Deletes the Pages project, emptying it first if it has many deployments.
+#######################################
+# Loads the credentials file (if any) and checks the credentials.
+# Globals:
+#   CONFIG_SOURCE CF_TOKEN CF_ACCOUNT B2_ID B2_KEY DOMAIN (set)
+#######################################
+load_config() {
+  local var bin item
+  local -a missing=()
+  CONFIG_SOURCE="environment variables"
+  if [[ -f "${ENV_FILE}" ]]; then
+    CONFIG_SOURCE="${ENV_FILE}"
+    if [[ -n "$(find "${ENV_FILE}" -perm -004)" ]]; then
+      warn "${ENV_FILE} is world-readable (run: chmod 600 ${ENV_FILE})"
+    fi
+    set -a
+    # shellcheck disable=SC1090
+    source "${ENV_FILE}"
+    set +a
+  elif [[ "${ENV_FILE}" != ".env.local" ]]; then
+    err "config file ${ENV_FILE} not found"
+    exit 1
+  fi
+  # --domain wins over APP_DOMAIN from the environment or the file.
+  DOMAIN="${DOMAIN:-${APP_DOMAIN:-}}"
+  readonly DOMAIN
+
+  CF_TOKEN="${CLOUDFLARE_API_TOKEN:-${CF_API_TOKEN:-}}"
+  CF_ACCOUNT="${CLOUDFLARE_ACCOUNT_ID:-${CF_ACCOUNT_ID:-}}"
+  B2_ID="${B2_APPLICATION_KEY_ID:-${B2_MASTER_KEY_ID:-}}"
+  B2_KEY="${B2_APPLICATION_KEY:-${B2_MASTER_KEY:-}}"
+
+  for var in CF_TOKEN:CLOUDFLARE_API_TOKEN CF_ACCOUNT:CLOUDFLARE_ACCOUNT_ID \
+    B2_ID:B2_APPLICATION_KEY_ID B2_KEY:B2_APPLICATION_KEY; do
+    item="${var%%:*}"
+    [[ -n "${!item}" ]] || missing+=("${var#*:}")
+  done
+  for bin in curl jq; do
+    command -v "${bin}" >/dev/null || missing+=("command:${bin}")
+  done
+  if ((${#missing[@]} > 0)); then
+    err "missing configuration in ${CONFIG_SOURCE} (see --help):"
+    for item in "${missing[@]}"; do
+      printf '    %s•%s %s\n' "${RED}" "${RESET}" "${item}" >&2
+    done
+    exit 1
+  fi
+}
+
+# Asks for the prefix before a live run unless --yes; exits 1 otherwise.
+confirm() {
+  local answer
+  [[ "${DRY_RUN}" == false && "${ASSUME_YES}" == false ]] || return 0
+  printf '\n%sThis permanently deletes all %s resources, services and data.%s\n' \
+    "${RED}${BOLD}" "${PREFIX}" "${RESET}"
+  read -r -p "Type ${PREFIX} to continue: " answer
+  if [[ "${answer}" != "${PREFIX}" ]]; then
+    warn "aborted; nothing was deleted"
+    exit 1
+  fi
+}
+
+# Prints the title, target, mode and config source.
+print_banner() {
+  printf '%sOntoDecide reset%s\n' "${BOLD}" "${RESET}"
+  printf '  %starget%s   %s\n' "${DIM}" "${RESET}" \
+    "${PREFIX}${DOMAIN:+ + zone ${DOMAIN}}"
+  if [[ "${DRY_RUN}" == true ]]; then
+    printf '  %smode%s     %sdry run%s (nothing is deleted)\n' \
+      "${DIM}" "${RESET}" "${YELLOW}${BOLD}" "${RESET}"
+  else
+    printf '  %smode%s     %sLIVE%s (resources are deleted)\n' \
+      "${DIM}" "${RESET}" "${RED}${BOLD}" "${RESET}"
+  fi
+  printf '  %sconfig%s   %s\n' "${DIM}" "${RESET}" "${CONFIG_SOURCE}"
+}
+
+# Prints the totals; exits 1 if anything failed or is left.
+print_summary() {
+  step_end
+  printf '\n%sSummary%s  %s(%ds)%s\n' "${BOLD}" "${RESET}" "${DIM}" \
+    "${SECONDS}" "${RESET}"
+  if [[ "${DRY_RUN}" == true ]]; then
+    printf '  %s○ %d to delete%s\n' "${YELLOW}" "${planned_count}" "${RESET}"
+  else
+    printf '  %s✓ %d deleted%s\n' "${GREEN}" "${deleted_count}" "${RESET}"
+  fi
+  if ((failure_count > 0)); then
+    printf '  %s✗ %d failed, left or not checked%s\n' "${RED}${BOLD}" \
+      "${failure_count}" "${RESET}"
+    printf '\n%sFinished with failures.%s' "${RED}${BOLD}" "${RESET}"
+    printf ' Fix them and rerun (the script is idempotent).\n'
+    exit 1
+  fi
+  if [[ "${DRY_RUN}" == true ]]; then
+    printf '\n%sDry run: nothing was deleted.%s' "${YELLOW}${BOLD}" "${RESET}"
+    printf ' Run without --dry-run to delete.\n'
+  else
+    printf '\n%sDone.%s Nothing is left; the next Terraform + Deploy run' \
+      "${GREEN}${BOLD}" "${RESET}"
+    printf ' recreates everything.\n'
+  fi
+}
+
+# ---- Cloudflare -----------------------------------------------------------
+
+# Calls the Cloudflare account API: cf METHOD PATH; prints the body.
+cf() {
+  curl -sS -X "$1" -H "Authorization: Bearer ${CF_TOKEN}" \
+    "${CF_API}/accounts/${CF_ACCOUNT}$2"
+}
+
+# Calls the Cloudflare zone API: cf_zone METHOD ZONE_ID PATH.
+cf_zone() {
+  curl -sS -X "$1" -H "Authorization: Bearer ${CF_TOKEN}" \
+    "${CF_API}/zones/$2$3"
+}
+
+#######################################
+# Prints Cloudflare response body $2 of call $1 if it reports success;
+# otherwise prints the API errors to STDERR and fails, so a missing token
+# permission is never mistaken for "nothing to delete".
+#######################################
+cf_checked() {
+  local messages
+  if jq -e '.success == true' >/dev/null 2>&1 <<<"$2"; then
+    printf '%s\n' "$2"
+    return 0
+  fi
+  messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
+    2>/dev/null <<<"$2" || true)"
+  err "$1: ${messages:-no valid response}"
+  return 1
+}
+
+# Prints the body of GET PATH on the account API, or fails.
+cf_get() {
+  cf_checked "GET $1" "$(cf GET "$1")"
+}
+
+# Prints the body of GET PATH on zone ZONE_ID, or fails.
+cf_zone_get() {
+  cf_checked "GET zone $2" "$(cf_zone GET "$1" "$2")"
+}
+
+# Succeeds if the Cloudflare call cf METHOD PATH reports success.
+cf_ok() {
+  cf "$@" | jq -e '.success == true' >/dev/null
+}
+
+# Succeeds if cf_zone METHOD ZONE_ID PATH reports success.
+cf_zone_ok() {
+  cf_zone "$@" | jq -e '.success == true' >/dev/null
+}
+
+#######################################
+# Prints a jq filter over every page of a Cloudflare account collection;
+# fails if a page cannot be read.
+# Arguments:
+#   Collection path, jq filter applied to each item.
+#######################################
+cf_list() {
+  local path="$1"
+  local filter="$2"
+  local page=1
+  local sep='?'
+  local body
+  [[ "${path}" != *\?* ]] || sep='&'
+  while true; do
+    body="$(cf_get "${path}${sep}page=${page}&per_page=100")" || return 1
+    jq -r ".result[]? | ${filter}" <<<"${body}"
+    (($(jq '.result | length' <<<"${body}") < 100)) && break
+    ((page += 1))
+  done
+}
+
+# Prints the ids of name $1 from "name id" lines on STDIN.
+id_of() {
+  awk -v n="$1" '$1 == n { print $2 }'
+}
+
+# ---- Backblaze B2 ---------------------------------------------------------
+
+# Calls the Backblaze B2 native API: b2 CALL JSON; prints the JSON body.
+b2() {
+  curl -sS -H "Authorization: ${B2_TOKEN}" -d "$2" "${B2_API}/b2api/v3/$1"
+}
+
+# Authorizes the B2 master key (sets B2_TOKEN B2_API B2_ACCOUNT).
+b2_authorize() {
+  [[ -z "${B2_TOKEN:-}" ]] || return 0
+  local auth
+  auth="$(curl -sS -u "${B2_ID}:${B2_KEY}" \
+    https://api.backblazeb2.com/b2api/v3/b2_authorize_account)"
+  B2_TOKEN="$(jq -r '.authorizationToken // empty' <<<"${auth}")"
+  B2_API="$(jq -r '.apiInfo.storageApi.apiUrl // empty' <<<"${auth}")"
+  B2_ACCOUNT="$(jq -r '.accountId // empty' <<<"${auth}")"
+  if [[ -z "${B2_TOKEN}" ]]; then
+    err "B2 authorization failed" \
+      "(check B2_APPLICATION_KEY_ID / B2_APPLICATION_KEY)"
+    exit 1
+  fi
+}
+
+# Prints B2 response body $2 of call $1 if it has field $3; otherwise
+# prints the B2 error to STDERR and fails.
+b2_checked() {
+  if jq -e --arg f "$3" 'has($f)' >/dev/null 2>&1 <<<"$2"; then
+    printf '%s\n' "$2"
+    return 0
+  fi
+  err "$1: $(jq -r '.message // empty' 2>/dev/null <<<"$2" || true)"
+  return 1
+}
+
+# Prints the id of B2 bucket $1, nothing if it does not exist, or fails.
+b2_bucket_id() {
+  local request body
+  request="$(jq -nc --arg a "${B2_ACCOUNT}" --arg n "$1" \
+    '{accountId: $a, bucketName: $n}')"
+  body="$(b2_checked b2_list_buckets \
+    "$(b2 b2_list_buckets "${request}")" buckets)" || return 1
+  jq -r '.buckets[0]?.bucketId // empty' <<<"${body}"
+}
+
+#######################################
+# Deletes every file version and unfinished upload of a B2 bucket, then
+# the bucket.
+# Arguments:
+#   Bucket id.
+#######################################
+b2_delete_bucket() {
+  local bucket="$1"
+  local next_name=""
+  local next_id=""
+  local request body file id
+  while true; do
+    request="$(jq -nc --arg b "${bucket}" --arg n "${next_name}" \
+      --arg i "${next_id}" '{bucketId: $b, maxFileCount: 1000}
+        + (if $n != "" then {startFileName: $n, startFileId: $i}
+           else {} end)')"
+    body="$(b2_checked b2_list_file_versions \
+      "$(b2 b2_list_file_versions "${request}")" files)" || return 1
+    while IFS= read -r file; do
+      [[ -n "${file}" ]] || continue
+      b2 b2_delete_file_version \
+        "$(jq -c '. + {bypassGovernance: true}' <<<"${file}")" >/dev/null
+    done < <(jq -c '.files[] | {fileName, fileId}' <<<"${body}")
+    next_name="$(jq -r '.nextFileName // empty' <<<"${body}")"
+    next_id="$(jq -r '.nextFileId // empty' <<<"${body}")"
+    [[ -n "${next_name}" ]] || break
+  done
+
+  request="$(jq -nc --arg b "${bucket}" '{bucketId: $b}')"
+  while IFS= read -r id; do
+    [[ -n "${id}" ]] || continue
+    b2 b2_cancel_large_file "$(jq -nc --arg i "${id}" '{fileId: $i}')" \
+      >/dev/null
+  done < <(b2 b2_list_unfinished_large_files "${request}" \
+    | jq -r '.files[]?.fileId')
+
+  request="$(jq -nc --arg a "${B2_ACCOUNT}" --arg b "${bucket}" \
+    '{accountId: $a, bucketId: $b}')"
+  b2 b2_delete_bucket "${request}" | jq -e '.bucketId' >/dev/null
+}
+
+# Prints "keyName keyId" for every B2 application key, or fails.
+b2_keys() {
+  local body
+  body="$(b2_checked b2_list_keys "$(b2 b2_list_keys \
+    "$(jq -nc --arg a "${B2_ACCOUNT}" \
+      '{accountId: $a, maxKeyCount: 1000}')")" keys)" || return 1
+  jq -r '.keys[] | "\(.keyName) \(.applicationKeyId)"' <<<"${body}"
+}
+
+# Deletes the B2 application key with id $1.
+b2_delete_key() {
+  b2 b2_delete_key "$(jq -nc --arg i "$1" '{applicationKeyId: $i}')" \
+    | jq -e '.applicationKeyId' >/dev/null
+}
+
+# ---- Resources ------------------------------------------------------------
+
+#######################################
+# Deletes the Pages project. A project with many deployments must be
+# emptied first; each pass deletes one page of them and stops when a pass
+# deletes nothing.
+#######################################
 delete_pages_project() {
   local path="/pages/projects/${PAGES_PROJECT}"
-  local id
-  cf_ok DELETE "${path}" && return 0
-  while IFS= read -r id; do
-    cf DELETE "${path}/deployments/${id}?force=true" >/dev/null
-  done < <(cf_list "${path}/deployments" '.id')
-  cf_ok DELETE "${path}"
+  local ids id deleted
+  while true; do
+    cf_ok DELETE "${path}" && return 0
+    ids="$(cf_get "${path}/deployments?per_page=25" \
+      | jq -r '.result[]?.id')" || return 1
+    deleted=0
+    while IFS= read -r id; do
+      [[ -n "${id}" ]] || continue
+      if cf_ok DELETE "${path}/deployments/${id}?force=true"; then
+        ((deleted += 1))
+      fi
+    done <<<"${ids}"
+    ((deleted > 0)) || return 1
+  done
 }
 
 reset_pages() {
+  local status
   step "Delete Pages project"
-  if cf_ok GET "/pages/projects/${PAGES_PROJECT}"; then
-    act "${PAGES_PROJECT}" delete_pages_project
-  fi
+  status="$(curl -sS -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer ${CF_TOKEN}" \
+    "${CF_API}/accounts/${CF_ACCOUNT}/pages/projects/${PAGES_PROJECT}")"
+  case "${status}" in
+    200) act "Pages ${PAGES_PROJECT} (with its custom domain)" \
+      delete_pages_project ;;
+    404) ;;
+    *)
+      err "GET Pages project ${PAGES_PROJECT}: HTTP ${status}"
+      list_failed "the Pages project"
+      ;;
+  esac
+}
+
+# Deletes Worker script $1 with its Durable Objects (force: bindings to it
+# are gone once its callers are gone).
+delete_worker() {
+  cf_ok DELETE "/workers/scripts/$1?force=true"
 }
 
 reset_workers() {
   local existing name
   step "Delete Workers"
-  existing="$(cf GET /workers/scripts | jq -r '.result[]?.id')"
+  if ! existing="$(cf_get /workers/scripts | jq -r '.result[]?.id')"; then
+    list_failed "Workers"
+    return 0
+  fi
   for name in "${WORKERS[@]}"; do
     grep -qxF "${PREFIX}-${name}" <<<"${existing}" || continue
-    act "${PREFIX}-${name}" delete_worker "${PREFIX}-${name}"
+    act "Worker ${PREFIX}-${name}" delete_worker "${PREFIX}-${name}"
   done
+}
+
+# Deletes queue id $1 after removing its consumers.
+delete_queue() {
+  local id="$1"
+  local consumer
+  while IFS= read -r consumer; do
+    [[ -n "${consumer}" ]] || continue
+    cf DELETE "/queues/${id}/consumers/${consumer}" >/dev/null
+  done < <(cf GET "/queues/${id}/consumers" \
+    | jq -r '.result[]?.consumer_id // empty')
+  cf_ok DELETE "/queues/${id}"
 }
 
 reset_queues() {
   local existing name id
   step "Delete queues"
-  existing="$(cf_list /queues '"\(.queue_name) \(.queue_id)"')"
+  if ! existing="$(cf_list /queues '"\(.queue_name) \(.queue_id)"')"; then
+    list_failed "queues"
+    return 0
+  fi
   for name in "${QUEUES[@]}"; do
     id="$(id_of "${PREFIX}-${name}" <<<"${existing}")"
-    [[ -z "${id}" ]] || act "${PREFIX}-${name}" delete_queue "${id}"
+    [[ -z "${id}" ]] || act "queue ${PREFIX}-${name}" delete_queue "${id}"
   done
 }
 
 reset_d1() {
   local existing name id
   step "Delete D1 databases"
-  existing="$(cf_list /d1/database '"\(.name) \(.uuid)"')"
+  if ! existing="$(cf_list /d1/database '"\(.name) \(.uuid)"')"; then
+    list_failed "D1 databases"
+    return 0
+  fi
   for name in "${D1_SERVICES[@]}"; do
     id="$(id_of "${PREFIX}-${name}-db" <<<"${existing}")"
     [[ -z "${id}" ]] \
-      || act "${PREFIX}-${name}-db" cf_ok DELETE "/d1/database/${id}"
+      || act "D1 ${PREFIX}-${name}-db" cf_ok DELETE "/d1/database/${id}"
   done
 }
 
@@ -139,31 +587,43 @@ reset_b2_bucket() {
   local id
   step "Delete B2 archive bucket and its files"
   b2_authorize
-  id="$(b2_bucket_id "${PREFIX}-archive")"
+  if ! id="$(b2_bucket_id "${PREFIX}-archive")"; then
+    list_failed "B2 buckets"
+    return 0
+  fi
   [[ -z "${id}" ]] \
-    || act "${PREFIX}-archive (with all files)" b2_delete_bucket "${id}"
+    || act "B2 bucket ${PREFIX}-archive (with all files)" \
+      b2_delete_bucket "${id}"
 }
 
 reset_b2_keys() {
   local existing name id
   step "Delete B2 application keys"
-  existing="$(b2_keys)"
+  if ! existing="$(b2_keys)"; then
+    list_failed "B2 application keys"
+    return 0
+  fi
   for name in "${B2_KEYS[@]}"; do
     while IFS= read -r id; do
-      act "${PREFIX}-${name}" b2_delete_key "${id}"
+      [[ -n "${id}" ]] || continue
+      act "B2 key ${PREFIX}-${name}" b2_delete_key "${id}"
     done < <(id_of "${PREFIX}-${name}" <<<"${existing}")
   done
 }
 
 reset_turnstile() {
-  local sitekey
+  local sitekeys sitekey
   step "Delete Turnstile widget"
+  if ! sitekeys="$(cf_list /challenges/widgets \
+    "select(.name == \"${PREFIX}-auth\") | .sitekey")"; then
+    list_failed "Turnstile widgets (token needs Account · Turnstile · Edit)"
+    return 0
+  fi
   while IFS= read -r sitekey; do
     [[ -n "${sitekey}" ]] || continue
-    act "${PREFIX}-auth (${sitekey})" cf_ok DELETE \
+    act "Turnstile ${PREFIX}-auth (${sitekey})" cf_ok DELETE \
       "/challenges/widgets/${sitekey}"
-  done < <(cf_list /challenges/widgets \
-    "select(.name == \"${PREFIX}-auth\") | .sitekey")
+  done <<<"${sitekeys}"
 }
 
 #######################################
@@ -176,27 +636,60 @@ delete_records() {
   local name="$2"
   local type="$3"
   local content="${4:-}"
-  local id
+  local ids id
+  if ! ids="$(cf_zone_get "${zone}" "/dns_records?name=${name}&type=${type}" \
+    | jq -r --arg c "${content}" \
+      '.result[]? | select($c == "" or .content == $c) | .id')"; then
+    list_failed "${type} ${name}"
+    return 0
+  fi
   while IFS= read -r id; do
     [[ -n "${id}" ]] || continue
-    act "${type} ${name}" cf_zone_ok DELETE "${zone}" "/dns_records/${id}"
-  done < <(cf_zone GET "${zone}" "/dns_records?name=${name}&type=${type}" \
-    | jq -r --arg c "${content}" \
-      '.result[]? | select($c == "" or .content == $c) | .id')
+    act "DNS ${type} ${name}" cf_zone_ok DELETE "${zone}" \
+      "/dns_records/${id}"
+  done <<<"${ids}"
+}
+
+#######################################
+# Deletes the api-gateway Workers Route (app.<domain>/api/*) and any other
+# route of a ${PREFIX}-* Worker left in the zone.
+# Arguments:
+#   Zone id.
+#######################################
+delete_worker_routes() {
+  local zone="$1"
+  local routes id pattern
+  if ! routes="$(cf_zone_get "${zone}" /workers/routes | jq -r \
+    --arg p "app.${DOMAIN}/api/*" --arg s "${PREFIX}-" \
+    '.result[]? | select(.pattern == $p or ((.script // "") | startswith($s)))
+      | "\(.id)\t\(.pattern)"')"; then
+    list_failed "Workers Routes"
+    return 0
+  fi
+  while IFS=$'\t' read -r id pattern; do
+    [[ -n "${id}" ]] || continue
+    act "Workers Route ${pattern}" cf_zone_ok DELETE "${zone}" \
+      "/workers/routes/${id}"
+  done <<<"${routes}"
 }
 
 reset_zone() {
-  local zone name id fqdn list_id
-  step "Delete zone records, rules and the pages.dev redirect"
+  local zone name type fqdn ids id list_id
+  local list_name="${PREFIX//-/_}_pages_redirect"
+  step "Delete zone records, routes, rules and the pages.dev redirect"
   if [[ -z "${DOMAIN}" ]]; then
-    note "${DIM}" "– no domain (--domain / APP_DOMAIN)"
+    [[ "${MODE}" == verify ]] || note "${DIM}" "– no domain (--domain / APP_DOMAIN)"
     return 0
   fi
-  zone="$(curl -sS -H "Authorization: Bearer ${CF_TOKEN}" \
-    "${CF_API}/zones?name=${DOMAIN}" | jq -r '.result[0]?.id // empty')"
-  if [[ -z "${zone}" ]]; then
+  if ! zone="$(cf_checked "GET zone ${DOMAIN}" "$(curl -sS \
+    -H "Authorization: Bearer ${CF_TOKEN}" \
+    "${CF_API}/zones?name=${DOMAIN}")" | jq -r '.result[0]?.id // empty')"
+  then
+    list_failed "zone ${DOMAIN}"
+  elif [[ -z "${zone}" ]]; then
     warn "zone ${DOMAIN} not found in the account"
   else
+    delete_worker_routes "${zone}"
     delete_records "${zone}" "app.${DOMAIN}" CNAME
     delete_records "${zone}" "${DOMAIN}" AAAA "100::"
     delete_records "${zone}" "_dmarc.${DOMAIN}" TXT
@@ -210,26 +703,75 @@ reset_zone() {
       delete_records "${zone}" "${fqdn}" "${type}"
     done < <(jq -r '.[]? | "\(.name)\t\(.type)"' \
       <<<"${MAIL_DNS_RECORDS:-[]}")
+    if ids="$(cf_zone_get "${zone}" /rulesets | jq -r \
+      --arg a "${PREFIX}-apex-redirect" --arg b "${PREFIX}-api-rate-limit" \
+      '.result[]? | select(.name == $a or .name == $b) | "\(.id) \(.name)"')"
+    then
+      while read -r id name; do
+        [[ -n "${id}" ]] || continue
+        act "zone ruleset ${name}" cf_zone_ok DELETE "${zone}" \
+          "/rulesets/${id}"
+      done <<<"${ids}"
+    else
+      list_failed "zone rulesets"
+    fi
+  fi
+
+  # Account level: the ruleset first, since it references the list.
+  if ids="$(cf_get /rulesets | jq -r --arg n "${PREFIX}-pages-redirect" \
+    '.result[]? | select(.name == $n) | .id')"; then
     while IFS= read -r id; do
       [[ -n "${id}" ]] || continue
-      act "zone ruleset ${id}" cf_zone_ok DELETE "${zone}" "/rulesets/${id}"
-    done < <(cf_zone GET "${zone}" /rulesets | jq -r \
-      --arg a "${PREFIX}-apex-redirect" --arg b "${PREFIX}-api-rate-limit" \
-      '.result[]? | select(.name == $a or .name == $b) | .id')
+      act "account ruleset ${PREFIX}-pages-redirect" cf_ok DELETE \
+        "/rulesets/${id}"
+    done <<<"${ids}"
+  else
+    list_failed "account rulesets"
   fi
-  while IFS= read -r id; do
-    [[ -n "${id}" ]] || continue
-    act "account ruleset ${PREFIX}-pages-redirect" cf_ok DELETE \
-      "/rulesets/${id}"
-  done < <(cf GET /rulesets | jq -r --arg n "${PREFIX}-pages-redirect" \
-    '.result[]? | select(.name == $n) | .id')
-  list_id="$(cf GET /rules/lists | jq -r \
-    --arg n "${PREFIX//-/_}_pages_redirect" \
-    '.result[]? | select(.name == $n) | .id')"
-  [[ -z "${list_id}" ]] \
-    || act "list ${PREFIX//-/_}_pages_redirect" cf_ok DELETE \
-      "/rules/lists/${list_id}"
+  if list_id="$(cf_get /rules/lists | jq -r --arg n "${list_name}" \
+    '.result[]? | select(.name == $n) | .id')"; then
+    [[ -z "${list_id}" ]] \
+      || act "list ${list_name}" cf_ok DELETE "/rules/lists/${list_id}"
+  else
+    list_failed "account lists"
+  fi
 }
+
+# Runs every deletion step (or, in verify mode, every check).
+reset_all() {
+  reset_pages
+  reset_workers
+  reset_queues
+  reset_d1
+  reset_b2_bucket
+  reset_b2_keys
+  reset_turnstile
+  reset_zone
+}
+
+# Lists everything again after a live run; each resource still found is a
+# failure. Deletions are asynchronous in a few APIs, so it waits briefly.
+verify() {
+  step "Verify nothing is left"
+  if [[ "${DRY_RUN}" == true ]]; then
+    note "${DIM}" "– skipped in a dry run"
+    return 0
+  fi
+  if ((failure_count > 0)); then
+    note "${DIM}" "– skipped: something above failed"
+    return 0
+  fi
+  sleep 5
+  local before="${failure_count}"
+  MODE=verify
+  reset_all
+  MODE=delete
+  if ((failure_count == before)); then
+    note "${GREEN}" "✓ none of the resources above exists any more"
+  fi
+}
+
+# ---- Terraform state ------------------------------------------------------
 
 # Hides the state file in bucket id $1; a hidden B2 file (delete marker)
 # reads as an empty state, and earlier versions stay for recovery.
@@ -244,44 +786,45 @@ reset_state() {
   local bucket_id request
   local action=""
   step "Reset Terraform state"
-  bucket_id="$(b2_bucket_id "${STATE_BUCKET}")"
+  if ! bucket_id="$(b2_bucket_id "${STATE_BUCKET}")"; then
+    list_failed "the state bucket ${STATE_BUCKET}"
+    return 0
+  fi
   if [[ -n "${bucket_id}" ]]; then
     request="$(jq -nc --arg b "${bucket_id}" --arg n "${STATE_KEY}" \
       '{bucketId: $b, startFileName: $n, maxFileCount: 1}')"
-    action="$(b2 b2_list_file_names "${request}" \
+    if ! action="$(b2_checked b2_list_file_names \
+      "$(b2 b2_list_file_names "${request}")" files \
       | jq -r --arg n "${STATE_KEY}" \
-        '.files[0]? | select(.fileName == $n) | .action')"
+        '.files[0]? | select(.fileName == $n) | .action')"; then
+      list_failed "the state file"
+      return 0
+    fi
   fi
 
   if [[ "${action}" != upload ]]; then
     note "${DIM}" "– already empty"
-  elif ((failure_count > 0)) && [[ "${DRY_RUN}" == false ]]; then
-    note "${YELLOW}" "! kept: some deletions failed; rerun after fixing them"
+  elif ((failure_count > 0)); then
+    # Hiding it would make Terraform recreate resources that still exist.
+    note "${YELLOW}" "! kept: something above failed; rerun after fixing it"
   else
-    act "state file (earlier versions kept)" hide_state "${bucket_id}"
+    act "state file ${STATE_BUCKET}/${STATE_KEY} (earlier versions kept)" \
+      hide_state "${bucket_id}"
   fi
 }
 
 main() {
   setup_colors
   parse_args "$@"
-  load_config cf b2
-  print_banner "OntoDecide reset" "${PREFIX}${DOMAIN:+ + zone ${DOMAIN}}"
-  confirm "${PREFIX}" "all ${PREFIX} resources, services and data"
+  load_config
+  print_banner
+  confirm
 
-  reset_pages
-  reset_workers
-  reset_queues
-  reset_d1
-  reset_b2_bucket
-  reset_b2_keys
-  reset_turnstile
-  reset_zone
+  reset_all
+  verify
   reset_state
-  step "V1.3 leftovers"
-  note "${DIM}" "– run scripts/cleanup_legacy.sh if V1.3 was ever deployed"
 
-  print_summary "The next Terraform + Deploy run recreates everything."
+  print_summary
 }
 
 main "$@"
