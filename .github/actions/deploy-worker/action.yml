@@ -118,4 +118,17 @@ runs:
             flags+=(--secrets-file "${secrets_file}")
           fi
         fi
-        npx wrangler deploy -c "${CONFIG}" "${flags[@]}"
+        # First deploy of a new (or reset) Worker: right after the upload,
+        # Wrangler reads /workers/workers/<name> to reconcile workers.dev /
+        # preview URLs, and that API can lag behind the script API with
+        # "This Worker does not exist" [code: 10007] — non-retryable to
+        # Wrangler. The script itself is uploaded, so redeploying is safe.
+        log="$(mktemp "${RUNNER_TEMP:-/tmp}/deploy.XXXXXX.log")"
+        for attempt in 1 2 3 4; do
+          if npx wrangler deploy -c "${CONFIG}" "${flags[@]}" 2>&1 | tee "${log}"; then
+            exit 0
+          fi
+          grep -q 'code: 10007' "${log}" && (( attempt < 4 )) || exit 1
+          echo "::warning::Worker not yet visible to the Workers API (10007); redeploying (attempt $((attempt + 1)))"
+          sleep $((attempt * 10))
+        done
