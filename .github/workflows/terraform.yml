@@ -180,6 +180,8 @@ jobs:
     environment: production
     steps:
       - name: Refuse to apply outside main
+        # Runs before checkout: infra/ (defaults.run) does not exist yet.
+        working-directory: .
         run: |
           if [[ "${GITHUB_REF}" != 'refs/heads/main' ]]; then
             echo "::error::terraform apply runs only on refs/heads/main (got ${GITHUB_REF})"
