@@ -1,5 +1,6 @@
-# CI (详细设计 表 4 / 表 14). Runs on every PR and push to main; Deploy
-# starts from a green run on main. Terraform checks live in terraform.yml.
+# CI (详细设计 表 4 / 表 14). Runs on every PR and push to main, started
+# together with Terraform and Deploy (which wait for manual approval on main).
+# Terraform checks live in terraform.yml.
 #
 #   build-test  typecheck · lint (gts + architecture guard + SQL guard) ·
 #               OpenAPI lint (official 3.2 schema + JSON Schema 2020-12) ·

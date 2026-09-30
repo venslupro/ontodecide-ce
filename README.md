@@ -99,10 +99,10 @@ There is one environment, **production** (GitHub environment `production`), depl
 | D1 schema | `migrations/<service>/*.sql` | `wrangler d1 migrations apply` |
 | Secrets | GitHub Secrets + sensitive Terraform outputs | `wrangler secret bulk` |
 
-The release chain is unchanged:
+CI, Terraform and Deploy start together on every pull request and every push to `main`. On a PR they stop before any approval and never change production. On `main`, Terraform Apply and Deploy's Approve job each wait for a reviewer (environment `production`). The reviewer decides the order; normally:
 
 ```
-push to main → CI → Terraform → Deploy
+CI green → approve Terraform apply → approve Deploy
 ```
 
 * **`ci.yml`** runs typecheck, lint (gts, dependency-cruiser and the SQL tenant-scope check), tests, the web build with the 250 KB bundle budget, and Worker dry-run bundles.
