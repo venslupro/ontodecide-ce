@@ -4,37 +4,32 @@
 #
 # Format, Validate, Lint and Plan run for every pull request and on main. Apply
 # runs only on main (github.ref and a first-step check of GITHUB_REF), only
-# from a green push-CI on main (workflow_run) or a manual run on main, only
-# when Plan found changes, and only after a reviewer approves the
-# `production` environment. Nothing else ever applies.
+# for a push to main or a manual run on main, only when Plan found changes,
+# and only after a reviewer approves the `production` environment. Nothing
+# else ever applies.
 #
 # Triggers (one run per change, no duplicates):
 #   pull_request      → Format … Plan for every PR (plan -lock=false, never
 #                       applies). Fork PRs get no secrets and stop after
 #                       Lint. Branch pushes do not trigger Terraform, so a
 #                       branch with a PR shows only its pull-request run;
+#   push (main)       → Format … Apply, started together with CI and Deploy;
 #   workflow_dispatch → on main: up to Apply; on any other ref (e.g. a
 #                       branch without a PR): stops after Plan;
-#   workflow_run      → the release chain on main (CI on main succeeded);
 #   schedule          → nightly drift check on main (Plan).
 #
 # Concurrency: runs on main share one serialized group (the B2 backend has
 # no verified locking); every other ref has its own group in which a newer
 # run cancels the older one.
 #
-# On main it is the middle link of the release chain
-#
-#   push to main → CI → Terraform → Deploy
-#
-# so Deploy always follows Terraform for the same commit. A nightly run on
-# main goes up to Plan as a drift check.
+# CI, Terraform and Deploy all start together on the same pull request or
+# push to main. On main, Apply and Deploy each wait for their own approval;
+# the reviewer decides the order (normally CI green → Apply → Deploy).
 name: Terraform
 
 on:
   pull_request:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
   schedule:
     - cron: '17 3 * * *'
@@ -50,7 +45,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  SHA: ${{ github.sha }}
   TF_IN_AUTOMATION: 'true'
   TF_INPUT: 'false'
   TF_VAR_account_id: ${{ secrets.CF_ACCOUNT_ID }}
@@ -77,15 +72,6 @@ defaults:
 jobs:
   fmt:
     name: Format
-    # From CI only when it was a green push to main. Later stages are
-    # skipped with it.
-    if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push') ||
-      github.event_name == 'pull_request' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -164,16 +150,12 @@ jobs:
   apply:
     name: Apply (production)
     needs: plan
-    # Defensive guard: main only, from a green push-CI on main or a manual
-    # run on main, and only when Plan found changes.
+    # Defensive guard: main only, from a push to main or a manual run on
+    # main, and only when Plan found changes.
     if: >-
       github.ref == 'refs/heads/main' &&
       needs.plan.outputs.has-changes == 'true' &&
-      ((github.event_name == 'workflow_run' &&
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_branch == 'main') ||
-       github.event_name == 'workflow_dispatch')
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Waits for a required reviewer to approve the plan above.
