@@ -1,5 +1,5 @@
 /**
- * @fileoverview SPA entry: i18n, app wiring, router, render.
+ * @fileoverview SPA entry: theme, i18n, app wiring, router, render.
  */
 
 import {RouterProvider} from '@tanstack/react-router';
@@ -12,9 +12,11 @@ import {createQueryClient} from './shared/api/query_client';
 import {initI18n, resolveLanguage} from './shared/lib/i18n';
 import {detectLowFrameRate} from './shared/lib/perf';
 import {readPrefs} from './shared/lib/prefs';
+import {initTheme} from './shared/lib/theme';
 import './styles/globals.css';
 
 async function boot(): Promise<void> {
+  initTheme();
   const lang = resolveLanguage({
     search: location.search,
     local: readPrefs().locale,

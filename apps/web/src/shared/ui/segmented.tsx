@@ -26,7 +26,8 @@ export function Segmented<T extends string>({
   options: readonly SegmentOption<T>[];
   onChange(value: T): void;
   label: string;
-  size?: 'sm' | 'md';
+  /** "auto": sm on phones, md from the sm breakpoint. */
+  size?: 'sm' | 'md' | 'auto';
   className?: string;
 }) {
   return (
@@ -50,7 +51,10 @@ export function Segmented<T extends string>({
             onClick={() => !on && onChange(o.value)}
             className={cn(
               'whitespace-nowrap transition-colors',
-              size === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-8 px-3.5 text-sm',
+              size === 'sm' && 'h-7 px-2.5 text-xs',
+              size === 'md' && 'h-8 px-3.5 text-sm',
+              size === 'auto' &&
+                'h-7 px-2.5 text-xs sm:h-8 sm:px-3.5 sm:text-sm',
               on
                 ? 'bg-cyan/15 font-medium text-text shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--cyan)_45%,transparent)]'
                 : 'text-muted hover:text-text',

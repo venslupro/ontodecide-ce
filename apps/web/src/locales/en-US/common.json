@@ -177,6 +177,12 @@
   "lang": {
     "label": "Interface language"
   },
+  "theme": {
+    "label": "Theme",
+    "system": "Follow system",
+    "light": "Light",
+    "dark": "Dark"
+  },
   "role": {
     "owner": "Owner",
     "admin": "Platform admin",

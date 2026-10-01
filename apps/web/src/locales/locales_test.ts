@@ -104,12 +104,20 @@ describe('error messages', () => {
     ).toContain('5');
   });
 
-  it('ships no legacy theme or password strings', () => {
+  it('ships no password or markings strings', () => {
     for (const lang of ['zh-CN', 'en-US']) {
       const flat = flatten(bundle(lang, 'common'));
-      expect(
-        Object.keys(flat).some(k => /^theme\.|password|markings/i.test(k)),
-      ).toBe(false);
+      expect(Object.keys(flat).some(k => /password|markings/i.test(k))).toBe(
+        false,
+      );
+    }
+  });
+
+  it('labels every theme choice', () => {
+    for (const lang of ['zh-CN', 'en-US']) {
+      const flat = flatten(bundle(lang, 'common'));
+      for (const k of ['label', 'system', 'light', 'dark'])
+        expect(flat[`theme.${k}`]).toBeTruthy();
     }
   });
 });

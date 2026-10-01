@@ -1,13 +1,13 @@
 /**
  * @fileoverview Layout of the public info pages /ended and
- * /archive-deletions/:token (效果图 c4): brand + language switch on top,
+ * /archive-deletions/:token (效果图 c4): brand + theme and language switches on top,
  * explanation on the left, a status card on the right. No app shell, no API
  * calls of its own.
  */
 
 import type {ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
-import {LangSwitch} from '../../features/identity/components/lang_switch';
+import {PageControls} from '../../features/identity/components/page_controls';
 import {Brand} from '../../shared/ui/brand';
 
 /** Two-column public page. */
@@ -23,7 +23,7 @@ export function PublicShell({
     <div className="min-h-screen">
       <header className="mx-auto flex max-w-[1440px] items-center justify-between px-6 py-8 lg:px-24">
         <Brand edition={t('brand.editionShort')} />
-        <LangSwitch />
+        <PageControls />
       </header>
       <main className="mx-auto grid max-w-[1440px] grid-cols-1 items-start gap-10 px-6 pb-16 lg:grid-cols-[1fr_minmax(440px,620px)] lg:px-24 lg:pt-8">
         <section className="flex flex-col gap-6">{left}</section>

@@ -1,11 +1,16 @@
 /**
- * @fileoverview /signup (效果图 c1): e-mail + Turnstile → 6-digit code →
- * 3-day trial. After verification the browser time zone is saved with
+ * @fileoverview /signup (效果图 c1): e-mail + Turnstile + privacy consent →
+ * 6-digit code → 3-day trial. The card states up front that trial accounts
+ * are valid for 3 days; the code is sent only after the privacy notice is
+ * accepted. The code step explains why no code may arrive (the e-mail
+ * already has an account, or a just-ended one is still being deleted)
+ * without revealing which. After verification the browser time zone is saved with
  * PATCH /me and the user lands on the cockpit.
  */
 
 import {useQueryClient} from '@tanstack/react-query';
 import {Link, useNavigate} from '@tanstack/react-router';
+import {Clock} from 'lucide-react';
 import {useTranslation} from 'react-i18next';
 import {useSession} from '../../entities/session/store';
 import {
@@ -63,11 +68,23 @@ export function SignupPage() {
       note={t('signup.note')}
     >
       <AuthCardHeader title={t('signup.title')} />
+      <div
+        role="note"
+        className="mb-6 flex gap-3 rounded-[var(--radius-btn)] border border-warn/40 bg-warn/10 p-3.5"
+      >
+        <Clock className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden />
+        <div className="text-sm leading-relaxed">
+          <p className="font-semibold text-text">{t('signup.validityTitle')}</p>
+          <p className="mt-0.5 text-muted">{t('signup.validity')}</p>
+        </div>
+      </div>
       <EmailCodeFlow
         purpose="signup"
         totalSteps={3}
         submitLabel={t('signup.submit')}
         onOutcome={onOutcome}
+        requireConsent
+        codeHint={t('signup.codeHint')}
       />
       <p className="mt-6 text-center text-sm text-muted">
         {t('signup.haveAccount')}{' '}

@@ -1,7 +1,8 @@
 /**
  * @fileoverview /login: e-mail + Turnstile → 6-digit code. The admin then
  * needs a passkey ({@link AdminPasskeyStep}). Returns to `?next=` after
- * signing in.
+ * signing in. Visitors without an account (e.g. a first visit redirected
+ * here by the guard) get a prominent sign-up entry under the form.
  */
 
 import {useQueryClient} from '@tanstack/react-query';
@@ -18,6 +19,7 @@ import {
   AuthShell,
 } from '../../features/identity/components/auth_shell';
 import {EmailCodeFlow} from '../../features/identity/components/email_code_flow';
+import {Button} from '../../shared/ui/button';
 import {AdminPasskeyStep} from './admin_passkey_step';
 
 /** Only same-app paths are accepted as `next` (no open redirect). */
@@ -53,7 +55,7 @@ export function LoginPage() {
     <AuthShell
       headline={t('login.headline')}
       headlineAccent={t('login.headlineAccent')}
-      note={t('signup.note')}
+      note={t('login.note')}
     >
       <AuthCardHeader title={passkey ? t('admin.title') : t('login.title')} />
       {passkey ? (
@@ -70,15 +72,14 @@ export function LoginPage() {
             submitLabel={t('login.submit')}
             onOutcome={onOutcome}
           />
-          <p className="mt-6 text-center text-sm text-muted">
-            {t('login.noAccount')}{' '}
-            <Link
-              to="/signup"
-              className="text-cyan underline underline-offset-2 hover:decoration-2"
-            >
-              {t('signup.link')}
-            </Link>
-          </p>
+          <div className="mt-6 flex flex-col gap-3 border-t border-line pt-6">
+            <p className="text-center text-sm text-muted">
+              {t('login.noAccount')}
+            </p>
+            <Button asChild size="lg">
+              <Link to="/signup">{t('login.signupCta')}</Link>
+            </Button>
+          </div>
         </>
       )}
     </AuthShell>

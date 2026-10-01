@@ -3,37 +3,131 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
+    <!-- Same text as the `privacy` keys in src/locales/*/auth.json (shown in
+         the sign-up consent dialog); keep the two in sync. -->
     <title>OntoDecide CE · 隐私说明 / Privacy notice</title>
+    <script src="/theme-init.js"></script>
     <style>
-      body { margin: 0; background: #070c18; color: #e6ecff; font: 15px/1.7 Inter, 'Noto Sans SC', system-ui, sans-serif; }
+      :root { --bg: #070c18; --text: #e6ecff; --body: #c9d3f0; --muted: #8b98ba; --accent: #22d3ee; --line: rgba(110,150,255,.28); }
+      :root[data-theme='light'] { --bg: #f4f7fc; --text: #0f1a33; --body: #26324d; --muted: #4a5878; --accent: #0e7490; --line: rgba(37,64,140,.26); }
+      body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.7 Inter, 'Noto Sans SC', system-ui, sans-serif; }
       main { max-width: 760px; margin: 0 auto; padding: 48px 24px 80px; }
-      h1 { font-size: 26px; } h2 { font-size: 18px; margin-top: 36px; color: #22d3ee; }
-      li { margin: 6px 0; } p, li { color: #c9d3f0; } a { color: #22d3ee; }
-      hr { border: 0; border-top: 1px solid rgba(110,150,255,.28); margin: 40px 0; }
+      h1 { font-size: 26px; margin-bottom: 4px; } h2 { font-size: 17px; margin-top: 32px; color: var(--accent); }
+      .meta { color: var(--muted); font-size: 13px; margin-top: 0; }
+      li { margin: 6px 0; } p, li { color: var(--body); } a { color: var(--accent); }
+      hr { border: 0; border-top: 1px solid var(--line); margin: 48px 0; }
     </style>
   </head>
   <body>
     <main>
-      <h1>隐私说明</h1>
-      <ul>
-        <li>注册只需要邮箱，平台不保存任何密码，也不需要信用卡。</li>
-        <li>试用期为邮箱验证通过起 72 小时。到期、提前结束或被管理员删除时，工作区数据打包为一个 ZIP，存放在 Backblaze B2 对象存储（服务端加密），下载链接与「立即删除」链接只通过邮件发送一次，7 天有效；7 天后 ZIP 永久删除。</li>
-        <li>邮件发出后，业务数据、账户、邮箱与会话立即删除；平台备份与运行日志在 7 天内自然过期。邮件服务商（Resend / Brevo）按其保留期保存投递记录，已关闭点击与打开追踪。</li>
-        <li>前端不使用任何第三方统计脚本，只加载 Cloudflare Turnstile 人机验证组件。</li>
-        <li>平台管理员可以查看任何数据并对任何账户执行操作，所有管理员操作写入不可修改的审计日志。</li>
-      </ul>
-      <p><a href="/signup">返回注册</a></p>
+      <section>
+        <h1>隐私说明</h1>
+        <p class="meta">生效日期：2026 年 10 月 1 日</p>
+        <p>本说明介绍 OntoDecide 社区版（以下简称“本平台”）在你注册和使用试用账户时，如何收集、使用、保存和删除你的个人信息。请在注册前完整阅读；同意本说明后方可注册。</p>
+        <h2>1. 我们收集的信息</h2>
+        <ul>
+          <li>邮箱地址：用于注册、发送登录验证码和试用状态通知。</li>
+          <li>你在工作区中导入或创建的业务数据。</li>
+          <li>保障安全所必需的技术信息：IP 地址、浏览器类型、时区与请求日志。</li>
+          <li>我们不收集密码、手机号、身份证件或任何支付信息。</li>
+        </ul>
+        <h2>2. 信息的使用</h2>
+        <ul>
+          <li>提供试用服务：创建工作区、运行分析与推荐。</li>
+          <li>发送验证码、试用即将到期和试用结束（含数据下载链接）的邮件。</li>
+          <li>防止滥用与排查故障：人机验证、频率限制和运行日志。</li>
+          <li>不用于广告，不出售、不出租给任何第三方。</li>
+        </ul>
+        <h2>3. 保存期限与删除</h2>
+        <ul>
+          <li>试用账户有效期为 3 天：自邮箱验证通过起 72 小时。</li>
+          <li>试用到期、提前结束或被管理员删除时，工作区数据打包为一个 ZIP（服务端加密存储）；下载链接与“立即删除”链接只通过邮件发送一次，7 天内有效，之后 ZIP 永久删除。</li>
+          <li>邮件发出后，业务数据、账户、邮箱与会话立即删除；平台备份与运行日志在 7 天内自然过期。</li>
+        </ul>
+        <h2>4. 第三方服务</h2>
+        <ul>
+          <li>Cloudflare：网站托管、网络防护与 Turnstile 人机验证。</li>
+          <li>Backblaze B2：试用结束后的 ZIP 归档存储。</li>
+          <li>Resend / Brevo：邮件投递，按其保留期保存投递记录；已关闭点击与打开追踪。</li>
+          <li>网页不加载任何第三方统计或广告脚本。</li>
+        </ul>
+        <h2>5. Cookie 与本地存储</h2>
+        <ul>
+          <li>仅使用登录所必需的会话 Cookie（HttpOnly、Secure），不使用追踪 Cookie。</li>
+          <li>界面语言、主题等偏好只保存在你的浏览器本地。</li>
+        </ul>
+        <h2>6. 安全与管理员访问</h2>
+        <ul>
+          <li>所有传输均通过 HTTPS 加密。</li>
+          <li>平台管理员可以查看任何数据并对任何账户执行操作；所有管理员操作写入不可修改的审计日志。</li>
+        </ul>
+        <h2>7. 你的权利</h2>
+        <ul>
+          <li>可随时在“账户”页提前结束试用，数据按第 3 条立即处理。</li>
+          <li>可通过邮件中的“立即删除”链接提前删除归档。</li>
+          <li>可在“账户”页查看并修改界面语言与时区。</li>
+        </ul>
+        <h2>8. 本说明的变更</h2>
+        <ul>
+          <li>本说明如有变更，会更新上方的生效日期；重大变更会在注册和登录页提示。</li>
+        </ul>
+        <p><a href="/signup">返回注册</a></p>
+      </section>
       <hr />
-      <h1 lang="en">Privacy notice</h1>
-      <ul lang="en">
-        <li>Sign-up needs only an e-mail address; no passwords are stored and no credit card is needed.</li>
-        <li>The trial lasts 72 hours from e-mail verification. When it ends (expiry, early termination or admin deletion) the workspace data is packed into one ZIP in Backblaze B2 object storage (server-side encrypted). The download link and a "delete now" link are e-mailed once and are valid for 7 days; then the ZIP is deleted for good.</li>
-        <li>Once the e-mail is sent, business data, account, e-mail and sessions are deleted at once; platform backups and runtime logs expire within 7 days. The e-mail providers (Resend / Brevo) keep delivery records per their retention; click and open tracking is disabled.</li>
-        <li>The web app loads no third-party analytics, only the Cloudflare Turnstile human check.</li>
-        <li>The platform admin can see any data and act on any account; every admin action is written to an append-only audit log.</li>
-      </ul>
-      <p lang="en"><a href="/signup">Back to sign-up</a></p>
+      <section lang="en">
+        <h1>Privacy notice</h1>
+        <p class="meta">Effective 1 October 2026</p>
+        <p>This notice explains how OntoDecide Community Edition (&quot;the platform&quot;) collects, uses, keeps and deletes your personal data when you sign up for and use a trial account. Please read it in full before signing up; you must accept it to create an account.</p>
+        <h2>1. What we collect</h2>
+        <ul>
+          <li>Your e-mail address: for sign-up, sign-in codes and trial notifications.</li>
+          <li>The business data you import into or create in your workspace.</li>
+          <li>Technical data needed for security: IP address, browser type, time zone and request logs.</li>
+          <li>We never collect passwords, phone numbers, ID documents or payment details.</li>
+        </ul>
+        <h2>2. How we use it</h2>
+        <ul>
+          <li>To provide the trial: create your workspace, run analyses and recommendations.</li>
+          <li>To e-mail sign-in codes, trial expiry reminders and the trial-ended message with your data download link.</li>
+          <li>To prevent abuse and fix faults: human checks, rate limits and runtime logs.</li>
+          <li>Never for advertising; never sold or rented to anyone.</li>
+        </ul>
+        <h2>3. Retention and deletion</h2>
+        <ul>
+          <li>Trial accounts are valid for 3 days: 72 hours from e-mail verification.</li>
+          <li>When the trial ends (expiry, early termination or admin deletion) the workspace data is packed into one ZIP (encrypted at rest). The download link and a &quot;delete now&quot; link are e-mailed once and are valid for 7 days; then the ZIP is deleted for good.</li>
+          <li>Once that e-mail is sent, business data, account, e-mail and sessions are deleted at once; platform backups and runtime logs expire within 7 days.</li>
+        </ul>
+        <h2>4. Third-party services</h2>
+        <ul>
+          <li>Cloudflare: hosting, network protection and the Turnstile human check.</li>
+          <li>Backblaze B2: storage of the ZIP archive after the trial.</li>
+          <li>Resend / Brevo: e-mail delivery; delivery records are kept per their retention; click and open tracking is disabled.</li>
+          <li>The web app loads no third-party analytics or advertising scripts.</li>
+        </ul>
+        <h2>5. Cookies and local storage</h2>
+        <ul>
+          <li>Only the session cookie needed to stay signed in (HttpOnly, Secure); no tracking cookies.</li>
+          <li>Preferences such as language and theme are kept in your browser only.</li>
+        </ul>
+        <h2>6. Security and admin access</h2>
+        <ul>
+          <li>All traffic is encrypted with HTTPS.</li>
+          <li>The platform admin can see any data and act on any account; every admin action is written to an append-only audit log.</li>
+        </ul>
+        <h2>7. Your rights</h2>
+        <ul>
+          <li>End the trial early at any time on the Account page; your data is then handled as in section 3.</li>
+          <li>Delete the archive early with the &quot;delete now&quot; link in the e-mail.</li>
+          <li>View and change your language and time zone on the Account page.</li>
+        </ul>
+        <h2>8. Changes to this notice</h2>
+        <ul>
+          <li>If this notice changes we update the effective date above; material changes are announced on the sign-up and sign-in pages.</li>
+        </ul>
+        <p><a href="/signup">Back to sign-up</a></p>
+      </section>
     </main>
   </body>
 </html>

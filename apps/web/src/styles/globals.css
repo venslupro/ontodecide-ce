@@ -1,10 +1,17 @@
 /*
  * OntoDecide CE design tokens (前端详细设计 6.11 视觉设计系统, 表 14) and the
- * Tailwind theme. CE has exactly one theme: dark "command center" — deep
- * navy-black background with a 32 px grid and two radial halos, glass cards
- * with a 1 px cyan top highlight, cyan → blue → violet accents, tabular
- * numerals. Text contrast on cards: --text 14.6, --muted 6.0, --dim 4.9
- * (WCAG AA).
+ * Tailwind theme. Two themes on `<html data-theme>` (shared/lib/theme.ts:
+ * follows the system by default, or a stored light / dark choice):
+ *
+ * - dark "command center" (default): deep navy-black background with a
+ *   32 px grid and two radial halos, glass cards with a 1 px cyan top
+ *   highlight, cyan → blue → violet accents, tabular numerals. Text
+ *   contrast on cards: --text 14.6, --muted 6.0, --dim 4.9 (WCAG AA).
+ * - light: the same layout on a pale blue-grey background with white
+ *   cards; accents are darkened so links and status text stay ≥ 4.5:1 on
+ *   white (--text 16.5, --muted 7.0, --dim 5.4, --cyan 5.4).
+ *
+ * Components use only these tokens, so both themes share every class.
  *
  * Fonts are self-hosted with the build (CSP: no third-party CDN); the
  * stack falls back to system fonts when Inter / Noto Sans SC / JetBrains
@@ -42,6 +49,35 @@
   --focus: #22d3ee;
   --radius-card-v: 14px;
   --radius-btn-v: 8px;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f7fc;
+  --bg-2: #e9eff9;
+  --panel: rgba(255, 255, 255, 0.82);
+  --panel-solid: #ffffff;
+  --panel-2: rgba(232, 239, 250, 0.8);
+  --line: rgba(37, 64, 140, 0.14);
+  --line-2: rgba(37, 64, 140, 0.26);
+  --text: #0f1a33;
+  --muted: #4a5878;
+  --dim: #5d6a88;
+  --cyan: #0e7490;
+  --blue: #2563eb;
+  --violet: #7c3aed;
+  --orange: #c2410c;
+  --good: #15803d;
+  --warn: #92400e;
+  --crit: #dc2626;
+  --on-accent: #ffffff;
+  --shadow: 0 8px 24px rgba(15, 26, 51, 0.08);
+  --glow: 0 0 14px rgba(14, 116, 144, 0.2);
+  --grid-line: rgba(37, 64, 140, 0.05);
+  --halo-1: rgba(59, 130, 246, 0.1);
+  --halo-2: rgba(14, 165, 233, 0.08);
+  --chart-grid: rgba(74, 88, 120, 0.12);
+  --focus: #0e7490;
 }
 
 @theme inline {
@@ -252,6 +288,13 @@
   }
 }
 
+/* Set by applyTheme() for one frame while the theme changes. */
+:root[data-theme-switching] *,
+:root[data-theme-switching] *::before,
+:root[data-theme-switching] *::after {
+  transition: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -264,14 +307,16 @@
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :root {
+  :root,
+  :root[data-theme] {
     --panel: var(--panel-solid);
     --panel-blur: 0px;
   }
 }
 
 /* Solid panels on low-end devices (low frame rate detection sets this). */
-html[data-solid='true'] {
+/* `:root[...]` so it outranks the light theme block. */
+:root[data-solid='true'] {
   --panel: var(--panel-solid);
   --panel-blur: 0px;
 }

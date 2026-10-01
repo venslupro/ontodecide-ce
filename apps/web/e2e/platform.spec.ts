@@ -135,6 +135,9 @@ test('sign-up: e-mail → Turnstile → code → cockpit with ~3 days left', asy
   await page.goto('/signup');
   await page.getByLabel('邮箱').fill('e2e@example.com');
   await expect(page.getByText('人机验证已通过')).toBeVisible();
+  await page
+    .getByRole('checkbox', {name: '我已阅读并同意《隐私说明》'})
+    .click();
   await page.getByRole('button', {name: '发送验证码'}).click();
   await page.getByLabel('第 1 位').fill('123456');
   await expect(page).toHaveURL(/\/cockpit$/);
@@ -149,6 +152,9 @@ test('sign-up closed stays on the e-mail step', async ({page}) => {
   );
   await page.goto('/signup');
   await page.getByLabel('邮箱').fill('e2e@example.com');
+  await page
+    .getByRole('checkbox', {name: '我已阅读并同意《隐私说明》'})
+    .click();
   await page.getByRole('button', {name: '发送验证码'}).click();
   await expect(page.getByText('今日名额已满，请明日再试')).toBeVisible();
 });
