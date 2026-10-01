@@ -24,6 +24,10 @@
  * no public URL" (their hostnames are unknown by construction), e-mail
  * link tracking, and B2 download headers (need a real archive).
  *
+ * Transient edge errors (502–504, Cloudflare 520–527) are retried with
+ * backoff: right after `wrangler pages deploy` the new Functions deployment
+ * can answer 522 for a short while before it is live everywhere.
+ *
  * SMOKE_READONLY=1 skips check 4 (it sends a real e-mail and needs the
  * Turnstile test secret) — used by the post-deploy smoke of production.
  *
@@ -53,9 +57,27 @@ const PAGES_URL = (process.env.SMOKE_PAGES_URL ?? '').replace(/\/$/, '');
 
 let failures = 0;
 
+/** Statuses of a deployment that is not yet reachable at the edge. */
+const TRANSIENT = new Set([
+  502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527,
+]);
+const RETRY_DELAYS_S = [2, 5, 10, 20, 30];
+
+/** fetch() that retries transient edge errors (see the file comment). */
+async function fetchRetry(url, init) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, init);
+    const delay = RETRY_DELAYS_S[attempt];
+    if (!TRANSIENT.has(res.status) || delay === undefined) return res;
+    await res.body?.cancel();
+    console.log(`  … ${res.status} from ${url}, retrying in ${delay}s`);
+    await new Promise(r => setTimeout(r, delay * 1000));
+  }
+}
+
 /** Sends one request; returns {status, headers, text, json}. */
 async function call(method, path, {body, headers = {}, token} = {}) {
-  const res = await fetch(API + path, {
+  const res = await fetchRetry(API + path, {
     method,
     headers: {
       accept: 'application/json',
@@ -133,7 +155,7 @@ async function main() {
 
   if (/^https:/.test(BASE)) {
     await check("SPA CSP has connect-src 'self'", async () => {
-      const res = await fetch(`${BASE}/`, {headers: {accept: 'text/html'}});
+      const res = await fetchRetry(`${BASE}/`, {headers: {accept: 'text/html'}});
       expect(res.status === 200, `status ${res.status}`);
       expectConnectSelf(res.headers.get('content-security-policy'));
     });
@@ -141,7 +163,7 @@ async function main() {
 
   if (PAGES_URL) {
     await check(`${PAGES_URL} → 301 ${BASE}`, async () => {
-      const res = await fetch(`${PAGES_URL}/login`, {redirect: 'manual'});
+      const res = await fetchRetry(`${PAGES_URL}/login`, {redirect: 'manual'});
       expect(res.status === 301, `status ${res.status}`);
       const to = res.headers.get('location') ?? '';
       expect(to.startsWith(BASE), `location ${to}`);

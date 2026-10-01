@@ -1,13 +1,14 @@
 /**
- * @fileoverview Layout of the sign-up and login pages (效果图 c1): brand
- * area on the left ("用邮箱开始 3 天免费试用", data handling note and a
- * decorative ontology graph), the form card on the right.
+ * @fileoverview Layout of the sign-up and login pages (效果图 c1): a page
+ * header (brand, theme and language switches), the pitch on the left
+ * (headline, data handling note and a decorative ontology graph) and the
+ * form card on the right.
  */
 
 import type {ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
 import {Brand} from '../../../shared/ui/brand';
-import {LangSwitch} from './lang_switch';
+import {PageControls} from './page_controls';
 
 const NODES: [number, number, 'c' | 'b' | 'v' | 'g', string?][] = [
   [60, 170, 'c', 'supplier'],
@@ -96,7 +97,7 @@ function GraphArt() {
           y1={NODES[a][1]}
           x2={NODES[b][0]}
           y2={NODES[b][1]}
-          stroke="rgba(139,152,186,0.35)"
+          stroke="var(--line-2)"
           strokeWidth={1}
         />
       ))}
@@ -140,10 +141,13 @@ export function AuthShell({
 }) {
   const {t} = useTranslation('common');
   return (
-    <div className="relative min-h-screen overflow-hidden">
-      <div className="mx-auto grid min-h-screen max-w-[1440px] grid-cols-1 items-center gap-10 px-6 py-10 lg:grid-cols-[1fr_minmax(440px,540px)] lg:px-24">
+    <div className="relative flex min-h-screen flex-col overflow-hidden">
+      <header className="mx-auto flex w-full max-w-[1440px] items-center justify-between gap-4 px-6 pt-8 lg:px-24">
+        <Brand edition={t('brand.edition')} />
+        <PageControls />
+      </header>
+      <main className="mx-auto grid w-full max-w-[1440px] flex-1 grid-cols-1 items-center gap-10 px-6 py-10 lg:grid-cols-[1fr_minmax(440px,540px)] lg:px-24">
         <section className="flex flex-col gap-8">
-          <Brand edition={t('brand.edition')} />
           <div>
             <h1 className="text-4xl leading-tight font-bold tracking-tight text-text lg:text-5xl">
               {headline}
@@ -161,19 +165,14 @@ export function AuthShell({
         <section className="glass shadow-[0_0_60px_color-mix(in_srgb,var(--cyan)_8%,transparent)]">
           <div className="p-8">{children}</div>
         </section>
-      </div>
+      </main>
     </div>
   );
 }
 
-/** Card title row with the language switch. */
+/** Card title. */
 export function AuthCardHeader({title}: {title: string}) {
-  return (
-    <div className="mb-5 flex items-center justify-between gap-3">
-      <h2 className="text-xl font-semibold text-text">{title}</h2>
-      <LangSwitch />
-    </div>
-  );
+  return <h2 className="mb-5 text-xl font-semibold text-text">{title}</h2>;
 }
 
 /** Segmented step bar ("第 2 步，共 3 步 · 输入验证码"). */

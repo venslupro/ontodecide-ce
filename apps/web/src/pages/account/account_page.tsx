@@ -42,6 +42,7 @@ import {Dialog, DialogContent} from '../../shared/ui/dialog';
 import {PageHeader} from '../../shared/ui/page_header';
 import {OTP_LENGTH, OtpInput} from '../../shared/ui/otp_input';
 import {PageLoader} from '../../shared/ui/skeleton';
+import {ThemeSwitch} from '../../shared/ui/theme_switch';
 import {toast} from '../../shared/ui/toast';
 
 const HOUR = 3_600_000;
@@ -249,6 +250,7 @@ function AccountCard({me, admin}: {me: Me; admin: boolean}) {
       </span>,
     ],
     [t('account.language'), <LangSwitch />],
+    [t('account.theme'), <ThemeSwitch />],
     [
       t('account.timeZone'),
       <select

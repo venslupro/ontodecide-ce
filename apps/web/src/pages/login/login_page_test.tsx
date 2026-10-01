@@ -4,7 +4,7 @@
  * #2 with step-up → 10 recovery codes once); recovery code; no WebAuthn.
  */
 
-import {screen, waitFor} from '@testing-library/react';
+import {screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach, describe, expect, it} from 'vitest';
 import {useSession} from '../../entities/session/store';
@@ -44,6 +44,33 @@ describe('safeNext', () => {
 });
 
 describe('LoginPage', () => {
+  it('greets first-time visitors neutrally and offers sign-up', async () => {
+    const {router} = renderWithProviders(<LoginPage />, {
+      as: 'anonymous',
+      url: '/login',
+    });
+    expect(await screen.findByText('用邮箱登录')).toBeInTheDocument();
+    expect(screen.queryByText('欢迎回来')).not.toBeInTheDocument();
+    // Display switches live in the page header, not in the form card.
+    const card = screen.getByRole('heading', {name: '登录'}).closest('section');
+    expect(
+      within(card!).queryByRole('radiogroup', {name: '界面语言'}),
+    ).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole('banner')).getByRole('radiogroup', {
+        name: '界面语言',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('banner')).getByRole('radiogroup', {
+        name: '主题',
+      }),
+    ).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('link', {name: '注册免费试用账户'}));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/signup'));
+  });
+
   it('signs an owner in and returns to next', async () => {
     const {router} = await login(
       'wang.yun@example.com',

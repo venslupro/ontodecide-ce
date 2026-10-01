@@ -11,6 +11,9 @@
  *   tokens are single-use, so the widget is reset after every send.
  * - 429 RATE_LIMITED: the send / verify buttons count down Retry-After and
  *   re-enable at zero (shared `useRetryAfter`).
+ * - Sign-up (`requireConsent`): the code is sent only after the privacy
+ *   notice is accepted (checkbox, or "accept" in the notice dialog). Login
+ *   just links the notice.
  */
 
 import {Mail} from 'lucide-react';
@@ -23,7 +26,7 @@ import {useCountdown} from '../../../shared/lib/hooks';
 import {normalizeLang} from '../../../shared/lib/i18n';
 import {Badge} from '../../../shared/ui/badge';
 import {Button} from '../../../shared/ui/button';
-import {Field, Input} from '../../../shared/ui/input';
+import {Checkbox, Field, Input} from '../../../shared/ui/input';
 import {OTP_LENGTH, OtpInput} from '../../../shared/ui/otp_input';
 import {
   createSession,
@@ -32,6 +35,7 @@ import {
   type SessionOutcome,
 } from '../api';
 import {StepBar} from './auth_shell';
+import {PrivacyDialog} from './privacy_dialog';
 import {Turnstile} from './turnstile';
 
 /** Resend interval (s). */
@@ -48,6 +52,10 @@ export interface EmailCodeFlowProps {
   totalSteps: number;
   /** Primary button on the code step. */
   submitLabel: string;
+  /** The privacy notice must be accepted before a code is sent. */
+  requireConsent?: boolean;
+  /** Extra hint under "not received?" on the code step. */
+  codeHint?: string;
 }
 
 /** Two-step e-mail code form. */
@@ -56,6 +64,8 @@ export function EmailCodeFlow({
   onOutcome,
   totalSteps,
   submitLabel,
+  requireConsent = false,
+  codeHint,
 }: EmailCodeFlowProps) {
   const {t, i18n} = useTranslation('auth');
   const [step, setStep] = useState<'email' | 'code'>('email');
@@ -68,6 +78,9 @@ export function EmailCodeFlow({
   const [needNewCode, setNeedNewCode] = useState(false);
   const [busy, setBusy] = useState(false);
   const [resendAt, setResendAt] = useState<number | null>(null);
+  const [consent, setConsent] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+  const needsConsent = requireConsent && !consent;
   const resendIn = useCountdown(resendAt);
   const sendLimit = useRetryAfter('auth.code');
   const verifyLimit = useRetryAfter('auth.session');
@@ -75,7 +88,7 @@ export function EmailCodeFlow({
     t('common:rateLimit.retryIn', {seconds: sec});
 
   const request = async () => {
-    if (!token) return;
+    if (!token || needsConsent) return;
     setBusy(true);
     setError(null);
     try {
@@ -108,6 +121,10 @@ export function EmailCodeFlow({
     e.preventDefault();
     if (!EMAIL_RE.test(email.trim())) {
       setError(t('email.invalid'));
+      return;
+    }
+    if (needsConsent) {
+      setError(t('consent.required'));
       return;
     }
     void request();
@@ -194,6 +211,32 @@ export function EmailCodeFlow({
             </div>
           </Field>
           <Turnstile onToken={setToken} resetKey={widgetKey} />
+          {requireConsent && (
+            <div className="flex items-start gap-2.5 text-sm leading-relaxed">
+              <Checkbox
+                id="auth-consent"
+                className="mt-[3px]"
+                checked={consent}
+                aria-label={t('consent.label')}
+                onCheckedChange={v => {
+                  setConsent(v === true);
+                  setError(null);
+                }}
+              />
+              <span className="text-muted">
+                <label htmlFor="auth-consent" className="cursor-pointer">
+                  {t('consent.prefix')}
+                </label>{' '}
+                <button
+                  type="button"
+                  className="text-cyan underline underline-offset-2 hover:decoration-2"
+                  onClick={() => setPrivacyOpen(true)}
+                >
+                  {t('consent.link')}
+                </button>
+              </span>
+            </div>
+          )}
           {error && (
             <p role="alert" className="text-sm text-crit">
               {error}
@@ -204,11 +247,19 @@ export function EmailCodeFlow({
             variant="primary"
             size="lg"
             loading={busy}
-            disabled={!token || !email || sendLimit.limited}
+            disabled={!token || !email || sendLimit.limited || needsConsent}
           >
             {sendLimit.limited ? retryIn(sendLimit.seconds) : t('email.send')}
           </Button>
-          <p className="text-xs leading-relaxed text-dim">{t('privacyNote')}</p>
+          {!requireConsent && (
+            <button
+              type="button"
+              className="self-start text-xs text-dim underline-offset-4 hover:text-text hover:underline"
+              onClick={() => setPrivacyOpen(true)}
+            >
+              {t('privacyLink')}
+            </button>
+          )}
         </form>
       ) : (
         <form
@@ -292,9 +343,23 @@ export function EmailCodeFlow({
               {t('email.change')}
             </button>
           </p>
-          <p className="text-xs leading-relaxed text-dim">{t('privacyNote')}</p>
+          {codeHint && (
+            <p className="text-xs leading-relaxed text-dim">{codeHint}</p>
+          )}
         </form>
       )}
+      <PrivacyDialog
+        open={privacyOpen}
+        onOpenChange={setPrivacyOpen}
+        onAccept={
+          requireConsent
+            ? () => {
+                setConsent(true);
+                setError(null);
+              }
+            : undefined
+        }
+      />
     </div>
   );
 }

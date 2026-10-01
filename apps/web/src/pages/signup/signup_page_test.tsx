@@ -1,7 +1,9 @@
 /**
- * @fileoverview /signup: e-mail + Turnstile → code boxes (paste,
- * one-time-code autofill) → session, time zone saved, cockpit; locale sent;
- * SIGNUP_CLOSED; CODE_INVALID with attempts left; 60 s resend countdown.
+ * @fileoverview /signup: 3-day validity notice; privacy consent gates the
+ * code (checkbox or "accept" in the notice dialog); e-mail + Turnstile →
+ * code boxes (paste, one-time-code autofill) → session, time zone saved,
+ * cockpit; locale sent; SIGNUP_CLOSED; CODE_INVALID with attempts left;
+ * 60 s resend countdown.
  */
 
 import {fireEvent, screen, waitFor} from '@testing-library/react';
@@ -20,11 +22,44 @@ async function toCodeStep(email = 'new.user@example.com') {
   });
   await user.type(await screen.findByLabelText('邮箱'), email);
   await screen.findByText('人机验证已通过');
+  await user.click(screen.getByRole('checkbox', {name: CONSENT}));
   await user.click(screen.getByRole('button', {name: '发送验证码'}));
   return {user, ...r};
 }
 
+const CONSENT = '我已阅读并同意《隐私说明》';
+
 describe('SignupPage', () => {
+  it('states the 3-day validity and sends no code before consent', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SignupPage />, {as: 'anonymous', url: '/signup'});
+    expect(
+      await screen.findByText('试用账户有效期为 3 天'),
+    ).toBeInTheDocument();
+    await user.type(screen.getByLabelText('邮箱'), 'new.user@example.com');
+    await screen.findByText('人机验证已通过');
+    const send = screen.getByRole('button', {name: '发送验证码'});
+    expect(send).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', {name: CONSENT}));
+    expect(send).toBeEnabled();
+    await user.click(screen.getByRole('checkbox', {name: CONSENT}));
+    expect(send).toBeDisabled();
+    expect(recorded('POST', '/auth/codes')).toHaveLength(0);
+  });
+
+  it('accepts the privacy notice from its dialog', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SignupPage />, {as: 'anonymous', url: '/signup'});
+    await user.click(await screen.findByRole('button', {name: '《隐私说明》'}));
+    const dialog = await screen.findByRole('dialog', {name: '隐私说明'});
+    expect(dialog).toHaveTextContent('3. 保存期限与删除');
+    await user.click(screen.getByRole('button', {name: '我已阅读并同意'}));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole('checkbox', {name: CONSENT})).toBeChecked();
+  });
+
   it('signs up with a pasted code, saves the time zone and opens the cockpit', async () => {
     const {router} = await toCodeStep();
     const [send] = recorded('POST', '/auth/codes');
@@ -38,6 +73,9 @@ describe('SignupPage', () => {
     expect(boxes).toHaveLength(6);
     expect(boxes[0]).toHaveAttribute('autocomplete', 'one-time-code');
     expect(screen.getByText(/\d+ 秒后重新发送/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/如果该邮箱已有试用账户，请直接登录/),
+    ).toBeInTheDocument();
     fireEvent.paste(boxes[2], {
       clipboardData: {getData: () => ` ${TEST_CODE} `},
     });

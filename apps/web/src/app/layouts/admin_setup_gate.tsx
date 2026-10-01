@@ -26,6 +26,7 @@ import {
   logout,
 } from '../../features/identity/api';
 import {AuthCardHeader} from '../../features/identity/components/auth_shell';
+import {PageControls} from '../../features/identity/components/page_controls';
 import {RecoveryCodes} from '../../features/identity/components/recovery_codes';
 import {errorMessage} from '../../shared/api/error_message';
 import {refreshAccessToken} from '../../shared/api/client';
@@ -76,7 +77,10 @@ function SetupFrame({children}: {children: ReactNode}) {
       id="main"
       className="mx-auto flex min-h-screen max-w-[560px] flex-col justify-center gap-6 px-6 py-10"
     >
-      <Brand edition={t('common:brand.editionAdmin')} />
+      <div className="flex items-center justify-between gap-4">
+        <Brand edition={t('common:brand.editionAdmin')} />
+        <PageControls />
+      </div>
       <section className="glass p-8">
         <AuthCardHeader title={t('adminGate.title')} />
         {children}

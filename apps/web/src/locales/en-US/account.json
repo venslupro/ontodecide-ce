@@ -27,6 +27,7 @@
     "methodAdmin": "E-mail code + passkey",
     "sessions": "Active sessions",
     "language": "Language",
+    "theme": "Appearance",
     "timeZone": "Time zone"
   },
   "archive": {

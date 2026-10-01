@@ -27,6 +27,7 @@
     "methodAdmin": "邮箱验证码 + Passkey",
     "sessions": "活跃会话",
     "language": "界面语言",
+    "theme": "外观",
     "timeZone": "时区"
   },
   "archive": {
