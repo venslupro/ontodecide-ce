@@ -155,7 +155,9 @@ async function main() {
 
   if (/^https:/.test(BASE)) {
     await check("SPA CSP has connect-src 'self'", async () => {
-      const res = await fetchRetry(`${BASE}/`, {headers: {accept: 'text/html'}});
+      const res = await fetchRetry(`${BASE}/`, {
+        headers: {accept: 'text/html'},
+      });
       expect(res.status === 200, `status ${res.status}`);
       expectConnectSelf(res.headers.get('content-security-policy'));
     });
