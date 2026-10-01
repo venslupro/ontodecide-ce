@@ -25,7 +25,8 @@ export function ThemeSwitch({
   size = 'md',
   className,
 }: {
-  size?: 'sm' | 'md';
+  /** "auto": sm on phones, md from the sm breakpoint. */
+  size?: 'sm' | 'md' | 'auto';
   className?: string;
 }) {
   const {t} = useTranslation('common');
@@ -53,7 +54,9 @@ export function ThemeSwitch({
             onClick={() => !on && setThemePref(p)}
             className={cn(
               'flex items-center justify-center transition-colors',
-              size === 'sm' ? 'h-7 w-8' : 'h-8 w-9',
+              size === 'sm' && 'h-7 w-8',
+              size === 'md' && 'h-8 w-9',
+              size === 'auto' && 'h-7 w-8 sm:h-8 sm:w-9',
               on
                 ? 'bg-cyan/15 text-text shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--cyan)_45%,transparent)]'
                 : 'text-muted hover:text-text',

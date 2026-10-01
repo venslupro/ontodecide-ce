@@ -254,7 +254,7 @@ export function EmailCodeFlow({
           {!requireConsent && (
             <button
               type="button"
-              className="self-start text-xs text-dim underline-offset-4 hover:text-text hover:underline"
+              className="self-start text-sm text-muted underline decoration-line-2 underline-offset-4 hover:text-text hover:decoration-current"
               onClick={() => setPrivacyOpen(true)}
             >
               {t('privacyLink')}

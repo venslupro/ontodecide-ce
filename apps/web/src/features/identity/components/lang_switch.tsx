@@ -13,7 +13,7 @@ export function LangSwitch({
   size = 'md',
   className,
 }: {
-  size?: 'sm' | 'md';
+  size?: 'sm' | 'md' | 'auto';
   className?: string;
 }) {
   const {t, i18n} = useTranslation('common');

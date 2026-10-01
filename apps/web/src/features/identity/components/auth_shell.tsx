@@ -117,7 +117,16 @@ function GraphArt() {
             fill={COLOR[c]}
           />
           {label && (
-            <text x={x + 14} y={y + 4} fontSize={12} fill="var(--muted)">
+            <text
+              x={x + (c === 'c' ? 20 : 14)}
+              y={y + 4}
+              fontSize={12}
+              fill="var(--muted)"
+              stroke="var(--bg)"
+              strokeWidth={4}
+              strokeLinejoin="round"
+              paintOrder="stroke"
+            >
               {t(`shell.node.${label}`)}
             </text>
           )}
@@ -142,19 +151,23 @@ export function AuthShell({
   const {t} = useTranslation('common');
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden">
-      <header className="mx-auto flex w-full max-w-[1440px] items-center justify-between gap-4 px-6 pt-8 lg:px-24">
-        <Brand edition={t('brand.edition')} />
+      <header className="mx-auto flex w-full max-w-[1440px] items-center justify-between gap-3 px-4 pt-6 sm:px-6 sm:pt-8 lg:px-24">
+        <Brand
+          edition={t('brand.edition')}
+          className="min-w-0 max-[359px]:[&>div]:hidden"
+        />
         <PageControls />
       </header>
-      <main className="mx-auto grid w-full max-w-[1440px] flex-1 grid-cols-1 items-center gap-10 px-6 py-10 lg:grid-cols-[1fr_minmax(440px,540px)] lg:px-24">
+      <main className="mx-auto grid w-full max-w-[1440px] flex-1 grid-cols-1 content-start items-center gap-6 px-4 py-6 sm:gap-10 sm:px-6 sm:py-10 lg:grid-cols-[1fr_minmax(440px,540px)] lg:content-center lg:px-24">
         <section className="flex flex-col gap-8">
           <div>
-            <h1 className="text-4xl leading-tight font-bold tracking-tight text-text lg:text-5xl">
+            <h1 className="text-3xl leading-tight font-bold tracking-tight text-text sm:text-4xl lg:text-5xl">
               {headline}
               <br />
               <span className="text-gradient">{headlineAccent}</span>
             </h1>
-            <p className="mt-5 max-w-xl text-base leading-relaxed text-muted">
+            {/* Phones: the card carries the essentials; keep it on screen. */}
+            <p className="mt-5 hidden max-w-xl text-base leading-relaxed text-muted sm:block">
               {note}
             </p>
           </div>
@@ -163,7 +176,7 @@ export function AuthShell({
           </div>
         </section>
         <section className="glass shadow-[0_0_60px_color-mix(in_srgb,var(--cyan)_8%,transparent)]">
-          <div className="p-8">{children}</div>
+          <div className="p-6 sm:p-8">{children}</div>
         </section>
       </main>
     </div>

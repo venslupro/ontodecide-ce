@@ -63,7 +63,14 @@ export function resolveTheme(
 export function applyTheme(theme: Theme): void {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
-  if (root.dataset.theme !== theme) root.dataset.theme = theme;
+  if (root.dataset.theme !== theme) {
+    // Swap all tokens at once: per-element color transitions would run out
+    // of step and flash mid-tone surfaces (globals.css honours the flag).
+    root.dataset.themeSwitching = '';
+    root.dataset.theme = theme;
+    void getComputedStyle(root).color;
+    requestAnimationFrame(() => delete root.dataset.themeSwitching);
+  }
   root.style.colorScheme = theme;
   document
     .querySelector('meta[name="theme-color"]')
