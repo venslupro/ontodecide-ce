@@ -1,16 +1,17 @@
 # Custom domain (修订说明书 4.1 / 4.4 / 4.5), only when var.domain is set.
-# The zone itself must already exist in the account (Free plan); it is read,
-# not managed. The Pages custom domain app.<domain> is attached by the
-# deploy workflow (Wrangler owns the Pages project); the Workers Route
-# app.<domain>/api/* lives in apps/api-gateway/wrangler.jsonc.tpl.
+# Terraform creates the Cloudflare zone (so its nameservers can be set at the
+# registrar, e.g. NameSilo) and attaches the Pages custom domain
+# ontodecide-ce.<domain> to the Pages project (DNS is created by Cloudflare
+# automatically). The Workers Route ontodecide-ce.<domain>/api/* lives in
+# apps/api-gateway/wrangler.jsonc.tpl.
 #
-#   app.<domain>            CNAME → ontodecide-ce.pages.dev (proxied)
-#   <domain>                301 → https://app.<domain> (Redirect Rule)
-#   ontodecide-ce.pages.dev 301 → https://app.<domain> (Bulk Redirect)
-#   _dmarc.<domain>         TXT DMARC (var.dmarc_policy)
-#   mail records            var.mail_dns_records (Resend / Brevo)
-#   /api/*                  WAF rate limit: 30 requests / 10 s per IP
-#   TLS                     Full (strict), TLS ≥ 1.2, Always Use HTTPS
+#   ontodecide-ce.<domain>     Pages custom domain (CNAME → pages.dev, proxied)
+#   <domain>                   301 → https://ontodecide-ce.<domain> (Redirect)
+#   ontodecide-ce.pages.dev    301 → https://ontodecide-ce.<domain> (Bulk Redirect)
+#   _dmarc.<domain>            TXT DMARC (var.dmarc_policy)
+#   mail records               var.mail_dns_records (Resend / Brevo)
+#   /api/*                     WAF rate limit: 30 requests / 10 s per IP
+#   TLS                        Full (strict), TLS ≥ 1.2, Always Use HTTPS
 
 locals {
   zone_count = var.domain == "" ? 0 : 1
@@ -29,28 +30,33 @@ locals {
   pages_redirect_list = "${replace(local.prefix, "-", "_")}_pages_redirect"
 }
 
-data "cloudflare_zone" "main" {
+# Create the zone (not read): assigning it in the account gives us the
+# Cloudflare nameservers to delegate the registrar domain to. Free plan;
+# status stays "pending" until the registrar NS change propagates.
+resource "cloudflare_zone" "main" {
   count = local.zone_count
-  filter = {
-    name = var.domain
+  account = {
+    id = var.account_id
   }
+  name   = var.domain
+  type   = "full"
+  paused = false
 }
 
-resource "cloudflare_dns_record" "app" {
-  count   = local.zone_count
-  zone_id = data.cloudflare_zone.main[0].id
-  name    = local.app_host
-  type    = "CNAME"
-  content = local.pages_host
-  proxied = true
-  ttl     = 1
-  comment = "OntoDecide CE web app (Pages custom domain) and /api/* Workers Route"
+# Pages custom domain: Cloudflare creates the proxied CNAME
+# ontodecide-ce.<domain> → ontodecide-ce.pages.dev automatically, so no
+# separate cloudflare_dns_record is needed here.
+resource "cloudflare_pages_domain" "app" {
+  count        = local.zone_count
+  account_id   = var.account_id
+  project_name = cloudflare_pages_project.web.name
+  name         = local.app_host
 }
 
 # Placeholder so apex requests reach the proxy and the redirect rule.
 resource "cloudflare_dns_record" "apex" {
   count   = var.manage_apex_record ? local.zone_count : 0
-  zone_id = data.cloudflare_zone.main[0].id
+  zone_id = cloudflare_zone.main[0].id
   name    = var.domain
   type    = "AAAA"
   content = "100::"
@@ -61,7 +67,7 @@ resource "cloudflare_dns_record" "apex" {
 
 resource "cloudflare_dns_record" "dmarc" {
   count   = local.zone_count
-  zone_id = data.cloudflare_zone.main[0].id
+  zone_id = cloudflare_zone.main[0].id
   name    = "_dmarc.${var.domain}"
   type    = "TXT"
   content = "\"v=DMARC1; p=${var.dmarc_policy}; adkim=s; aspf=r\""
@@ -70,7 +76,7 @@ resource "cloudflare_dns_record" "dmarc" {
 
 resource "cloudflare_dns_record" "mail" {
   for_each = var.domain == "" ? {} : local.mail_records
-  zone_id  = data.cloudflare_zone.main[0].id
+  zone_id  = cloudflare_zone.main[0].id
   name     = each.value.fqdn
   type     = each.value.type
   content  = each.value.type == "TXT" ? "\"${each.value.content}\"" : each.value.content
@@ -82,7 +88,7 @@ resource "cloudflare_dns_record" "mail" {
 # Apex → app host (Single Redirect, http_request_dynamic_redirect phase).
 resource "cloudflare_ruleset" "apex_redirect" {
   count       = local.zone_count
-  zone_id     = data.cloudflare_zone.main[0].id
+  zone_id     = cloudflare_zone.main[0].id
   name        = "${local.prefix}-apex-redirect"
   description = "Redirect the apex to the app host."
   kind        = "zone"
@@ -110,7 +116,7 @@ resource "cloudflare_ruleset" "apex_redirect" {
 # Finer limits are the api-gateway Rate Limiting bindings.
 resource "cloudflare_ruleset" "api_rate_limit" {
   count       = local.zone_count
-  zone_id     = data.cloudflare_zone.main[0].id
+  zone_id     = cloudflare_zone.main[0].id
   name        = "${local.prefix}-api-rate-limit"
   description = "Per-IP limit on the public API."
   kind        = "zone"
@@ -134,21 +140,21 @@ resource "cloudflare_ruleset" "api_rate_limit" {
 # in the dashboard: its v5 object value does not round-trip cleanly.
 resource "cloudflare_zone_setting" "ssl" {
   count      = local.zone_count
-  zone_id    = data.cloudflare_zone.main[0].id
+  zone_id    = cloudflare_zone.main[0].id
   setting_id = "ssl"
   value      = "strict"
 }
 
 resource "cloudflare_zone_setting" "min_tls_version" {
   count      = local.zone_count
-  zone_id    = data.cloudflare_zone.main[0].id
+  zone_id    = cloudflare_zone.main[0].id
   setting_id = "min_tls_version"
   value      = "1.2"
 }
 
 resource "cloudflare_zone_setting" "always_use_https" {
   count      = local.zone_count
-  zone_id    = data.cloudflare_zone.main[0].id
+  zone_id    = cloudflare_zone.main[0].id
   setting_id = "always_use_https"
   value      = "on"
 }

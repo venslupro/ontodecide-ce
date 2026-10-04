@@ -660,7 +660,7 @@ delete_worker_routes() {
   local zone="$1"
   local routes id pattern
   if ! routes="$(cf_zone_get "${zone}" /workers/routes | jq -r \
-    --arg p "app.${DOMAIN}/api/*" --arg s "${PREFIX}-" \
+    --arg p "ontodecide-ce.${DOMAIN}/api/*" --arg s "${PREFIX}-" \
     '.result[]? | select(.pattern == $p or ((.script // "") | startswith($s)))
       | "\(.id)\t\(.pattern)"')"; then
     list_failed "Workers Routes"
@@ -690,7 +690,7 @@ reset_zone() {
     warn "zone ${DOMAIN} not found in the account"
   else
     delete_worker_routes "${zone}"
-    delete_records "${zone}" "app.${DOMAIN}" CNAME
+    delete_records "${zone}" "ontodecide-ce.${DOMAIN}" CNAME
     delete_records "${zone}" "${DOMAIN}" AAAA "100::"
     delete_records "${zone}" "_dmarc.${DOMAIN}" TXT
     while IFS=$'\t' read -r name type; do

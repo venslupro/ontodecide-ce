@@ -46,18 +46,20 @@ class, 2 Queues (`domain-events`, `dead-letter`), 2 Cron triggers, 0 KV,
 plus the hand-made tfstate bucket, 1 Zone (when a domain is configured).
 
 Who creates what: **Terraform** creates resources (D1, Queues, B2 bucket and
-keys, Turnstile, DNS / redirects / WAF rule on the zone). **Wrangler** creates
-and deploys Workers and the Pages project and owns code, bindings, vars,
-routes, crons and Durable Object migrations (`apps/*/wrangler.jsonc.tpl`,
-rendered by `scripts/gen_wrangler.mjs` from `terraform output -json`).
+keys, Turnstile, the Pages project, the zone and its Pages custom domain /
+redirects / WAF rule). **Wrangler** creates and deploys Workers and deploys
+the SPA to the Pages project, owning code, bindings, vars, routes, crons and
+Durable Object migrations (`apps/*/wrangler.jsonc.tpl`, rendered by
+`scripts/gen_wrangler.mjs` from `terraform output -json`).
 
 ### 2.1 Domain and routing
 
 * `APP_DOMAIN` (GitHub variable, e.g. `example.com`; Terraform `var.domain`).
-  The app is served at `https://app.${APP_DOMAIN}`: Pages custom domain for
-  the SPA, and a Workers Route `app.${APP_DOMAIN}/api/*` on api-gateway (the
-  only Worker with a route). Same origin: no CORS, `__Host-` cookie,
-  CSP `connect-src 'self'`.
+  Terraform creates the Cloudflare zone and the Pages custom domain; the app
+  is served at `https://ontodecide-ce.${APP_DOMAIN}`: Pages custom domain for
+  the SPA, and a Workers Route `ontodecide-ce.${APP_DOMAIN}/api/*` on
+  api-gateway (the only Worker with a route). Same origin: no CORS,
+  `__Host-` cookie, CSP `connect-src 'self'`.
 * Fallback (修订说明书 4.2, used while `APP_DOMAIN` is empty): the Pages
   Function `apps/web/functions/api/[[path]].ts` forwards `/api/*` to the
   gateway through a service binding and the app lives at

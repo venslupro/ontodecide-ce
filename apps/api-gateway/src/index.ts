@@ -1,6 +1,6 @@
 /**
  * @fileoverview Worker entry point of api-gateway (Workers Route
- * `app.<domain>/api/*`). No Durable Object and no KV: the V1.3 EdgeGuard
+ * `ontodecide-ce.<domain>/api/*`). No Durable Object and no KV: the V1.3 EdgeGuard
  * class is deleted by the `v2` migration in wrangler.jsonc.
  */
 

@@ -1,9 +1,7 @@
 /**
- * @fileoverview Reads design tokens (CSS variables) for charts so both
- * themes share one source of truth.
+ * @fileoverview Reads design tokens (CSS variables) for charts. The theme is
+ * a single light palette, so tokens are read once at first use.
  */
-
-import {useEffect, useState} from 'react';
 
 /** Chart-relevant token values. */
 export interface ChartTokens {
@@ -25,20 +23,20 @@ export interface ChartTokens {
 }
 
 const FALLBACK: ChartTokens = {
-  text: '#E6ECFF',
-  muted: '#8B98BA',
-  dim: '#7A88AD',
-  line: 'rgba(110,150,255,.16)',
-  line2: 'rgba(110,150,255,.28)',
-  grid: 'rgba(139,152,186,.09)',
-  panel: '#111B33',
-  cyan: '#22D3EE',
-  blue: '#3B82F6',
-  violet: '#8B5CF6',
-  orange: '#FB923C',
-  good: '#22C55E',
-  warn: '#F59E0B',
-  crit: '#EF4444',
+  text: '#0f1a33',
+  muted: '#4a5878',
+  dim: '#5d6a88',
+  line: 'rgba(37,64,140,.14)',
+  line2: 'rgba(37,64,140,.26)',
+  grid: 'rgba(74,88,120,.12)',
+  panel: '#ffffff',
+  cyan: '#0e7490',
+  blue: '#2563eb',
+  violet: '#7c3aed',
+  orange: '#c2410c',
+  good: '#15803d',
+  warn: '#92400e',
+  crit: '#dc2626',
   fontFamily: 'Inter, "Noto Sans SC", sans-serif',
 };
 
@@ -76,19 +74,9 @@ export function seriesColors(t: ChartTokens): string[] {
   return [t.cyan, t.blue, t.violet, t.orange];
 }
 
-/** Re-reads tokens whenever `data-theme` changes on `<html>`. */
+/** Returns the (constant) chart tokens. */
 export function useChartTokens(): ChartTokens {
-  const [tokens, setTokens] = useState(readChartTokens);
-  useEffect(() => {
-    if (typeof MutationObserver === 'undefined') return undefined;
-    const obs = new MutationObserver(() => setTokens(readChartTokens()));
-    obs.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-theme'],
-    });
-    return () => obs.disconnect();
-  }, []);
-  return tokens;
+  return readChartTokens();
 }
 
 /**
@@ -108,8 +96,8 @@ export function impactColor(
           .map(c => c + c)
           .join('')
       : hex.slice(0, 6);
-  const r = parseInt(full.slice(0, 2), 16) || 251;
-  const g = parseInt(full.slice(2, 4), 16) || 146;
-  const b = parseInt(full.slice(4, 6), 16) || 60;
+  const r = parseInt(full.slice(0, 2), 16) || 194;
+  const g = parseInt(full.slice(2, 4), 16) || 65;
+  const b = parseInt(full.slice(4, 6), 16) || 12;
   return `rgba(${r},${g},${b},${(0.18 + 0.82 * k).toFixed(3)})`;
 }

@@ -62,3 +62,13 @@ output "app" {
     origin = local.app_origin
   }
 }
+
+output "zone" {
+  description = "Cloudflare zone: id, name, assigned nameservers (set at the registrar) and status."
+  value = var.domain == "" ? null : {
+    id           = cloudflare_zone.main[0].id
+    name         = cloudflare_zone.main[0].name
+    name_servers = cloudflare_zone.main[0].name_servers
+    status       = cloudflare_zone.main[0].status
+  }
+}

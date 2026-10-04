@@ -3,13 +3,14 @@
 #
 #   5 D1 databases, 2 queues (domain-events, dead-letter), 1 B2 bucket
 #   (archive) with a write key and two signing-key slots, 1 Turnstile widget,
-#   and — when var.domain is set — DNS, redirects, the WAF rate-limit rule
-#   and zone TLS settings (domain.tf).
+#   1 Pages project (ontodecide-ce) and — when var.domain is set — the
+#   Cloudflare zone, the Pages custom domain, redirects, the WAF rate-limit
+#   rule and zone TLS settings (domain.tf).
 #
-# Workers, their bindings, routes, crons and Durable Object migrations, and
-# the Pages project belong to Wrangler (apps/*/wrangler.jsonc.tpl,
-# .github/workflows/deploy.yml). V1.3 resources are released from state in
-# legacy.tf and deleted by scripts/cleanup_legacy.sh.
+# Workers, their bindings, routes, crons and Durable Object migrations belong
+# to Wrangler (apps/*/wrangler.jsonc.tpl, .github/workflows/deploy.yml).
+# V1.3 resources are released from state in legacy.tf and deleted by
+# scripts/cleanup_legacy.sh.
 #
 # Naming: every resource is named {project}-{env}-{service|module}, e.g.
 # ontodecide-prd-object-graph-db (local.prefix). Exceptions: the Pages
@@ -29,7 +30,7 @@ locals {
   ]
 
   pages_host = "ontodecide-ce.pages.dev"
-  app_host   = var.domain == "" ? local.pages_host : "app.${var.domain}"
+  app_host   = var.domain == "" ? local.pages_host : "ontodecide-ce.${var.domain}"
   app_origin = "https://${local.app_host}"
 }
 
@@ -105,4 +106,14 @@ resource "cloudflare_turnstile_widget" "auth" {
   name       = "${local.prefix}-auth"
   domains    = [local.app_host]
   mode       = "managed"
+}
+
+# Empty Pages project (Direct Upload); Wrangler deploys the SPA and applies
+# the GATEWAY service binding from apps/web/wrangler.jsonc at deploy time.
+# The project name is fixed to ontodecide-ce so its pages.dev URL stays
+# https://ontodecide-ce.pages.dev (exempt from {project}-{env}-{service}).
+resource "cloudflare_pages_project" "web" {
+  account_id        = var.account_id
+  name              = "ontodecide-ce"
+  production_branch = "main"
 }

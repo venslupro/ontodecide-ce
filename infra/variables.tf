@@ -51,10 +51,11 @@ variable "archive_sign_active" {
 
 variable "domain" {
   description = <<-EOT
-    Apex domain of an existing Cloudflare zone (TF_VAR_domain from the GitHub
-    variable APP_DOMAIN), e.g. example.com. The app is served at
-    https://app.<domain>. Empty: no zone resources; the app stays on
-    https://ontodecide-ce.pages.dev (Pages Functions proxy fallback).
+    Apex domain to add to the Cloudflare account (TF_VAR_domain from the
+    GitHub variable APP_DOMAIN), e.g. example.com. Terraform creates the
+    zone, the Pages project ontodecide-ce and attaches the custom domain
+    https://ontodecide-ce.<domain>. Empty: no zone resources; the app stays
+    on https://ontodecide-ce.pages.dev (Pages Functions proxy fallback).
   EOT
   type        = string
   default     = ""

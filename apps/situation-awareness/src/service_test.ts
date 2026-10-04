@@ -50,7 +50,7 @@ function setup() {
     SITUATION_ROOM: ns.asNamespace(),
     OBJECTS: rpcBinding(objects) as unknown as Env['OBJECTS'],
     ONTOLOGY: rpcBinding(ontology) as unknown as Env['ONTOLOGY'],
-    APP_ORIGIN: 'https://app.example.com',
+    APP_ORIGIN: 'https://ontodecide-ce.example.com',
     ENVIRONMENT: 'test',
   } satisfies Env);
   const svc = createService(env, {clock, logger: silentLogger});
@@ -102,7 +102,7 @@ describe('situation-awareness service', () => {
 
   it('guards the stream endpoint (Origin, upgrade, ticket)', async () => {
     const {svc, ns} = setup();
-    const url = `https://app.example.com/api/v1/situation/stream?ticket=${TEST_TID}.abcdefghijklmnopqrstuvwx`;
+    const url = `https://ontodecide-ce.example.com/api/v1/situation/stream?ticket=${TEST_TID}.abcdefghijklmnopqrstuvwx`;
     const upgrade = {Upgrade: 'websocket'};
     const evil = await svc.fetch(
       new Request(url, {headers: {...upgrade, Origin: 'https://evil.example'}}),
@@ -110,9 +110,12 @@ describe('situation-awareness service', () => {
     expect(evil.status).toBe(403);
     expect((await svc.fetch(new Request(url))).status).toBe(426);
     const bad = await svc.fetch(
-      new Request('https://app.example.com/api/v1/situation/stream?ticket=x', {
-        headers: {...upgrade, Origin: 'https://app.example.com'},
-      }),
+      new Request(
+        'https://ontodecide-ce.example.com/api/v1/situation/stream?ticket=x',
+        {
+          headers: {...upgrade, Origin: 'https://ontodecide-ce.example.com'},
+        },
+      ),
     );
     expect(bad.status).toBe(401);
     expect(ns.instances.size).toBe(0);

@@ -1,7 +1,7 @@
 /**
  * @fileoverview React wrapper around the tree-shaken ECharts core. The
  * option builder receives theme tokens so colors always come from tokens;
- * the chart is re-themed when `data-theme` changes and resized with its box.
+ * the chart is resized with its container.
  */
 
 import type {EChartsCoreOption} from 'echarts/core';

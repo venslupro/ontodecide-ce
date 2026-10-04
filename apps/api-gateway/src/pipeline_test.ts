@@ -99,15 +99,18 @@ describe('body limit', () => {
         c.close();
       },
     });
-    const req = new Request('https://app.example.com/api/v1/auth/codes', {
-      method: 'POST',
-      headers: {
-        origin: 'https://app.example.com',
-        'content-type': 'application/json',
-      },
-      body,
-      duplex: 'half',
-    } as RequestInit);
+    const req = new Request(
+      'https://ontodecide-ce.example.com/api/v1/auth/codes',
+      {
+        method: 'POST',
+        headers: {
+          origin: 'https://ontodecide-ce.example.com',
+          'content-type': 'application/json',
+        },
+        body,
+        duplex: 'half',
+      } as RequestInit,
+    );
     const res = await gw.app.fetch(req);
     expect(res.status).toBe(413);
   });
@@ -129,7 +132,9 @@ describe('route match', () => {
     expect((await problemOf(a)).code).toBe('NOT_FOUND');
     const b = await call(gw, 'PUT', '/health');
     expect(b.status).toBe(404);
-    const c = await gw.app.fetch(new Request('https://app.example.com/other'));
+    const c = await gw.app.fetch(
+      new Request('https://ontodecide-ce.example.com/other'),
+    );
     expect(c.status).toBe(404);
     expect(c.headers.get('content-security-policy')).toBe(CSP);
   });

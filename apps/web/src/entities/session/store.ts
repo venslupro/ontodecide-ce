@@ -2,7 +2,6 @@
  * @fileoverview Session & client-global state (Zustand): in-memory access
  * token (never persisted), role from the token claims, the caller's account
  * and workspace (GET /me), the admin view target, and the server clock skew.
- * The UI is dark-only (修订说明书 11.1 #6).
  */
 
 import type {MeDto} from '@ontodecide/identity/contract';

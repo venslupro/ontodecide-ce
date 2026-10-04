@@ -274,8 +274,10 @@ jobs:
             | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).sitekey))')"
           echo "VITE_TURNSTILE_SITE_KEY=${sitekey}" >> "$GITHUB_ENV"
       - run: pnpm build:web
-      # Terraform does not manage the Pages project; the first deploy (or the
-      # first one after scripts/reset.sh) creates it.
+      # Terraform owns the Pages project (cloudflare_pages_project.web) and
+      # its custom domain (cloudflare_pages_domain.app). The steps below are
+      # safety nets for the rare case where a deploy runs before the first
+      # terraform apply or after scripts/reset.sh.
       - name: Create Pages project if missing
         working-directory: apps/web
         run: |
@@ -289,13 +291,14 @@ jobs:
           esac
       # With a domain, /api/* is served by the api-gateway Workers Route on
       # the same host: publish the SPA without the Pages Functions proxy and
-      # attach app.${APP_DOMAIN} (its CNAME is managed by Terraform).
+      # ensure ontodecide-ce.${APP_DOMAIN} is attached (Terraform normally
+      # owns this via cloudflare_pages_domain).
       - name: Custom domain (pure static)
         if: env.APP_DOMAIN != ''
         working-directory: apps/web
         run: |
           rm -rf functions
-          host="app.${APP_DOMAIN}"
+          host="ontodecide-ce.${APP_DOMAIN}"
           api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/ontodecide-ce/domains"
           status="$(curl -sS -o /dev/null -w '%{http_code}' \
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${api}/${host}")"
@@ -334,7 +337,7 @@ jobs:
         id: smoke
         run: |
           if [[ -n "${APP_DOMAIN}" ]]; then
-            base="https://app.${APP_DOMAIN}"
+            base="https://ontodecide-ce.${APP_DOMAIN}"
             # With a custom domain *.pages.dev must answer 301 to it.
             export SMOKE_PAGES_URL='https://ontodecide-ce.pages.dev'
           else

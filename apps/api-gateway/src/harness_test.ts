@@ -35,7 +35,7 @@ import {createApp, type GatewayApp} from './app';
 import type {Env} from './env';
 
 /** App origin used by tests. */
-export const ORIGIN = 'https://app.example.com';
+export const ORIGIN = 'https://ontodecide-ce.example.com';
 
 /** Base URL of the API. */
 export const BASE = `${ORIGIN}/api/v1`;
