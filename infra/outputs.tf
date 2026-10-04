@@ -66,9 +66,9 @@ output "app" {
 output "zone" {
   description = "Cloudflare zone: id, name, assigned nameservers (set at the registrar) and status."
   value = var.domain == "" ? null : {
-    id           = cloudflare_zone.main[0].id
-    name         = cloudflare_zone.main[0].name
-    name_servers = cloudflare_zone.main[0].name_servers
-    status       = cloudflare_zone.main[0].status
+    id           = data.cloudflare_zone.main[0].id
+    name         = data.cloudflare_zone.main[0].name
+    name_servers = data.cloudflare_zone.main[0].name_servers
+    status       = data.cloudflare_zone.main[0].status
   }
 }
