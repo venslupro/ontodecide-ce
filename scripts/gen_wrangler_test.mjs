@@ -39,8 +39,8 @@ const TF = {
   },
   app: {
     domain: 'example.com',
-    host: 'app.example.com',
-    origin: 'https://app.example.com',
+    host: 'ontodecide-ce.example.com',
+    origin: 'https://ontodecide-ce.example.com',
   },
 };
 
@@ -59,7 +59,7 @@ test('prod with a domain renders the route and public keys only', () => {
   const gw = c['api-gateway'];
   assert.equal(gw.name, 'ontodecide-prd-api-gateway');
   assert.deepEqual(gw.routes, [
-    {pattern: 'app.example.com/api/*', zone_name: 'example.com'},
+    {pattern: 'ontodecide-ce.example.com/api/*', zone_name: 'example.com'},
   ]);
   const jwks = JSON.parse(gw.vars.JWT_PUBLIC_KEYS);
   assert.deepEqual(
@@ -68,7 +68,7 @@ test('prod with a domain renders the route and public keys only', () => {
   );
   assert.ok(jwks.keys.every(k => !('d' in k)));
   const ia = c['identity-access'];
-  assert.equal(ia.vars.WEBAUTHN_RP_ID, 'app.example.com');
+  assert.equal(ia.vars.WEBAUTHN_RP_ID, 'ontodecide-ce.example.com');
   assert.equal(ia.vars.MAIL_FROM, 'OntoDecide CE <noreply@mail.example.com>');
   assert.equal(ia.vars.EMAIL_MODE, 'live');
   assert.equal(ia.vars.CF_ACCOUNT_ID, 'acc');

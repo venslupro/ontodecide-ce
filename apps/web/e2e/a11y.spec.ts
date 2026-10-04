@@ -1,6 +1,6 @@
 /**
  * @fileoverview WCAG 2.1 AA checks (axe-core) of the public platform pages
- * in both languages and both themes (the default follows the system). Skipped when no server answers.
+ * in both languages (single light theme). Skipped when no server answers.
  */
 
 import AxeBuilder from '@axe-core/playwright';
@@ -16,30 +16,26 @@ test.beforeAll(async ({request}) => {
   test.skip(!up, `no server at ${BASE}`);
 });
 
-for (const scheme of ['light', 'dark'] as const) {
-  for (const lang of ['zh', 'en']) {
-    for (const path of ['/signup', '/login', '/ended']) {
-      test(`${path} (${lang}, ${scheme}) has no WCAG AA violations`, async ({
-        page,
-      }) => {
-        await page.emulateMedia({colorScheme: scheme});
-        await page.route('**/api/v1/**', route =>
-          route.fulfill({
-            status: 401,
-            contentType: 'application/problem+json',
-            body: '{"type":"about:blank","title":"x","status":401,"code":"UNAUTHENTICATED"}',
-          }),
-        );
-        await page.route('**/challenges.cloudflare.com/**', route =>
-          route.fulfill({contentType: 'text/javascript', body: ''}),
-        );
-        await page.goto(`${path}?lang=${lang}`);
-        await page.waitForLoadState('networkidle');
-        const r = await new AxeBuilder({page})
-          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
-          .analyze();
-        expect(r.violations.map(v => v.id)).toEqual([]);
-      });
-    }
+for (const lang of ['zh', 'en']) {
+  for (const path of ['/signup', '/login', '/ended']) {
+    test(`${path} (${lang}) has no WCAG AA violations`, async ({page}) => {
+      await page.emulateMedia({colorScheme: 'light'});
+      await page.route('**/api/v1/**', route =>
+        route.fulfill({
+          status: 401,
+          contentType: 'application/problem+json',
+          body: '{"type":"about:blank","title":"x","status":401,"code":"UNAUTHENTICATED"}',
+        }),
+      );
+      await page.route('**/challenges.cloudflare.com/**', route =>
+        route.fulfill({contentType: 'text/javascript', body: ''}),
+      );
+      await page.goto(`${path}?lang=${lang}`);
+      await page.waitForLoadState('networkidle');
+      const r = await new AxeBuilder({page})
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+        .analyze();
+      expect(r.violations.map(v => v.id)).toEqual([]);
+    });
   }
 }

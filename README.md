@@ -18,8 +18,8 @@ Design documents (V2.4): 社区版设计修订说明书 (authoritative), 总体�
 
 ```mermaid
 flowchart LR
-  B([Browser]) -->|app.example.com| P[Pages ontodecide-ce<br/>static SPA]
-  B -->|app.example.com/api/*<br/>Workers Route, same origin| G[api-gateway<br/>Ed25519 JWT · Act-as · rate limit · OpenAPI 3.2 · BFF]
+  B([Browser]) -->|ontodecide-ce.example.com| P[Pages ontodecide-ce<br/>static SPA]
+  B -->|ontodecide-ce.example.com/api/*<br/>Workers Route, same origin| G[api-gateway<br/>Ed25519 JWT · Act-as · rate limit · OpenAPI 3.2 · BFF]
   G --> I[identity-access]
   G --> O[ontology-manager]
   G --> D[data-integration]
@@ -63,12 +63,12 @@ Layout and naming follow Google TypeScript Style (`gts`).
 ```
 apps/<worker>/            wrangler.jsonc.tpl + src/{env,container,service,index}.ts
 apps/api-gateway/openapi.yaml   OpenAPI 3.2.0 — the public API contract
-apps/web/                 React 19 SPA (dark theme, zh-CN / en-US), Playwright e2e
+apps/web/                 React 19 SPA (light theme, zh-CN / en-US), Playwright e2e
 packages/shared-kernel/   CallCtx, errors (RFC 9457), Ed25519 JWT, filters, limits, lifecycle types; ./d1 repositories
 packages/<context>/       contract/ domain/ application/ infrastructure/ interface/
 packages/testing/         D1 over node:sqlite, DO SQL storage, queues, RPC bindings, Workers AI and rate-limit fakes
 migrations/<service>/     D1 migrations (one directory per database)
-infra/                    Terraform: D1, Queues, B2 bucket + keys, Turnstile, zone DNS / redirects / WAF
+infra/                    Terraform: D1, Queues, B2 bucket + keys, Turnstile, Pages project, zone + custom domain / redirects / WAF
 scripts/                  gen_wrangler.mjs, gen_secrets.mjs, dev.sh, smoke.mjs, check_sql.mjs, cleanup_legacy.sh
 samples/supply-chain/     demo CSVs matching the template
 tests/e2e/                in-process full-loop tests through the gateway
@@ -93,9 +93,9 @@ There is one environment, **production** (GitHub environment `production`), depl
 
 | What | Source of truth | Tool |
 | --- | --- | --- |
-| D1 ×5, Queues ×2, B2 archive bucket + keys, Turnstile, zone DNS / redirects / WAF rule | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
+| D1 ×5, Queues ×2, B2 archive bucket + keys, Turnstile, Pages project `ontodecide-ce`, zone + custom domain / redirects / WAF rule | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
 | Workers: code, bindings, vars, routes, crons, DO migrations, queue consumers | `apps/*/wrangler.jsonc.tpl` | Wrangler (`scripts/gen_wrangler.mjs` renders ids from `terraform output -json`) |
-| Pages project `ontodecide-ce` + custom domain | `.github/workflows/deploy.yml` (web job) | Wrangler (created if missing) |
+| Pages SPA deployment | `apps/web/wrangler.jsonc` | Wrangler (`wrangler pages deploy dist`) |
 | D1 schema | `migrations/<service>/*.sql` | `wrangler d1 migrations apply` |
 | Secrets | GitHub Secrets + sensitive Terraform outputs | `wrangler secret bulk` |
 
@@ -115,7 +115,7 @@ CI green → approve Terraform apply → approve Deploy
                                                         identity-access ◄────┘ ─► api-gateway ─► Pages
   ```
 
-Set `APP_DOMAIN` (GitHub variable) to the purchased domain; its zone must already exist in the Cloudflare account. The SPA is then served at `https://app.<domain>` and the API at `https://app.<domain>/api/*` (Workers Route, same origin). Until it is set, the SPA falls back to `https://ontodecide-ce.pages.dev` with a Pages Function forwarding `/api/*` to the gateway. The full list with comments is in [`.env.example`](.env.example).
+Set `APP_DOMAIN` (GitHub variable) to the purchased apex domain, e.g. `opcbridge.top`. Terraform creates the Cloudflare zone and attaches the Pages custom domain; run `terraform -chdir=infra output zone` to get the Cloudflare nameservers and set them at the registrar. The SPA is then served at `https://ontodecide-ce.<domain>` and the API at `https://ontodecide-ce.<domain>/api/*` (Workers Route, same origin). Until it is set, the SPA falls back to `https://ontodecide-ce.pages.dev` with a Pages Function forwarding `/api/*` to the gateway. The full list with comments is in [`.env.example`](.env.example).
 
 **GitHub secrets:**
 - Cloudflare: `CF_API_TOKEN` (Workers, D1, Queues, Pages, Turnstile, account rulesets/lists; zone DNS, settings, WAF and redirect rules), `CF_ACCOUNT_ID`.
@@ -140,7 +140,7 @@ The Turnstile secret and the B2 archive keys come from Terraform outputs, so you
 4. In both the Resend and Brevo dashboards, turn off open and click tracking, so the archive download links in e-mails are not rewritten. Enable HSTS on the zone in the dashboard; the provider does not manage it cleanly.
 
 Before go-live, the design asks for three live checks:
-- `/api/*` on `app.<domain>` reaches the Worker Route, not Pages.
+- `/api/*` on `ontodecide-ce.<domain>` reaches the Worker Route, not Pages.
 - Workers AI qwen3 accepts `enable_thinking: false` and JSON-schema output. The code falls back automatically either way.
 - The Rate Limiting bindings work on the Free plan.
 

@@ -103,7 +103,7 @@ export function Turnstile({
         api = ts;
         id = ts.render(box.current, {
           sitekey,
-          theme: 'dark',
+          theme: 'light',
           appearance: 'interaction-only',
           language: i18n.language === 'en-US' ? 'en' : 'zh-cn',
           callback: token => {

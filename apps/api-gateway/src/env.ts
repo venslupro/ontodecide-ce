@@ -33,7 +33,7 @@ export interface Env {
   RL_EMAIL: RateLimit;
   /** 10 requests / 60 s per IP (`/auth/*`, `/archive-deletions/*`). */
   RL_IP_AUTH: RateLimit;
-  /** `https://app.<domain>`: the only accepted Origin. */
+  /** `https://ontodecide-ce.<domain>`: the only accepted Origin. */
   APP_ORIGIN: string;
   /** Ed25519 public JWK set (`{"keys": [...]}`) of identity-access. */
   JWT_PUBLIC_KEYS: string;

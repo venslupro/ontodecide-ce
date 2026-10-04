@@ -62,10 +62,10 @@ describe('LoginPage', () => {
       }),
     ).toBeInTheDocument();
     expect(
-      within(screen.getByRole('banner')).getByRole('radiogroup', {
+      within(screen.getByRole('banner')).queryByRole('radiogroup', {
         name: '主题',
       }),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(screen.getByRole('link', {name: '注册免费试用账户'}));
     await waitFor(() => expect(router.state.location.pathname).toBe('/signup'));

@@ -112,12 +112,4 @@ describe('error messages', () => {
       );
     }
   });
-
-  it('labels every theme choice', () => {
-    for (const lang of ['zh-CN', 'en-US']) {
-      const flat = flatten(bundle(lang, 'common'));
-      for (const k of ['label', 'system', 'light', 'dark'])
-        expect(flat[`theme.${k}`]).toBeTruthy();
-    }
-  });
 });

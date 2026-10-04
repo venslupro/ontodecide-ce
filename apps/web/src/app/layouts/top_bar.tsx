@@ -1,5 +1,5 @@
 /**
- * @fileoverview 56 px top bar: global search, realtime status, theme, 中文 | EN,
+ * @fileoverview 56 px top bar: global search, realtime status, 中文 | EN,
  * notifications bell, and the account chip (e-mail + 所有者 Owner / 平台管理员
  * Admin) with account, "About" (build version) and sign-out entries.
  */
@@ -17,7 +17,6 @@ import {APP_VERSION} from '../../shared/lib/version';
 import {releaseAll, useRealtimeStatus} from '../../shared/ws/stream';
 import type {WsState} from '../../shared/ws/ws_client';
 import {Dialog, DialogContent} from '../../shared/ui/dialog';
-import {ThemeSwitch} from '../../shared/ui/theme_switch';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -154,7 +153,6 @@ export function TopBar() {
       <GlobalSearch />
       <RealtimeBadge />
       <div className="ml-auto flex items-center gap-3">
-        <ThemeSwitch />
         <LangSwitch />
         <NotificationBell />
         <AccountChip />

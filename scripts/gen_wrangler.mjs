@@ -250,7 +250,8 @@ export function buildVars(env, tf, opts = {}) {
 
   const domain = tf.app?.domain ?? environ.APP_DOMAIN ?? '';
   // Derived from APP_DOMAIN when Terraform has not run yet.
-  const host = tf.app?.host || (domain ? `app.${domain}` : PAGES_HOST);
+  const host =
+    tf.app?.host || (domain ? `ontodecide-ce.${domain}` : PAGES_HOST);
   const emailMode = environ.EMAIL_MODE || 'live';
   if (!['live', 'log'].includes(emailMode)) {
     throw new Error(`EMAIL_MODE must be live or log, got ${emailMode}`);

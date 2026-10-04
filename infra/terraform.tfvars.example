@@ -6,8 +6,11 @@ b2_region  = "us-east-005"
 # project     = "ontodecide"
 # environment = "prd"
 
-# Custom domain (CI: GitHub variable APP_DOMAIN → TF_VAR_domain). Empty keeps
-# the app on https://ontodecide-ce.pages.dev with the Pages Functions proxy.
+# Custom domain (CI: GitHub variable APP_DOMAIN → TF_VAR_domain). Terraform
+# creates the zone and attaches https://ontodecide-ce.<domain> to the Pages
+# project; set the zone's nameservers (terraform output zone) at the
+# registrar. Empty keeps the app on https://ontodecide-ce.pages.dev with the
+# Pages Functions proxy.
 # domain = "example.com"
 
 # DMARC: observe with "none" for two weeks, then "quarantine".

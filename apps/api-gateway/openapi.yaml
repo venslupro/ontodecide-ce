@@ -23,7 +23,7 @@ info:
     workspace (404), writes need it ACTIVE (409); entries and writes are
     audited. `Accept-Language` only affects e-mails and server-generated text.
 servers:
-  - url: https://app.example.com/api/v1
+  - url: https://ontodecide-ce.example.com/api/v1
     description: Production (same origin as the SPA)
 tags:
   - {name: auth, summary: Sign-in and sessions, kind: nav}

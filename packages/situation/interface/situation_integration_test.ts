@@ -211,7 +211,7 @@ describe('situation interface', () => {
         },
       }));
       const url = (t: string) =>
-        `https://app.example.com/api/v1/situation/stream?ticket=${t}`;
+        `https://ontodecide-ce.example.com/api/v1/situation/stream?ticket=${t}`;
       const ws = {headers: {Upgrade: 'websocket'}};
       const good = `${T2}.abcdefghijklmnopqrstuvwxyz012345`;
       expect((await fetch(new Request(url(good)))).status).toBe(426);
