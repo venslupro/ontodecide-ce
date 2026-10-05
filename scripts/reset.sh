@@ -11,11 +11,12 @@
 #   --dry-run  Only list what would be deleted.
 #   --yes      Skip the confirmation prompt.
 #   --domain   The APP_DOMAIN in use (default: $APP_DOMAIN). Also deletes the
-#              Workers Route, the zone records, rules and settings Terraform
-#              created there (app CNAME, apex 100:: placeholder, _dmarc, mail
-#              records listed in $MAIL_DNS_RECORDS, redirect and rate-limit
-#              rulesets, ssl/min_tls_version/always_use_https settings) and
-#              the pages.dev bulk redirect.
+#              Workers Route, the zone records, rules, settings and the zone
+#              itself Terraform created there (app CNAME, apex 100::
+#              placeholder, _dmarc, mail records listed in $MAIL_DNS_RECORDS,
+#              redirect and rate-limit rulesets,
+#              ssl/min_tls_version/always_use_https settings) and the
+#              pages.dev bulk redirect.
 #   --env-file Credentials file (default .env.local), relative to the
 #              current directory.
 #
@@ -25,7 +26,7 @@
 #              7 Workers (with their Durable Objects, crons and secrets)
 #   Terraform: 2 queues, 5 D1 databases, B2 archive bucket (emptied first)
 #              and its 3 keys, Turnstile widget, and with a domain the zone
-#              records, rules and settings
+#              itself plus its records, rules and settings
 # A live run then lists everything again to verify nothing is left, and
 # only then hides the Terraform state file (earlier versions are kept).
 # If anything cannot be listed or deleted, the state is kept; fix it and
@@ -718,7 +719,7 @@ reset_zone_setting() {
 reset_zone() {
   local zone name type fqdn ids id list_id
   local list_name="${PREFIX//-/_}_pages_redirect"
-  step "Delete zone records, routes, rules, settings and the pages.dev redirect"
+  step "Delete zone records, routes, rules, settings, zone and the pages.dev redirect"
   if [[ -z "${DOMAIN}" ]]; then
     [[ "${MODE}" == verify ]] || note "${DIM}" "– no domain (--domain / APP_DOMAIN)"
     return 0
@@ -761,6 +762,8 @@ reset_zone() {
     reset_zone_setting "${zone}" ssl strict flexible
     reset_zone_setting "${zone}" min_tls_version 1.2 1.0
     reset_zone_setting "${zone}" always_use_https on off
+    # Finally delete the zone itself (Terraform-managed resource).
+    act "zone ${DOMAIN}" cf_zone_ok DELETE "${zone}" ""
   fi
 
   # Account level: the ruleset first, since it references the list.
