@@ -11,11 +11,11 @@
 #   --dry-run  Only list what would be deleted.
 #   --yes      Skip the confirmation prompt.
 #   --domain   The APP_DOMAIN in use (default: $APP_DOMAIN). Also deletes the
-#              Workers Route, the zone records and rules Terraform created
-#              there (app CNAME, apex 100:: placeholder, _dmarc, mail records
-#              listed in $MAIL_DNS_RECORDS, redirect and rate-limit rulesets)
-#              and the pages.dev bulk redirect. Zone settings are left
-#              unchanged.
+#              Workers Route, the zone records, rules and settings Terraform
+#              created there (app CNAME, apex 100:: placeholder, _dmarc, mail
+#              records listed in $MAIL_DNS_RECORDS, redirect and rate-limit
+#              rulesets, ssl/min_tls_version/always_use_https settings) and
+#              the pages.dev bulk redirect.
 #   --env-file Credentials file (default .env.local), relative to the
 #              current directory.
 #
@@ -25,7 +25,7 @@
 #              7 Workers (with their Durable Objects, crons and secrets)
 #   Terraform: 2 queues, 5 D1 databases, B2 archive bucket (emptied first)
 #              and its 3 keys, Turnstile widget, and with a domain the zone
-#              records and rules
+#              records, rules and settings
 # A live run then lists everything again to verify nothing is left, and
 # only then hides the Terraform state file (earlier versions are kept).
 # If anything cannot be listed or deleted, the state is kept; fix it and
@@ -673,10 +673,52 @@ delete_worker_routes() {
   done <<<"${routes}"
 }
 
+#######################################
+# PATCHes a single zone setting to value $3; succeeds when the API reports
+# success.
+# Arguments:
+#   Zone id, setting name, new value.
+#######################################
+patch_zone_setting() {
+  local zone="$1"
+  local setting="$2"
+  local value="$3"
+  local body
+  body="$(curl -sS -X PATCH -H "Authorization: Bearer ${CF_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"value\":\"${value}\"}" \
+    "${CF_API}/zones/${zone}/settings/${setting}")"
+  jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"
+}
+
+#######################################
+# Resets one Terraform-managed zone setting back to its Cloudflare default.
+# Only acts while the setting still holds the Terraform value, so a setting
+# the user changed elsewhere is left alone. In verify mode it reports the
+# setting as still present when it still equals the Terraform value.
+# Arguments:
+#   Zone id, setting name, Terraform-managed value, Cloudflare default.
+#######################################
+reset_zone_setting() {
+  local zone="$1"
+  local setting="$2"
+  local managed="$3"
+  local default="$4"
+  local body value
+  if ! body="$(cf_zone_get "${zone}" "/settings/${setting}")"; then
+    list_failed "zone setting ${setting}"
+    return 0
+  fi
+  value="$(jq -r '.result.value' <<<"${body}")"
+  [[ "${value}" == "${managed}" ]] || return 0
+  act "zone setting ${setting} (${managed} → ${default})" \
+    patch_zone_setting "${zone}" "${setting}" "${default}"
+}
+
 reset_zone() {
   local zone name type fqdn ids id list_id
   local list_name="${PREFIX//-/_}_pages_redirect"
-  step "Delete zone records, routes, rules and the pages.dev redirect"
+  step "Delete zone records, routes, rules, settings and the pages.dev redirect"
   if [[ -z "${DOMAIN}" ]]; then
     [[ "${MODE}" == verify ]] || note "${DIM}" "– no domain (--domain / APP_DOMAIN)"
     return 0
@@ -715,6 +757,10 @@ reset_zone() {
     else
       list_failed "zone rulesets"
     fi
+    # Terraform-managed zone settings: reset to Cloudflare defaults.
+    reset_zone_setting "${zone}" ssl strict flexible
+    reset_zone_setting "${zone}" min_tls_version 1.2 1.0
+    reset_zone_setting "${zone}" always_use_https on off
   fi
 
   # Account level: the ruleset first, since it references the list.
