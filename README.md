@@ -115,7 +115,7 @@ CI green → approve Terraform apply → approve Deploy
                                                         identity-access ◄────┘ ─► api-gateway ─► Pages
   ```
 
-Set `APP_DOMAIN` (GitHub variable) to the purchased apex domain, e.g. `opcbridge.top`. Create the Cloudflare zone for the domain in the dashboard, then run `terraform -chdir=infra output zone` to get the Cloudflare nameservers and set them at the registrar. Terraform reads the existing zone and attaches the Pages custom domain. The SPA is then served at `https://ontodecide-ce.<domain>` and the API at `https://ontodecide-ce.<domain>/api/*` (Workers Route, same origin). Until it is set, the SPA falls back to `https://ontodecide-ce.pages.dev` with a Pages Function forwarding `/api/*` to the gateway. The full list with comments is in [`.env.example`](.env.example).
+Set `APP_DOMAIN` (GitHub variable) to the purchased apex domain, e.g. `opcbridge.top`. Terraform creates the Cloudflare zone and attaches the Pages custom domain; run `terraform -chdir=infra output zone` to get the Cloudflare nameservers and set them at the registrar. The SPA is then served at `https://ontodecide-ce.<domain>` and the API at `https://ontodecide-ce.<domain>/api/*` (Workers Route, same origin). Until it is set, the SPA falls back to `https://ontodecide-ce.pages.dev` with a Pages Function forwarding `/api/*` to the gateway. The full list with comments is in [`.env.example`](.env.example).
 
 **GitHub secrets:**
 - Cloudflare: `CF_API_TOKEN` (Workers, D1, Queues, Pages, Turnstile, account rulesets/lists; zone DNS, settings, WAF and redirect rules), `CF_ACCOUNT_ID`.
