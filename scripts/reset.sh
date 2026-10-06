@@ -19,13 +19,14 @@
 #
 # Deleted, in dependency order (names as in infra/*.tf and
 # apps/*/wrangler.jsonc.tpl, prefix ontodecide-prd):
-#   Wrangler:  7 Workers (with their Durable Objects, crons and secrets)
-#   Terraform: 2 queues, 5 D1 databases, B2 archive bucket (emptied first)
-#              and its 3 keys, Turnstile widget, and the account-level
-#              pages.dev bulk redirect (list + ruleset) when the Pages
-#              project has custom domains
 #   Wrangler:  Pages project ontodecide-ce (custom domains deleted first,
 #              then the project itself)
+#   Terraform: 2 queues (consumers removed first, so Workers can be deleted)
+#   Wrangler:  7 Workers (with their Durable Objects, crons and secrets)
+#   Terraform: 5 D1 databases, B2 archive bucket (emptied first) and its 3
+#              keys, Turnstile widget, and the account-level pages.dev
+#              bulk redirect (list + ruleset) when the Pages project has
+#              custom domains
 # A live run then lists everything again to verify nothing is left, and
 # only then hides the Terraform state file (earlier versions are kept).
 # If anything cannot be listed or deleted, the state is kept; fix it and
@@ -485,7 +486,7 @@ b2_delete_key() {
 #######################################
 delete_pages_project() {
   local path="/pages/projects/${PAGES_PROJECT}"
-  local ids id deleted
+  local ids id deleted body
   while true; do
     cf_ok DELETE "${path}" && return 0
     ids="$(cf_get "${path}/deployments?per_page=25" \
@@ -493,7 +494,11 @@ delete_pages_project() {
     deleted=0
     while IFS= read -r id; do
       [[ -n "${id}" ]] || continue
-      if cf_ok DELETE "${path}/deployments/${id}?force=true"; then
+      # The active production deployment cannot be deleted; it goes away
+      # with the project. Delete silently so its expected failure does
+      # not look like an error.
+      body="$(cf DELETE "${path}/deployments/${id}?force=true")"
+      if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
         ((deleted += 1))
       fi
     done <<<"${ids}"
@@ -513,8 +518,10 @@ reset_pages() {
       # deleted. The project's own *.pages.dev domain is part of the
       # project and cannot be removed, so it is skipped.
       PAGES_CUSTOM_DOMAINS=""
-      if domains="$(cf_list "/pages/projects/${PAGES_PROJECT}/domains" \
-        '.name')"; then
+      # The Pages domains endpoint does not support the page/per_page
+      # pagination params, so use a plain GET instead of cf_list.
+      if domains="$(cf_get "/pages/projects/${PAGES_PROJECT}/domains" \
+        | jq -r '.result[]?.name')"; then
         while IFS= read -r domain; do
           [[ -n "${domain}" ]] || continue
           [[ "${domain}" == *.pages.dev ]] && continue
@@ -669,10 +676,13 @@ reset_redirect() {
 }
 
 # Runs every deletion step (or, in verify mode, every check).
+# Queues are deleted before Workers: a Worker that is a queue consumer
+# cannot be deleted until the consumer binding is removed, which
+# delete_queue() does before deleting the queue itself.
 reset_all() {
   reset_pages
-  reset_workers
   reset_queues
+  reset_workers
   reset_d1
   reset_b2_bucket
   reset_b2_keys
