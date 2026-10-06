@@ -64,11 +64,9 @@ output "app" {
 }
 
 output "zone" {
-  description = "Cloudflare zone: id, name, assigned nameservers (set at the registrar) and status."
+  description = "Cloudflare zone: id and name (created if absent, imported by CI, never destroyed)."
   value = var.domain == "" ? null : {
-    id           = cloudflare_zone.main[0].id
-    name         = cloudflare_zone.main[0].name
-    name_servers = cloudflare_zone.main[0].name_servers
-    status       = cloudflare_zone.main[0].status
+    id   = cloudflare_zone.main[0].id
+    name = cloudflare_zone.main[0].name
   }
 }

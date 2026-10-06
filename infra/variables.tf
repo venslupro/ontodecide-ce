@@ -51,11 +51,13 @@ variable "archive_sign_active" {
 
 variable "domain" {
   description = <<-EOT
-    Apex domain to add to the Cloudflare account (TF_VAR_domain from the
-    GitHub variable APP_DOMAIN), e.g. example.com. Terraform creates the
-    zone, the Pages project ontodecide-ce and attaches the custom domain
-    https://ontodecide-ce.<domain>. Empty: no zone resources; the app stays
-    on https://ontodecide-ce.pages.dev (Pages Functions proxy fallback).
+    Apex domain for the Cloudflare zone (TF_VAR_domain from the GitHub
+    variable APP_DOMAIN), e.g. example.com. The zone is created if it does
+    not exist; the CI workflow imports an existing zone before apply so it
+    is not recreated. prevent_destroy blocks terraform destroy. The app is
+    served at https://ontodecide-ce.<domain>. Empty: no domain resources;
+    the app stays on https://ontodecide-ce.pages.dev (Pages Functions proxy
+    fallback).
   EOT
   type        = string
   default     = ""
@@ -64,41 +66,4 @@ variable "domain" {
     condition     = var.domain == "" || can(regex("^([a-z0-9-]+\\.)+[a-z]{2,}$", var.domain))
     error_message = "domain must be empty or a lowercase apex domain such as example.com."
   }
-}
-
-variable "dmarc_policy" {
-  description = "DMARC policy tag value (start with none, tighten to quarantine after two weeks of reports)."
-  type        = string
-  default     = "none"
-
-  validation {
-    condition     = contains(["none", "quarantine", "reject"], var.dmarc_policy)
-    error_message = "dmarc_policy must be none, quarantine or reject."
-  }
-}
-
-variable "mail_dns_records" {
-  description = <<-EOT
-    Sender-domain records for Resend and Brevo (DKIM, SPF, verification TXT,
-    bounce MX), copied from their dashboards. name is relative to the zone
-    ("@" for the apex) or fully qualified; TXT content without quotes.
-  EOT
-  type = list(object({
-    name     = string
-    type     = string
-    content  = string
-    priority = optional(number)
-  }))
-  default = []
-
-  validation {
-    condition     = alltrue([for r in var.mail_dns_records : contains(["TXT", "CNAME", "MX"], r.type)])
-    error_message = "mail_dns_records type must be TXT, CNAME or MX."
-  }
-}
-
-variable "manage_apex_record" {
-  description = "Create a proxied placeholder AAAA record (100::) for the apex so the 301 redirect to the app host can run. Disable when the apex already has records."
-  type        = bool
-  default     = true
 }

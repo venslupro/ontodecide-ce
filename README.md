@@ -68,7 +68,7 @@ packages/shared-kernel/   CallCtx, errors (RFC 9457), Ed25519 JWT, filters, limi
 packages/<context>/       contract/ domain/ application/ infrastructure/ interface/
 packages/testing/         D1 over node:sqlite, DO SQL storage, queues, RPC bindings, Workers AI and rate-limit fakes
 migrations/<service>/     D1 migrations (one directory per database)
-infra/                    Terraform: D1, Queues, B2 bucket + keys, Turnstile, Pages project, zone + custom domain / redirects / WAF
+infra/                    Terraform: D1, Queues, B2 bucket + keys, Turnstile, Pages project, Pages custom domain + pages.dev bulk redirect
 scripts/                  gen_wrangler.mjs, gen_secrets.mjs, dev.sh, smoke.mjs, check_sql.mjs, cleanup_legacy.sh
 samples/supply-chain/     demo CSVs matching the template
 tests/e2e/                in-process full-loop tests through the gateway
@@ -93,7 +93,7 @@ There is one environment, **production** (GitHub environment `production`), depl
 
 | What | Source of truth | Tool |
 | --- | --- | --- |
-| D1 ×5, Queues ×2, B2 archive bucket + keys, Turnstile, Pages project `ontodecide-ce`, zone + custom domain / redirects / WAF rule | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
+| D1 ×5, Queues ×2, B2 archive bucket + keys, Turnstile, Pages project `ontodecide-ce`, Pages custom domain + pages.dev bulk redirect | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
 | Workers: code, bindings, vars, routes, crons, DO migrations, queue consumers | `apps/*/wrangler.jsonc.tpl` | Wrangler (`scripts/gen_wrangler.mjs` renders ids from `terraform output -json`) |
 | Pages SPA deployment | `apps/web/wrangler.jsonc` | Wrangler (`wrangler pages deploy dist`) |
 | D1 schema | `migrations/<service>/*.sql` | `wrangler d1 migrations apply` |
@@ -115,10 +115,10 @@ CI green → approve Terraform apply → approve Deploy
                                                         identity-access ◄────┘ ─► api-gateway ─► Pages
   ```
 
-Set `APP_DOMAIN` (GitHub variable) to the purchased apex domain, e.g. `opcbridge.top`. Terraform creates the Cloudflare zone and attaches the Pages custom domain; run `terraform -chdir=infra output zone` to get the Cloudflare nameservers and set them at the registrar. The SPA is then served at `https://ontodecide-ce.<domain>` and the API at `https://ontodecide-ce.<domain>/api/*` (Workers Route, same origin). Until it is set, the SPA falls back to `https://ontodecide-ce.pages.dev` with a Pages Function forwarding `/api/*` to the gateway. The full list with comments is in [`.env.example`](.env.example).
+Set `APP_DOMAIN` (GitHub variable) to the apex domain whose Cloudflare zone already exists in the account, e.g. `opcbridge.top` (the zone is owned by another project; Terraform only looks it up). Terraform attaches the Pages custom domain `https://ontodecide-ce.<domain>` and bulk-redirects the pages.dev host to it. The SPA is then served at `https://ontodecide-ce.<domain>` and the API at `https://ontodecide-ce.<domain>/api/*` (Workers Route, same origin). Until it is set, the SPA falls back to `https://ontodecide-ce.pages.dev` with a Pages Function forwarding `/api/*` to the gateway. The full list with comments is in [`.env.example`](.env.example).
 
 **GitHub secrets:**
-- Cloudflare: `CF_API_TOKEN` (Workers, D1, Queues, Pages, Turnstile, account rulesets/lists; zone DNS, settings, WAF and redirect rules), `CF_ACCOUNT_ID`.
+- Cloudflare: `CF_API_TOKEN` (Workers, D1, Queues, Pages, Turnstile, account rulesets/lists, Pages custom domain), `CF_ACCOUNT_ID`.
 - Backblaze: `B2_MASTER_KEY_ID` / `B2_MASTER_KEY`, and optionally `B2_STATE_KEY_ID` / `B2_STATE_KEY`.
 - Signing and encryption: `JWT_SIGNING_KEY` (Ed25519 JWK; add `JWT_SIGNING_KEY_PREV` during a key rotation), `EMAIL_PEPPER`, `EMAIL_ENC_KEY`, `BOOTSTRAP_ADMIN_SETUP_CODE`. Generate all four with `pnpm gen:secrets`.
 - E-mail: `RESEND_API_KEY`, `BREVO_API_KEY`.
@@ -131,13 +131,13 @@ The Turnstile secret and the B2 archive keys come from Terraform outputs, so you
 - `BOOTSTRAP_ADMIN_EMAIL`, set on the `production` environment.
 - `APP_DOMAIN`.
 - `MAIL_FROM`: defaults to `noreply@mail.<domain>`, and is required when no domain is set.
-- Optional: `EMAIL_MODE`, `DMARC_POLICY`, `MAIL_DNS_RECORDS`, `ARCHIVE_SIGN_SLOT`, `D1_RESET_LEGACY`.
+- Optional: `EMAIL_MODE`, `ARCHIVE_SIGN_SLOT`, `D1_RESET_LEGACY`.
 
 **Upgrading an existing V1.3 deployment** (one time):
 1. Merge to `main`. Terraform stops managing the old resources without deleting them: the KV namespaces, the 10 queues, the raw bucket and its key, the situation D1 and the Neo4j instance (`infra/legacy.tf`).
 2. Set the variable `D1_RESET_LEGACY=true` for **one** deploy. The V2.4 schema replaces the V1.3 one, and **all data in the five databases is dropped**; without the flag, the deploy stops before touching them.
 3. Remove `D1_RESET_LEGACY`. Run `scripts/cleanup_legacy.sh`, which deletes the released resources and old Worker secrets, skipping anything still bound. Then delete `infra/legacy.tf`, the neo4jaura provider, the AURA secrets, and the old secrets `JWT_SECRET`, `APPROVAL_SECRET`, `WRITEBACK_SECRET`, `CONNECTOR_ENC_KEY`, `BOOTSTRAP_ADMIN_PASSWORD`, `GEMINI_API_KEY`, `GROQ_API_KEY` and variables `APP_BASE_URL`, `EMAIL_FROM`.
-4. In both the Resend and Brevo dashboards, turn off open and click tracking, so the archive download links in e-mails are not rewritten. Enable HSTS on the zone in the dashboard; the provider does not manage it cleanly.
+4. In both the Resend and Brevo dashboards, turn off open and click tracking, so the archive download links in e-mails are not rewritten. HSTS and other zone TLS settings are now the zone owner's responsibility (this project no longer manages the zone).
 
 Before go-live, the design asks for three live checks:
 - `/api/*` on `ontodecide-ce.<domain>` reaches the Worker Route, not Pages.

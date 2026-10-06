@@ -10,23 +10,23 @@
 #
 #   --dry-run  Only list what would be deleted.
 #   --yes      Skip the confirmation prompt.
-#   --domain   The APP_DOMAIN in use (default: $APP_DOMAIN). Also deletes the
-#              Workers Route, the zone records, rules, settings and the zone
-#              itself Terraform created there (app CNAME, apex 100::
-#              placeholder, _dmarc, mail records listed in $MAIL_DNS_RECORDS,
-#              redirect and rate-limit rulesets,
-#              ssl/min_tls_version/always_use_https settings) and the
-#              pages.dev bulk redirect.
+#   --domain   The APP_DOMAIN in use (default: $APP_DOMAIN). The zone is
+#              managed by Terraform (prevent_destroy) and is never deleted
+#              here; this script only deletes the Pages custom domain CNAME
+#              (ontodecide-ce.<domain>), the api-gateway Workers Route on
+#              that zone, and the account-level pages.dev bulk redirect
+#              (list + ruleset) Terraform created.
 #   --env-file Credentials file (default .env.local), relative to the
 #              current directory.
 #
 # Deleted, in dependency order (names as in infra/*.tf and
 # apps/*/wrangler.jsonc.tpl, prefix ontodecide-prd):
-#   Wrangler:  Pages project ontodecide-ce (with its custom domain),
-#              7 Workers (with their Durable Objects, crons and secrets)
-#   Terraform: 2 queues, 5 D1 databases, B2 archive bucket (emptied first)
-#              and its 3 keys, Turnstile widget, and with a domain the zone
-#              itself plus its records, rules and settings
+#   Wrangler:  7 Workers (with their Durable Objects, crons, secrets and
+#              the api-gateway Workers Route)
+#   Terraform: Pages project ontodecide-ce (with its custom domain CNAME),
+#              2 queues, 5 D1 databases, B2 archive bucket (emptied first)
+#              and its 3 keys, Turnstile widget, and with a domain the
+#              account-level pages.dev bulk redirect (list + ruleset)
 # A live run then lists everything again to verify nothing is left, and
 # only then hides the Terraform state file (earlier versions are kept).
 # If anything cannot be listed or deleted, the state is kept; fix it and
@@ -692,73 +692,10 @@ delete_worker_routes() {
   done <<<"${routes}"
 }
 
-#######################################
-# Deletes a Cloudflare zone by id. Cloudflare's DELETE zone endpoint may
-# reject the call while the zone still has sub-resources; this function
-# prints the API error to STDERR so the failure is never silent.
-# Arguments:
-#   Zone id.
-#######################################
-delete_zone() {
-  local zone="$1"
-  local body messages
-  body="$(curl -sS -X DELETE -H "Authorization: Bearer ${CF_TOKEN}" \
-    "${CF_API}/zones/${zone}")"
-  if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
-    return 0
-  fi
-  messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
-    2>/dev/null <<<"${body}" || true)"
-  err "DELETE zone ${zone}: ${messages:-no valid response}"
-  return 1
-}
-
-#######################################
-# PATCHes a single zone setting to value $3; succeeds when the API reports
-# success.
-# Arguments:
-#   Zone id, setting name, new value.
-#######################################
-patch_zone_setting() {
-  local zone="$1"
-  local setting="$2"
-  local value="$3"
-  local body
-  body="$(curl -sS -X PATCH -H "Authorization: Bearer ${CF_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "{\"value\":\"${value}\"}" \
-    "${CF_API}/zones/${zone}/settings/${setting}")"
-  jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"
-}
-
-#######################################
-# Resets one Terraform-managed zone setting back to its Cloudflare default.
-# Only acts while the setting still holds the Terraform value, so a setting
-# the user changed elsewhere is left alone. In verify mode it reports the
-# setting as still present when it still equals the Terraform value.
-# Arguments:
-#   Zone id, setting name, Terraform-managed value, Cloudflare default.
-#######################################
-reset_zone_setting() {
-  local zone="$1"
-  local setting="$2"
-  local managed="$3"
-  local default="$4"
-  local body value
-  if ! body="$(cf_zone_get "${zone}" "/settings/${setting}")"; then
-    list_failed "zone setting ${setting}"
-    return 0
-  fi
-  value="$(jq -r '.result.value' <<<"${body}")"
-  [[ "${value}" == "${managed}" ]] || return 0
-  act "zone setting ${setting} (${managed} → ${default})" \
-    patch_zone_setting "${zone}" "${setting}" "${default}"
-}
-
 reset_zone() {
-  local zone name type fqdn ids id list_id
+  local zone ids id list_id
   local list_name="${PREFIX//-/_}_pages_redirect"
-  step "Delete zone records, routes, rules, settings, zone and the pages.dev redirect"
+  step "Delete Pages CNAME, Workers Routes and the pages.dev redirect"
   if [[ -z "${DOMAIN}" ]]; then
     [[ "${MODE}" == verify ]] || note "${DIM}" "– no domain (--domain / APP_DOMAIN)"
     return 0
@@ -771,38 +708,14 @@ reset_zone() {
   elif [[ -z "${zone}" ]]; then
     warn "zone ${DOMAIN} not found in the account"
   else
-    delete_worker_routes "${zone}"
+    # The zone is managed by Terraform (resource cloudflare_zone with
+    # prevent_destroy) and is never deleted here; CI imports it before apply
+    # so it survives the reset → apply cycle. The zone-level DNS records,
+    # rulesets and TLS settings are not managed by this project. Only the
+    # Pages custom domain CNAME and the api-gateway Workers Route below are
+    # this project's and are cleaned up here.
     delete_records "${zone}" "ontodecide-ce.${DOMAIN}" CNAME
-    delete_records "${zone}" "${DOMAIN}" AAAA "100::"
-    delete_records "${zone}" "_dmarc.${DOMAIN}" TXT
-    while IFS=$'\t' read -r name type; do
-      [[ -n "${name}" ]] || continue
-      case "${name}" in
-        "@") fqdn="${DOMAIN}" ;;
-        *"${DOMAIN}") fqdn="${name}" ;;
-        *) fqdn="${name}.${DOMAIN}" ;;
-      esac
-      delete_records "${zone}" "${fqdn}" "${type}"
-    done < <(jq -r '.[]? | "\(.name)\t\(.type)"' \
-      <<<"${MAIL_DNS_RECORDS:-[]}")
-    if ids="$(cf_zone_get "${zone}" /rulesets | jq -r \
-      --arg a "${PREFIX}-apex-redirect" --arg b "${PREFIX}-api-rate-limit" \
-      '.result[]? | select(.name == $a or .name == $b) | "\(.id) \(.name)"')"
-    then
-      while read -r id name; do
-        [[ -n "${id}" ]] || continue
-        act "zone ruleset ${name}" cf_zone_ok DELETE "${zone}" \
-          "/rulesets/${id}"
-      done <<<"${ids}"
-    else
-      list_failed "zone rulesets"
-    fi
-    # Terraform-managed zone settings: reset to Cloudflare defaults.
-    reset_zone_setting "${zone}" ssl strict flexible
-    reset_zone_setting "${zone}" min_tls_version 1.2 1.0
-    reset_zone_setting "${zone}" always_use_https on off
-    # Finally delete the zone itself (Terraform-managed resource).
-    act "zone ${DOMAIN}" delete_zone "${zone}"
+    delete_worker_routes "${zone}"
   fi
 
   # Account level: the ruleset first, since it references the list.
