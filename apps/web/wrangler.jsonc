@@ -1,10 +1,11 @@
 // Cloudflare Pages project for the cockpit SPA (production only; deployed
 // from main by .github/workflows/deploy.yml via Direct Upload). The project
+// and its custom domain are created by Wrangler, not Terraform. The project
 // name is exempt from {project}-{env}-{service}: it fixes the public URL
 // https://ontodecide-ce.pages.dev. The GATEWAY binding (named by the rule)
-// is used only by the fallback Pages Function functions/api/[[path]].ts
-// while APP_DOMAIN is empty; with a domain the deploy removes functions/ and
-// /api/* reaches api-gateway through its Workers Route.
+// powers functions/api/[[path]].ts, the /api/* proxy to api-gateway (used
+// on both pages.dev and the custom domain — no Cloudflare zone → no Workers
+// Route).
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "ontodecide-ce",

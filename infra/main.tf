@@ -3,13 +3,15 @@
 #
 #   5 D1 databases, 2 queues (domain-events, dead-letter), 1 B2 bucket
 #   (archive) with a write key and two signing-key slots, 1 Turnstile widget,
-#   1 Pages project (ontodecide-ce) and — when var.domain is set — the
-#   Pages custom domain and the pages.dev bulk redirect (domain.tf).
+#   and — when var.domain is set — the account-level pages.dev bulk redirect
+#   (domain.tf).
 #
-# Workers, their bindings, routes, crons and Durable Object migrations belong
-# to Wrangler (apps/*/wrangler.jsonc.tpl, .github/workflows/deploy.yml).
-# V1.3 resources are released from state in legacy.tf and deleted by
-# scripts/cleanup_legacy.sh.
+# The Pages project ontodecide-ce and its custom domain are created by
+# Wrangler in the CD pipeline (apps/web/wrangler.jsonc,
+# .github/workflows/deploy.yml), not by Terraform. Workers, their bindings,
+# routes, crons and Durable Object migrations also belong to Wrangler
+# (apps/*/wrangler.jsonc.tpl). V1.3 resources are released from state in
+# legacy.tf and deleted by scripts/cleanup_legacy.sh.
 #
 # Naming: every resource is named {project}-{env}-{service|module}, e.g.
 # ontodecide-prd-object-graph-db (local.prefix). Exceptions: the Pages
@@ -105,14 +107,4 @@ resource "cloudflare_turnstile_widget" "auth" {
   name       = "${local.prefix}-auth"
   domains    = [local.app_host]
   mode       = "managed"
-}
-
-# Empty Pages project (Direct Upload); Wrangler deploys the SPA and applies
-# the GATEWAY service binding from apps/web/wrangler.jsonc at deploy time.
-# The project name is fixed to ontodecide-ce so its pages.dev URL stays
-# https://ontodecide-ce.pages.dev (exempt from {project}-{env}-{service}).
-resource "cloudflare_pages_project" "web" {
-  account_id        = var.account_id
-  name              = "ontodecide-ce"
-  production_branch = "main"
 }

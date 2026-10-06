@@ -19,7 +19,7 @@ Design documents (V2.4): 社区版设计修订说明书 (authoritative), 总体�
 ```mermaid
 flowchart LR
   B([Browser]) -->|ontodecide-ce.example.com| P[Pages ontodecide-ce<br/>static SPA]
-  B -->|ontodecide-ce.example.com/api/*<br/>Workers Route, same origin| G[api-gateway<br/>Ed25519 JWT · Act-as · rate limit · OpenAPI 3.2 · BFF]
+  B -->|ontodecide-ce.example.com/api/*<br/>Pages Functions proxy, same origin| G[api-gateway<br/>Ed25519 JWT · Act-as · rate limit · OpenAPI 3.2 · BFF]
   G --> I[identity-access]
   G --> O[ontology-manager]
   G --> D[data-integration]
@@ -68,7 +68,7 @@ packages/shared-kernel/   CallCtx, errors (RFC 9457), Ed25519 JWT, filters, limi
 packages/<context>/       contract/ domain/ application/ infrastructure/ interface/
 packages/testing/         D1 over node:sqlite, DO SQL storage, queues, RPC bindings, Workers AI and rate-limit fakes
 migrations/<service>/     D1 migrations (one directory per database)
-infra/                    Terraform: D1, Queues, B2 bucket + keys, Turnstile, Pages project, Pages custom domain + pages.dev bulk redirect
+infra/                    Terraform: D1, Queues, B2 bucket + keys, Turnstile, pages.dev bulk redirect
 scripts/                  gen_wrangler.mjs, gen_secrets.mjs, dev.sh, smoke.mjs, check_sql.mjs, cleanup_legacy.sh
 samples/supply-chain/     demo CSVs matching the template
 tests/e2e/                in-process full-loop tests through the gateway
@@ -93,9 +93,9 @@ There is one environment, **production** (GitHub environment `production`), depl
 
 | What | Source of truth | Tool |
 | --- | --- | --- |
-| D1 ×5, Queues ×2, B2 archive bucket + keys, Turnstile, Pages project `ontodecide-ce`, Pages custom domain + pages.dev bulk redirect | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
-| Workers: code, bindings, vars, routes, crons, DO migrations, queue consumers | `apps/*/wrangler.jsonc.tpl` | Wrangler (`scripts/gen_wrangler.mjs` renders ids from `terraform output -json`) |
-| Pages SPA deployment | `apps/web/wrangler.jsonc` | Wrangler (`wrangler pages deploy dist`) |
+| D1 ×5, Queues ×2, B2 archive bucket + keys, Turnstile, pages.dev bulk redirect | `infra/*.tf` | Terraform (state in B2 `ontodecide-ce-tfstate`) |
+| Workers: code, bindings, vars, crons, DO migrations, queue consumers | `apps/*/wrangler.jsonc.tpl` | Wrangler (`scripts/gen_wrangler.mjs` renders ids from `terraform output -json`) |
+| Pages project `ontodecide-ce`, custom domain, SPA deployment | `apps/web/wrangler.jsonc` | Wrangler (`wrangler pages project create`, `wrangler pages domain create`, `wrangler pages deploy dist`) |
 | D1 schema | `migrations/<service>/*.sql` | `wrangler d1 migrations apply` |
 | Secrets | GitHub Secrets + sensitive Terraform outputs | `wrangler secret bulk` |
 

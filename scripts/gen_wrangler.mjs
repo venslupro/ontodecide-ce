@@ -15,8 +15,10 @@
  *   MAIL_FROM (default noreply@mail.<domain>) → MAIL_FROM
  *   EMAIL_MODE (default live)                 → EMAIL_MODE
  *   APP_VERSION (default git short sha)
- * The api-gateway route `<app host>/api/*` is rendered only when Terraform
- * reports a domain; otherwise `routes` is removed (Pages Functions proxy).
+ * The api-gateway has no Workers Route: the apex domain's DNS stays with
+ * its registrar (no Cloudflare zone), so /api/* is always served by the
+ * Pages Functions proxy through the GATEWAY service binding. `routes` is
+ * therefore always removed from the rendered config.
  *
  * local (`wrangler dev`, no login): placeholder ids, EMAIL_MODE=log, no
  * Workers AI binding, no routes, APP_ORIGIN http://localhost:5173, and
@@ -287,7 +289,10 @@ export function buildVars(env, tf, opts = {}) {
     APP_DOMAIN: domain,
     APP_HOST: host,
     APP_ORIGIN: tf.app?.origin ?? `https://${host}`,
-    ZONE_NAME: domain,
+    // No Cloudflare zone (DNS stays with the registrar), so the api-gateway
+    // never gets a Workers Route; /api/* is handled by the Pages Functions
+    // proxy. An empty ZONE_NAME makes render() drop the routes array.
+    ZONE_NAME: '',
     WEBAUTHN_RP_ID: host,
     JWT_PUBLIC_KEYS: jwks,
     CF_ACCOUNT_ID: required(
@@ -363,7 +368,8 @@ export function render(template, vars, env, devSecrets = {}) {
     },
   );
   const config = JSON.parse(text);
-  // Only the gateway has a route, and only on a configured zone.
+  // No Cloudflare zone → the api-gateway never gets a Workers Route; /api/*
+  // is served by the Pages Functions proxy, so routes are always removed.
   if (!vars.ZONE_NAME) delete config.routes;
   if (env === 'local') {
     delete config.ai;

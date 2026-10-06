@@ -62,11 +62,3 @@ output "app" {
     origin = local.app_origin
   }
 }
-
-output "zone" {
-  description = "Cloudflare zone: id and name (created if absent, imported by CI, never destroyed)."
-  value = var.domain == "" ? null : {
-    id   = cloudflare_zone.main[0].id
-    name = cloudflare_zone.main[0].name
-  }
-}

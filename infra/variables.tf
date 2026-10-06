@@ -51,13 +51,13 @@ variable "archive_sign_active" {
 
 variable "domain" {
   description = <<-EOT
-    Apex domain for the Cloudflare zone (TF_VAR_domain from the GitHub
-    variable APP_DOMAIN), e.g. example.com. The zone is created if it does
-    not exist; the CI workflow imports an existing zone before apply so it
-    is not recreated. prevent_destroy blocks terraform destroy. The app is
-    served at https://ontodecide-ce.<domain>. Empty: no domain resources;
-    the app stays on https://ontodecide-ce.pages.dev (Pages Functions proxy
-    fallback).
+    Apex domain whose DNS stays with its registrar (e.g. NameSilo), e.g.
+    example.com. No Cloudflare zone is created; the app is served at
+    https://ontodecide-ce.<domain> via a CNAME the operator points at the
+    registrar to ontodecide-ce.pages.dev. The Pages custom domain is
+    attached by Wrangler in the CD pipeline. Terraform only creates the
+    account-level pages.dev → custom-domain bulk redirect. Empty: no
+    redirect; the app stays on https://ontodecide-ce.pages.dev.
   EOT
   type        = string
   default     = ""

@@ -13,8 +13,9 @@
  *
  * Pre-launch checks (详细设计 表 14 冒烟), from outside:
  *
- *   7. /api is served by the gateway Worker (Workers Route), not by Pages:
- *      the health response carries the gateway's `X-Request-Id`;
+ *   7. /api is served by the gateway Worker (Pages Functions proxy), not
+ *      by Pages static: the health response carries the gateway's
+ *      `X-Request-Id`;
  *   8. CSP of the API response and of the SPA page contains
  *      `connect-src 'self'` (the SPA talks to no other backend);
  *   9. with SMOKE_PAGES_URL (e.g. https://ontodecide-ce.pages.dev, set when

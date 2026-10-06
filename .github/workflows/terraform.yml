@@ -49,8 +49,8 @@ env:
   TF_IN_AUTOMATION: 'true'
   TF_INPUT: 'false'
   TF_VAR_account_id: ${{ secrets.CF_ACCOUNT_ID }}
-  # Custom domain (empty: pages.dev fallback); the zone is looked up by
-  # data source and is owned by another project.
+  # Custom domain (empty: pages.dev only); DNS stays with the registrar, no
+  # Cloudflare zone is managed here.
   TF_VAR_domain: ${{ vars.APP_DOMAIN }}
   # Archive signing key slot (a | b), switched monthly (infra/variables.tf).
   TF_VAR_archive_sign_active: ${{ vars.ARCHIVE_SIGN_SLOT || 'a' }}
@@ -132,11 +132,6 @@ jobs:
           terraform_version: 1.10.5
           terraform_wrapper: false
       - run: terraform init
-      - name: Import existing zone
-        run: |
-          if [[ -n "${TF_VAR_domain:-}" ]]; then
-            terraform import 'cloudflare_zone.main[0]' "${TF_VAR_domain}" 2>/dev/null || true
-          fi
       - name: Plan
         id: plan
         run: |
@@ -181,10 +176,5 @@ jobs:
           terraform_version: 1.10.5
           terraform_wrapper: false
       - run: terraform init
-      - name: Import existing zone
-        run: |
-          if [[ -n "${TF_VAR_domain:-}" ]]; then
-            terraform import 'cloudflare_zone.main[0]' "${TF_VAR_domain}" 2>/dev/null || true
-          fi
       - run: terraform plan -no-color -out=tfplan
       - run: terraform apply -auto-approve tfplan

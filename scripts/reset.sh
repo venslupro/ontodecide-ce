@@ -10,23 +10,23 @@
 #
 #   --dry-run  Only list what would be deleted.
 #   --yes      Skip the confirmation prompt.
-#   --domain   The APP_DOMAIN in use (default: $APP_DOMAIN). The zone is
-#              managed by Terraform (prevent_destroy) and is never deleted
-#              here; this script only deletes the Pages custom domain CNAME
-#              (ontodecide-ce.<domain>), the api-gateway Workers Route on
-#              that zone, and the account-level pages.dev bulk redirect
-#              (list + ruleset) Terraform created.
+#   --domain   The APP_DOMAIN in use (default: $APP_DOMAIN). The apex
+#              domain's DNS stays with its registrar (NameSilo); there is no
+#              Cloudflare zone, so this script does not touch zone-level DNS
+#              records or Workers Routes. It only deletes the Pages project
+#              (with its custom domain, also Wrangler-managed) and, with a
+#              domain, the account-level pages.dev bulk redirect (list +
+#              ruleset) Terraform created.
 #   --env-file Credentials file (default .env.local), relative to the
 #              current directory.
 #
 # Deleted, in dependency order (names as in infra/*.tf and
 # apps/*/wrangler.jsonc.tpl, prefix ontodecide-prd):
-#   Wrangler:  7 Workers (with their Durable Objects, crons, secrets and
-#              the api-gateway Workers Route)
-#   Terraform: Pages project ontodecide-ce (with its custom domain CNAME),
-#              2 queues, 5 D1 databases, B2 archive bucket (emptied first)
+#   Wrangler:  7 Workers (with their Durable Objects, crons and secrets)
+#   Terraform: 2 queues, 5 D1 databases, B2 archive bucket (emptied first)
 #              and its 3 keys, Turnstile widget, and with a domain the
 #              account-level pages.dev bulk redirect (list + ruleset)
+#   Wrangler:  Pages project ontodecide-ce (with its custom domain)
 # A live run then lists everything again to verify nothing is left, and
 # only then hides the Terraform state file (earlier versions are kept).
 # If anything cannot be listed or deleted, the state is kept; fix it and
@@ -269,7 +269,7 @@ confirm() {
 print_banner() {
   printf '%sOntoDecide reset%s\n' "${BOLD}" "${RESET}"
   printf '  %starget%s   %s\n' "${DIM}" "${RESET}" \
-    "${PREFIX}${DOMAIN:+ + zone ${DOMAIN}}"
+    "${PREFIX}${DOMAIN:+ + domain ${DOMAIN}}"
   if [[ "${DRY_RUN}" == true ]]; then
     printf '  %smode%s     %sdry run%s (nothing is deleted)\n' \
       "${DIM}" "${RESET}" "${YELLOW}${BOLD}" "${RESET}"
@@ -315,12 +315,6 @@ cf() {
     "${CF_API}/accounts/${CF_ACCOUNT}$2"
 }
 
-# Calls the Cloudflare zone API: cf_zone METHOD ZONE_ID PATH.
-cf_zone() {
-  curl -sS -X "$1" -H "Authorization: Bearer ${CF_TOKEN}" \
-    "${CF_API}/zones/$2$3"
-}
-
 #######################################
 # Prints Cloudflare response body $2 of call $1 if it reports success;
 # otherwise prints the API errors to STDERR and fails, so a missing token
@@ -343,11 +337,6 @@ cf_get() {
   cf_checked "GET $1" "$(cf GET "$1")"
 }
 
-# Prints the body of GET PATH on zone ZONE_ID, or fails.
-cf_zone_get() {
-  cf_checked "GET zone $2" "$(cf_zone GET "$1" "$2")"
-}
-
 # Succeeds if the Cloudflare call cf METHOD PATH reports success; prints
 # the API error to STDERR on failure.
 cf_ok() {
@@ -359,20 +348,6 @@ cf_ok() {
   messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
     2>/dev/null <<<"${body}" || true)"
   err "$1 $2: ${messages:-no valid response}"
-  return 1
-}
-
-# Succeeds if cf_zone METHOD ZONE_ID PATH reports success; prints the API
-# error to STDERR on failure.
-cf_zone_ok() {
-  local body messages
-  body="$(cf_zone "$@")"
-  if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
-    return 0
-  fi
-  messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
-    2>/dev/null <<<"${body}" || true)"
-  err "$1 zone $2 $3: ${messages:-no valid response}"
   return 1
 }
 
@@ -645,80 +620,19 @@ reset_turnstile() {
   done <<<"${sitekeys}"
 }
 
-#######################################
-# Deletes the DNS records of one name/type (and content, if given).
-# Arguments:
-#   Zone id, FQDN, type, optional content filter.
-#######################################
-delete_records() {
-  local zone="$1"
-  local name="$2"
-  local type="$3"
-  local content="${4:-}"
-  local ids id
-  if ! ids="$(cf_zone_get "${zone}" "/dns_records?name=${name}&type=${type}" \
-    | jq -r --arg c "${content}" \
-      '.result[]? | select($c == "" or .content == $c) | .id')"; then
-    list_failed "${type} ${name}"
-    return 0
-  fi
-  while IFS= read -r id; do
-    [[ -n "${id}" ]] || continue
-    act "DNS ${type} ${name}" cf_zone_ok DELETE "${zone}" \
-      "/dns_records/${id}"
-  done <<<"${ids}"
-}
-
-#######################################
-# Deletes the api-gateway Workers Route (app.<domain>/api/*) and any other
-# route of a ${PREFIX}-* Worker left in the zone.
-# Arguments:
-#   Zone id.
-#######################################
-delete_worker_routes() {
-  local zone="$1"
-  local routes id pattern
-  if ! routes="$(cf_zone_get "${zone}" /workers/routes | jq -r \
-    --arg p "ontodecide-ce.${DOMAIN}/api/*" --arg s "${PREFIX}-" \
-    '.result[]? | select(.pattern == $p or ((.script // "") | startswith($s)))
-      | "\(.id)\t\(.pattern)"')"; then
-    list_failed "Workers Routes"
-    return 0
-  fi
-  while IFS=$'\t' read -r id pattern; do
-    [[ -n "${id}" ]] || continue
-    act "Workers Route ${pattern}" cf_zone_ok DELETE "${zone}" \
-      "/workers/routes/${id}"
-  done <<<"${routes}"
-}
-
-reset_zone() {
-  local zone ids id list_id
+reset_redirect() {
+  local ids id list_id
   local list_name="${PREFIX//-/_}_pages_redirect"
-  step "Delete Pages CNAME, Workers Routes and the pages.dev redirect"
+  step "Delete the pages.dev bulk redirect"
   if [[ -z "${DOMAIN}" ]]; then
     [[ "${MODE}" == verify ]] || note "${DIM}" "– no domain (--domain / APP_DOMAIN)"
     return 0
   fi
-  if ! zone="$(cf_checked "GET zone ${DOMAIN}" "$(curl -sS \
-    -H "Authorization: Bearer ${CF_TOKEN}" \
-    "${CF_API}/zones?name=${DOMAIN}")" | jq -r '.result[0]?.id // empty')"
-  then
-    list_failed "zone ${DOMAIN}"
-  elif [[ -z "${zone}" ]]; then
-    warn "zone ${DOMAIN} not found in the account"
-  else
-    # The zone is managed by Terraform (resource cloudflare_zone with
-    # prevent_destroy) and is never deleted here; CI imports it before apply
-    # so it survives the reset → apply cycle. The zone-level DNS records,
-    # rulesets and TLS settings are not managed by this project. Only the
-    # Pages custom domain CNAME and the api-gateway Workers Route below are
-    # this project's and are cleaned up here.
-    delete_records "${zone}" "ontodecide-ce.${DOMAIN}" CNAME
-    delete_worker_routes "${zone}"
-  fi
-
-  # Account level: the ruleset first, since it references the list.
+  # No Cloudflare zone (the apex DNS stays with its registrar), so there are
+  # no zone-level DNS records or Workers Routes to clean up. Only the
+  # account-level pages.dev → custom-domain bulk redirect (list + ruleset)
+  # Terraform created is deleted here. The ruleset references the list, so
+  # delete it first.
   if ids="$(cf_get /rulesets | jq -r --arg n "${PREFIX}-pages-redirect" \
     '.result[]? | select(.name == $n) | .id')"; then
     while IFS= read -r id; do
@@ -747,7 +661,7 @@ reset_all() {
   reset_b2_bucket
   reset_b2_keys
   reset_turnstile
-  reset_zone
+  reset_redirect
 }
 
 # Lists everything again after a live run; each resource still found is a
