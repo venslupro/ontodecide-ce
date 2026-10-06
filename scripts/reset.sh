@@ -338,16 +338,31 @@ cf_get() {
 }
 
 # Succeeds if the Cloudflare call cf METHOD PATH reports success; prints
-# the API error to STDERR on failure.
+# the API error to STDERR on failure. Handles empty response bodies
+# (some DELETE endpoints return 204 No Content) by checking the HTTP
+# status code.
 cf_ok() {
-  local body messages
-  body="$(cf "$@")"
+  local body messages status tmp
+  tmp="$(mktemp)"
+  # shellcheck disable=SC2068
+  status="$(curl -sS -X "$1" -H "Authorization: Bearer ${CF_TOKEN}" \
+    -w '%{http_code}' -o "${tmp}" \
+    "${CF_API}/accounts/${CF_ACCOUNT}$2")"
+  body="$(cat "${tmp}")"
+  rm -f "${tmp}"
   if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
     return 0
   fi
+  # Empty body with a 2xx status is a successful delete (e.g. 204).
+  if [[ -z "${body}" ]]; then
+    case "${status}" in
+      2*) return 0 ;;
+      *) err "$1 $2: HTTP ${status}"; return 1 ;;
+    esac
+  fi
   messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
     2>/dev/null <<<"${body}" || true)"
-  err "$1 $2: ${messages:-no valid response}"
+  err "$1 $2: ${messages:-no valid response} (HTTP ${status})"
   return 1
 }
 
