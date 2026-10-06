@@ -348,14 +348,32 @@ cf_zone_get() {
   cf_checked "GET zone $2" "$(cf_zone GET "$1" "$2")"
 }
 
-# Succeeds if the Cloudflare call cf METHOD PATH reports success.
+# Succeeds if the Cloudflare call cf METHOD PATH reports success; prints
+# the API error to STDERR on failure.
 cf_ok() {
-  cf "$@" | jq -e '.success == true' >/dev/null
+  local body messages
+  body="$(cf "$@")"
+  if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
+    return 0
+  fi
+  messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
+    2>/dev/null <<<"${body}" || true)"
+  err "$1 $2: ${messages:-no valid response}"
+  return 1
 }
 
-# Succeeds if cf_zone METHOD ZONE_ID PATH reports success.
+# Succeeds if cf_zone METHOD ZONE_ID PATH reports success; prints the API
+# error to STDERR on failure.
 cf_zone_ok() {
-  cf_zone "$@" | jq -e '.success == true' >/dev/null
+  local body messages
+  body="$(cf_zone "$@")"
+  if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
+    return 0
+  fi
+  messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
+    2>/dev/null <<<"${body}" || true)"
+  err "$1 zone $2 $3: ${messages:-no valid response}"
+  return 1
 }
 
 #######################################
@@ -675,6 +693,27 @@ delete_worker_routes() {
 }
 
 #######################################
+# Deletes a Cloudflare zone by id. Cloudflare's DELETE zone endpoint may
+# reject the call while the zone still has sub-resources; this function
+# prints the API error to STDERR so the failure is never silent.
+# Arguments:
+#   Zone id.
+#######################################
+delete_zone() {
+  local zone="$1"
+  local body messages
+  body="$(curl -sS -X DELETE -H "Authorization: Bearer ${CF_TOKEN}" \
+    "${CF_API}/zones/${zone}")"
+  if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
+    return 0
+  fi
+  messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
+    2>/dev/null <<<"${body}" || true)"
+  err "DELETE zone ${zone}: ${messages:-no valid response}"
+  return 1
+}
+
+#######################################
 # PATCHes a single zone setting to value $3; succeeds when the API reports
 # success.
 # Arguments:
@@ -763,7 +802,7 @@ reset_zone() {
     reset_zone_setting "${zone}" min_tls_version 1.2 1.0
     reset_zone_setting "${zone}" always_use_https on off
     # Finally delete the zone itself (Terraform-managed resource).
-    act "zone ${DOMAIN}" cf_zone_ok DELETE "${zone}" ""
+    act "zone ${DOMAIN}" delete_zone "${zone}"
   fi
 
   # Account level: the ruleset first, since it references the list.
