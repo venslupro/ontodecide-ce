@@ -5,28 +5,28 @@
 # data and archives are lost. Never run by CI. V1.3 leftovers are deleted by
 # scripts/cleanup_legacy.sh.
 #
-#   scripts/reset.sh [--dry-run] [--yes] [--domain example.com]
-#                    [--env-file FILE]
+#   scripts/reset.sh [--dry-run] [--yes] [--env-file FILE]
 #
 #   --dry-run  Only list what would be deleted.
 #   --yes      Skip the confirmation prompt.
-#   --domain   The APP_DOMAIN in use (default: $APP_DOMAIN). The apex
-#              domain's DNS stays with its registrar (NameSilo); there is no
-#              Cloudflare zone, so this script does not touch zone-level DNS
-#              records or Workers Routes. It only deletes the Pages project
-#              (with its custom domain, also Wrangler-managed) and, with a
-#              domain, the account-level pages.dev bulk redirect (list +
-#              ruleset) Terraform created.
 #   --env-file Credentials file (default .env.local), relative to the
 #              current directory.
 #
+# The apex domain's DNS stays with its registrar (NameSilo); there is no
+# Cloudflare zone, so this script does not touch zone-level DNS records or
+# Workers Routes. Custom domains attached to the Pages project are read
+# from the Cloudflare API automatically; no --domain flag is needed.
+#
 # Deleted, in dependency order (names as in infra/*.tf and
 # apps/*/wrangler.jsonc.tpl, prefix ontodecide-prd):
+#   Wrangler:  Pages project ontodecide-ce (custom domains deleted first,
+#              then the project itself)
+#   Terraform: 2 queues (consumers removed first, so Workers can be deleted)
 #   Wrangler:  7 Workers (with their Durable Objects, crons and secrets)
-#   Terraform: 2 queues, 5 D1 databases, B2 archive bucket (emptied first)
-#              and its 3 keys, Turnstile widget, and with a domain the
-#              account-level pages.dev bulk redirect (list + ruleset)
-#   Wrangler:  Pages project ontodecide-ce (with its custom domain)
+#   Terraform: 5 D1 databases, B2 archive bucket (emptied first) and its 3
+#              keys, Turnstile widget, and the account-level pages.dev
+#              bulk redirect (list + ruleset) when the Pages project has
+#              custom domains
 # A live run then lists everything again to verify nothing is left, and
 # only then hides the Terraform state file (earlier versions are kept).
 # If anything cannot be listed or deleted, the state is kept; fix it and
@@ -68,11 +68,15 @@ readonly -a B2_KEYS=(archive-write archive-sign-a archive-sign-b)
 DRY_RUN=false
 ASSUME_YES=false
 ENV_FILE=".env.local"
-DOMAIN="${APP_DOMAIN:-}"
 
 # delete: normal run; verify: the second pass, where every resource still
 # found is a failure.
 MODE=delete
+
+# Custom domains attached to the Pages project, fetched from the Cloudflare
+# API in reset_pages(). Used by reset_redirect() to decide whether the
+# account-level pages.dev bulk redirect exists.
+PAGES_CUSTOM_DOMAINS=""
 
 # Progress counters, updated by step() and act().
 step_num=0
@@ -182,12 +186,12 @@ parse_args() {
     case "$1" in
       --dry-run) DRY_RUN=true ;;
       --yes) ASSUME_YES=true ;;
-      --domain | --env-file)
+      --env-file)
         if (($# < 2)); then
           err "$1 needs a value"
           exit 2
         fi
-        if [[ "$1" == --domain ]]; then DOMAIN="$2"; else ENV_FILE="$2"; fi
+        ENV_FILE="$2"
         shift
         ;;
       -h | --help)
@@ -207,7 +211,7 @@ parse_args() {
 #######################################
 # Loads the credentials file (if any) and checks the credentials.
 # Globals:
-#   CONFIG_SOURCE CF_TOKEN CF_ACCOUNT B2_ID B2_KEY DOMAIN (set)
+#   CONFIG_SOURCE CF_TOKEN CF_ACCOUNT B2_ID B2_KEY (set)
 #######################################
 load_config() {
   local var bin item
@@ -226,9 +230,6 @@ load_config() {
     err "config file ${ENV_FILE} not found"
     exit 1
   fi
-  # --domain wins over APP_DOMAIN from the environment or the file.
-  DOMAIN="${DOMAIN:-${APP_DOMAIN:-}}"
-  readonly DOMAIN
 
   CF_TOKEN="${CLOUDFLARE_API_TOKEN:-${CF_API_TOKEN:-}}"
   CF_ACCOUNT="${CLOUDFLARE_ACCOUNT_ID:-${CF_ACCOUNT_ID:-}}"
@@ -268,8 +269,7 @@ confirm() {
 # Prints the title, target, mode and config source.
 print_banner() {
   printf '%sOntoDecide reset%s\n' "${BOLD}" "${RESET}"
-  printf '  %starget%s   %s\n' "${DIM}" "${RESET}" \
-    "${PREFIX}${DOMAIN:+ + domain ${DOMAIN}}"
+  printf '  %starget%s   %s\n' "${DIM}" "${RESET}" "${PREFIX}"
   if [[ "${DRY_RUN}" == true ]]; then
     printf '  %smode%s     %sdry run%s (nothing is deleted)\n' \
       "${DIM}" "${RESET}" "${YELLOW}${BOLD}" "${RESET}"
@@ -338,16 +338,31 @@ cf_get() {
 }
 
 # Succeeds if the Cloudflare call cf METHOD PATH reports success; prints
-# the API error to STDERR on failure.
+# the API error to STDERR on failure. Handles empty response bodies
+# (some DELETE endpoints return 204 No Content) by checking the HTTP
+# status code.
 cf_ok() {
-  local body messages
-  body="$(cf "$@")"
+  local body messages status tmp
+  tmp="$(mktemp)"
+  # shellcheck disable=SC2068
+  status="$(curl -sS -X "$1" -H "Authorization: Bearer ${CF_TOKEN}" \
+    -w '%{http_code}' -o "${tmp}" \
+    "${CF_API}/accounts/${CF_ACCOUNT}$2")"
+  body="$(cat "${tmp}")"
+  rm -f "${tmp}"
   if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
     return 0
   fi
+  # Empty body with a 2xx status is a successful delete (e.g. 204).
+  if [[ -z "${body}" ]]; then
+    case "${status}" in
+      2*) return 0 ;;
+      *) err "$1 $2: HTTP ${status}"; return 1 ;;
+    esac
+  fi
   messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
     2>/dev/null <<<"${body}" || true)"
-  err "$1 $2: ${messages:-no valid response}"
+  err "$1 $2: ${messages:-no valid response} (HTTP ${status})"
   return 1
 }
 
@@ -486,7 +501,7 @@ b2_delete_key() {
 #######################################
 delete_pages_project() {
   local path="/pages/projects/${PAGES_PROJECT}"
-  local ids id deleted
+  local ids id deleted body
   while true; do
     cf_ok DELETE "${path}" && return 0
     ids="$(cf_get "${path}/deployments?per_page=25" \
@@ -494,7 +509,11 @@ delete_pages_project() {
     deleted=0
     while IFS= read -r id; do
       [[ -n "${id}" ]] || continue
-      if cf_ok DELETE "${path}/deployments/${id}?force=true"; then
+      # The active production deployment cannot be deleted; it goes away
+      # with the project. Delete silently so its expected failure does
+      # not look like an error.
+      body="$(cf DELETE "${path}/deployments/${id}?force=true")"
+      if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
         ((deleted += 1))
       fi
     done <<<"${ids}"
@@ -503,14 +522,32 @@ delete_pages_project() {
 }
 
 reset_pages() {
-  local status
-  step "Delete Pages project"
+  local status domains domain
+  step "Delete Pages custom domains and project"
   status="$(curl -sS -o /dev/null -w '%{http_code}' \
     -H "Authorization: Bearer ${CF_TOKEN}" \
     "${CF_API}/accounts/${CF_ACCOUNT}/pages/projects/${PAGES_PROJECT}")"
   case "${status}" in
-    200) act "Pages ${PAGES_PROJECT} (with its custom domain)" \
-      delete_pages_project ;;
+    200)
+      # Custom domains must be detached before the project can be
+      # deleted. The project's own *.pages.dev domain is part of the
+      # project and cannot be removed, so it is skipped.
+      PAGES_CUSTOM_DOMAINS=""
+      # The Pages domains endpoint does not support the page/per_page
+      # pagination params, so use a plain GET instead of cf_list.
+      if domains="$(cf_get "/pages/projects/${PAGES_PROJECT}/domains" \
+        | jq -r '.result[]?.name')"; then
+        while IFS= read -r domain; do
+          [[ -n "${domain}" ]] || continue
+          [[ "${domain}" == *.pages.dev ]] && continue
+          PAGES_CUSTOM_DOMAINS="${PAGES_CUSTOM_DOMAINS}${domain}"$'\n'
+          act "Pages domain ${domain}" cf_ok DELETE \
+            "/pages/projects/${PAGES_PROJECT}/domains/${domain}"
+        done <<<"${domains}"
+      else
+        list_failed "Pages custom domains"
+      fi
+      act "Pages project ${PAGES_PROJECT}" delete_pages_project ;;
     404) ;;
     *)
       err "GET Pages project ${PAGES_PROJECT}: HTTP ${status}"
@@ -624,8 +661,9 @@ reset_redirect() {
   local ids id list_id
   local list_name="${PREFIX//-/_}_pages_redirect"
   step "Delete the pages.dev bulk redirect"
-  if [[ -z "${DOMAIN}" ]]; then
-    [[ "${MODE}" == verify ]] || note "${DIM}" "– no domain (--domain / APP_DOMAIN)"
+  if [[ -z "${PAGES_CUSTOM_DOMAINS}" ]]; then
+    [[ "${MODE}" == verify ]] || note "${DIM}" \
+      "– Pages project has no custom domains"
     return 0
   fi
   # No Cloudflare zone (the apex DNS stays with its registrar), so there are
@@ -653,10 +691,13 @@ reset_redirect() {
 }
 
 # Runs every deletion step (or, in verify mode, every check).
+# Queues are deleted before Workers: a Worker that is a queue consumer
+# cannot be deleted until the consumer binding is removed, which
+# delete_queue() does before deleting the queue itself.
 reset_all() {
   reset_pages
-  reset_workers
   reset_queues
+  reset_workers
   reset_d1
   reset_b2_bucket
   reset_b2_keys

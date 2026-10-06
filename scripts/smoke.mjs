@@ -64,14 +64,22 @@ const TRANSIENT = new Set([
 ]);
 const RETRY_DELAYS_S = [2, 5, 10, 20, 30];
 
-/** fetch() that retries transient edge errors (see the file comment). */
+/** fetch() that retries transient edge errors (see the file comment).
+ *  Also retries network-level failures (DNS, connection reset, TLS) which
+ *  happen right after a custom domain is (re)attached: Cloudflare's edge
+ *  routing for the new hostname is not ready everywhere instantly. */
 async function fetchRetry(url, init) {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, init);
     const delay = RETRY_DELAYS_S[attempt];
-    if (!TRANSIENT.has(res.status) || delay === undefined) return res;
-    await res.body?.cancel();
-    console.log(`  … ${res.status} from ${url}, retrying in ${delay}s`);
+    try {
+      const res = await fetch(url, init);
+      if (!TRANSIENT.has(res.status) || delay === undefined) return res;
+      await res.body?.cancel();
+      console.log(`  … ${res.status} from ${url}, retrying in ${delay}s`);
+    } catch (e) {
+      if (delay === undefined) throw e;
+      console.log(`  … ${e.message} from ${url}, retrying in ${delay}s`);
+    }
     await new Promise(r => setTimeout(r, delay * 1000));
   }
 }
