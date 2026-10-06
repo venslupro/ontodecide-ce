@@ -4,8 +4,7 @@
 #   5 D1 databases, 2 queues (domain-events, dead-letter), 1 B2 bucket
 #   (archive) with a write key and two signing-key slots, 1 Turnstile widget,
 #   1 Pages project (ontodecide-ce) and — when var.domain is set — the
-#   Cloudflare zone, the Pages custom domain, redirects, the WAF rate-limit
-#   rule and zone TLS settings (domain.tf).
+#   Pages custom domain and the pages.dev bulk redirect (domain.tf).
 #
 # Workers, their bindings, routes, crons and Durable Object migrations belong
 # to Wrangler (apps/*/wrangler.jsonc.tpl, .github/workflows/deploy.yml).
