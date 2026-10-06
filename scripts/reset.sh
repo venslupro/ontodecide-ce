@@ -348,14 +348,32 @@ cf_zone_get() {
   cf_checked "GET zone $2" "$(cf_zone GET "$1" "$2")"
 }
 
-# Succeeds if the Cloudflare call cf METHOD PATH reports success.
+# Succeeds if the Cloudflare call cf METHOD PATH reports success; prints
+# the API error to STDERR on failure.
 cf_ok() {
-  cf "$@" | jq -e '.success == true' >/dev/null
+  local body messages
+  body="$(cf "$@")"
+  if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
+    return 0
+  fi
+  messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
+    2>/dev/null <<<"${body}" || true)"
+  err "$1 $2: ${messages:-no valid response}"
+  return 1
 }
 
-# Succeeds if cf_zone METHOD ZONE_ID PATH reports success.
+# Succeeds if cf_zone METHOD ZONE_ID PATH reports success; prints the API
+# error to STDERR on failure.
 cf_zone_ok() {
-  cf_zone "$@" | jq -e '.success == true' >/dev/null
+  local body messages
+  body="$(cf_zone "$@")"
+  if jq -e '.success == true' >/dev/null 2>&1 <<<"${body}"; then
+    return 0
+  fi
+  messages="$(jq -r '(.errors // []) | map(.message) | join("; ")' \
+    2>/dev/null <<<"${body}" || true)"
+  err "$1 zone $2 $3: ${messages:-no valid response}"
+  return 1
 }
 
 #######################################
