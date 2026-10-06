@@ -132,6 +132,15 @@ jobs:
           terraform_version: 1.10.5
           terraform_wrapper: false
       - run: terraform init
+      # One-time migration: cloudflare_zone (DNS stays at the registrar),
+      # cloudflare_pages_project and cloudflare_pages_domain (now owned by
+      # Wrangler) were removed from the config; drop them from state so plan
+      # does not try to refresh non-existent zone resources. Idempotent.
+      - name: Remove stale resources from state
+        run: |
+          terraform state rm 'cloudflare_zone.main[0]' 2>/dev/null || true
+          terraform state rm 'cloudflare_pages_project.web' 2>/dev/null || true
+          terraform state rm 'cloudflare_pages_domain.app[0]' 2>/dev/null || true
       - name: Plan
         id: plan
         run: |
@@ -176,5 +185,10 @@ jobs:
           terraform_version: 1.10.5
           terraform_wrapper: false
       - run: terraform init
+      - name: Remove stale resources from state
+        run: |
+          terraform state rm 'cloudflare_zone.main[0]' 2>/dev/null || true
+          terraform state rm 'cloudflare_pages_project.web' 2>/dev/null || true
+          terraform state rm 'cloudflare_pages_domain.app[0]' 2>/dev/null || true
       - run: terraform plan -no-color -out=tfplan
       - run: terraform apply -auto-approve tfplan
