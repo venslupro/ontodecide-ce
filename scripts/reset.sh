@@ -26,7 +26,8 @@
 #   Terraform: 2 queues, 5 D1 databases, B2 archive bucket (emptied first)
 #              and its 3 keys, Turnstile widget, and with a domain the
 #              account-level pages.dev bulk redirect (list + ruleset)
-#   Wrangler:  Pages project ontodecide-ce (with its custom domain)
+#   Wrangler:  Pages project ontodecide-ce (custom domains deleted first,
+#              then the project itself)
 # A live run then lists everything again to verify nothing is left, and
 # only then hides the Terraform state file (earlier versions are kept).
 # If anything cannot be listed or deleted, the state is kept; fix it and
@@ -503,14 +504,28 @@ delete_pages_project() {
 }
 
 reset_pages() {
-  local status
-  step "Delete Pages project"
+  local status domains domain
+  step "Delete Pages custom domains and project"
   status="$(curl -sS -o /dev/null -w '%{http_code}' \
     -H "Authorization: Bearer ${CF_TOKEN}" \
     "${CF_API}/accounts/${CF_ACCOUNT}/pages/projects/${PAGES_PROJECT}")"
   case "${status}" in
-    200) act "Pages ${PAGES_PROJECT} (with its custom domain)" \
-      delete_pages_project ;;
+    200)
+      # Custom domains must be detached before the project can be
+      # deleted. The project's own *.pages.dev domain is part of the
+      # project and cannot be removed, so it is skipped.
+      if domains="$(cf_list "/pages/projects/${PAGES_PROJECT}/domains" \
+        '.name')"; then
+        while IFS= read -r domain; do
+          [[ -n "${domain}" ]] || continue
+          [[ "${domain}" == *.pages.dev ]] && continue
+          act "Pages domain ${domain}" cf_ok DELETE \
+            "/pages/projects/${PAGES_PROJECT}/domains/${domain}"
+        done <<<"${domains}"
+      else
+        list_failed "Pages custom domains"
+      fi
+      act "Pages project ${PAGES_PROJECT}" delete_pages_project ;;
     404) ;;
     *)
       err "GET Pages project ${PAGES_PROJECT}: HTTP ${status}"
