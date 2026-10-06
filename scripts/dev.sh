@@ -2,7 +2,7 @@
 # Local full stack: 7 Workers in one `wrangler dev` session (local D1,
 # Durable Objects and Queues — no Cloudflare quota used) plus the Vite dev
 # server on http://localhost:5173, which proxies /api (and the WebSocket)
-# to the gateway like the Workers Route does in production.
+# to the gateway like the Pages Functions proxy does in production.
 #
 #   pnpm dev            # gateway on :8787, web on http://localhost:5173
 #   pnpm dev --api-only # workers only

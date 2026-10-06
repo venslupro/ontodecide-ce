@@ -1,7 +1,8 @@
-// api-gateway: the only public entry (Workers Route ${APP_HOST}/api/*, or
-// the Pages Functions proxy while no domain is configured). Binds the
+// api-gateway: the only public entry, reached through the Pages Functions
+// proxy (functions/api/[[path]].ts via the GATEWAY service binding). The
+// apex DNS stays with its registrar (no Cloudflare zone), so there is no
+// Workers Route; `routes` is always removed by gen_wrangler.mjs. Binds the
 // business entry points of the six services (never TenantLifecycle).
-// `routes` is kept only when a domain is configured (gen_wrangler.mjs).
 // DO migration v2 deletes the V1.3 EdgeGuard class; no DO bindings remain.
 {
   "name": "${PREFIX}-api-gateway",

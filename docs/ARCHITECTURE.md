@@ -55,16 +55,21 @@ Durable Object migrations (`apps/*/wrangler.jsonc.tpl`, rendered by
 ### 2.1 Domain and routing
 
 * `APP_DOMAIN` (GitHub variable, e.g. `example.com`; Terraform `var.domain`).
-  Terraform creates the Cloudflare zone and the Pages custom domain; the app
-  is served at `https://ontodecide-ce.${APP_DOMAIN}`: Pages custom domain for
-  the SPA, and a Workers Route `ontodecide-ce.${APP_DOMAIN}/api/*` on
-  api-gateway (the only Worker with a route). Same origin: no CORS,
-  `__Host-` cookie, CSP `connect-src 'self'`.
-* Fallback (修订说明书 4.2, used while `APP_DOMAIN` is empty): the Pages
-  Function `apps/web/functions/api/[[path]].ts` forwards `/api/*` to the
-  gateway through a service binding and the app lives at
-  `https://ontodecide-ce.pages.dev`. With a domain configured the deploy job
-  publishes the SPA without `functions/` (pure static).
+  The apex domain's DNS stays with its registrar (NameSilo); no Cloudflare
+  zone is created, so other projects on the same apex (e.g.
+  `ontodecide.<domain>`) are untouched. The operator points a CNAME
+  `ontodecide-ce.<domain>` → `ontodecide-ce.pages.dev` at the DNS provider.
+  Wrangler creates the Pages project and attaches the custom domain in the
+  CD pipeline; Terraform only creates the account-level `pages.dev` →
+  custom-domain bulk redirect.
+* `/api/*` is always served by the Pages Function
+  `apps/web/functions/api/[[path]].ts`, which forwards to api-gateway through
+  the `GATEWAY` service binding. Since there is no Cloudflare zone,
+  api-gateway has no Workers Route. This works on both the `pages.dev` host
+  and the custom domain. Same origin: no CORS, `__Host-` cookie, CSP
+  `connect-src 'self'`.
+* Fallback while `APP_DOMAIN` is empty: the app lives at
+  `https://ontodecide-ce.pages.dev` (same Pages Functions proxy).
 * Every Worker has `workers_dev: false` and `preview_urls: false`.
 
 ### 2.2 Service bindings (DAG, no cycles)

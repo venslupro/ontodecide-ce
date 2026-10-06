@@ -1,10 +1,11 @@
 /**
- * @fileoverview No-domain fallback (修订说明书 4.2, ARCHITECTURE 2.1): while
- * `APP_DOMAIN` is empty the SPA lives on `ontodecide-ce.pages.dev` and this
- * Pages Function forwards every `/api/*` request to api-gateway through the
- * `GATEWAY` service binding. `_routes.json` limits Functions to `/api/*`, so
- * static assets never cost a Worker request. With a domain configured the
- * deploy publishes the SPA without `functions/` (Workers Route instead).
+ * @fileoverview /api/* proxy (修订说明书 4.2, ARCHITECTURE 2.1): the apex
+ * domain's DNS stays with its registrar (no Cloudflare zone), so the
+ * api-gateway has no Workers Route. This Pages Function forwards every
+ * `/api/*` request to api-gateway through the `GATEWAY` service binding on
+ * both the pages.dev host and the custom domain ontodecide-ce.<domain>.
+ * `_routes.json` limits Functions to `/api/*`, so static assets never cost
+ * a Worker request.
  *
  * The request is passed through unchanged, so cookies (`__Host-od_rt`),
  * `Origin`, `Authorization`, `X-Act-As-Tenant`, `X-Step-Up` and WebSocket

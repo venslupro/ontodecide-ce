@@ -6,12 +6,13 @@ b2_region  = "us-east-005"
 # project     = "ontodecide"
 # environment = "prd"
 
-# Custom domain (CI: GitHub variable APP_DOMAIN → TF_VAR_domain). The zone
-# must already exist in the Cloudflare account (owned by another project);
-# Terraform only looks it up here, attaches the Pages custom domain
-# https://ontodecide-ce.<domain> and bulk-redirects the pages.dev host to it.
-# Empty keeps the app on https://ontodecide-ce.pages.dev with the Pages
-# Functions proxy.
+# Custom domain (CI: GitHub variable APP_DOMAIN → TF_VAR_domain). The apex
+# domain's DNS stays with its registrar (e.g. NameSilo); no Cloudflare zone
+# is created here. Point a CNAME ontodecide-ce.<domain> →
+# ontodecide-ce.pages.dev at the DNS provider. Wrangler attaches the custom
+# domain in the CD pipeline; Terraform only creates the account-level
+# pages.dev → custom-domain bulk redirect. Empty keeps the app on
+# https://ontodecide-ce.pages.dev.
 # domain = "example.com"
 
 # Archive signing key slot used for new links (monthly rotation, see

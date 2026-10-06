@@ -53,14 +53,14 @@ const ENVIRON = {
   APP_VERSION: 'test',
 };
 
-test('prod with a domain renders the route and public keys only', () => {
+test('prod with a domain drops routes (no Cloudflare zone) and keeps public keys', () => {
   const vars = buildVars('prod', TF, {environ: ENVIRON});
   const c = renderAll('prod', vars, {});
   const gw = c['api-gateway'];
   assert.equal(gw.name, 'ontodecide-prd-api-gateway');
-  assert.deepEqual(gw.routes, [
-    {pattern: 'ontodecide-ce.example.com/api/*', zone_name: 'example.com'},
-  ]);
+  // No Cloudflare zone → no Workers Route; /api/* uses the Pages Functions
+  // proxy instead.
+  assert.equal(gw.routes, undefined);
   const jwks = JSON.parse(gw.vars.JWT_PUBLIC_KEYS);
   assert.deepEqual(
     jwks.keys.map(k => k.kid),
@@ -88,7 +88,7 @@ test('prod with a domain renders the route and public keys only', () => {
   for (const cfg of Object.values(c)) {
     assert.equal(cfg.workers_dev, false);
     assert.equal(cfg.preview_urls, false);
-    assert.ok(!cfg.routes || cfg === gw);
+    assert.equal(cfg.routes, undefined);
   }
 });
 

@@ -28,8 +28,10 @@
 #   data-integration    → ontology-manager, object-graph
 #   identity-access     → TenantLifecycle of the five services above
 #   api-gateway         → all six services above
-#   web (Pages)         → api-gateway (creates the Pages project if missing;
-#                         with APP_DOMAIN: pure static + custom domain)
+#   web (Pages)         → api-gateway (Wrangler creates the Pages project and
+#                         attaches the custom domain ontodecide-ce.<domain>;
+#                         /api/* is served by the Pages Functions proxy via
+#                         the GATEWAY service binding — no Cloudflare zone)
 #   smoke               → web: scripts/smoke.mjs against the production URL
 #                         (read-only pre-launch checks; non-blocking)
 name: Deploy
@@ -274,45 +276,32 @@ jobs:
             | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).sitekey))')"
           echo "VITE_TURNSTILE_SITE_KEY=${sitekey}" >> "$GITHUB_ENV"
       - run: pnpm build:web
-      # Terraform owns the Pages project (cloudflare_pages_project.web) and
-      # its custom domain (cloudflare_pages_domain.app). The steps below are
-      # safety nets for the rare case where a deploy runs before the first
-      # terraform apply or after scripts/reset.sh.
+      # The Pages project and its custom domain are owned by Wrangler (not
+      # Terraform). Create the project if it does not exist yet.
       - name: Create Pages project if missing
         working-directory: apps/web
         run: |
-          status="$(curl -sS -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/ontodecide-ce")"
-          case "${status}" in
-            200) echo "Pages project ontodecide-ce exists" ;;
-            404) npx wrangler pages project create ontodecide-ce --production-branch main ;;
-            *) echo "::error::Pages project lookup failed (HTTP ${status})"; exit 1 ;;
-          esac
-      # With a domain, /api/* is served by the api-gateway Workers Route on
-      # the same host: publish the SPA without the Pages Functions proxy and
-      # ensure ontodecide-ce.${APP_DOMAIN} is attached (Terraform normally
-      # owns this via cloudflare_pages_domain).
-      - name: Custom domain (pure static)
+          if npx wrangler pages project list 2>/dev/null | grep -qx 'ontodecide-ce'; then
+            echo "Pages project ontodecide-ce exists"
+          else
+            npx wrangler pages project create ontodecide-ce --production-branch main
+          fi
+      # Attach the custom domain via Wrangler. The operator must point a
+      # CNAME ontodecide-ce.<APP_DOMAIN> → ontodecide-ce.pages.dev at the DNS
+      # provider (the apex DNS stays with its registrar). /api/* is always
+      # served by the Pages Functions proxy (functions/api/[[path]].ts)
+      # through the GATEWAY service binding, so functions/ is kept.
+      - name: Attach custom domain
         if: env.APP_DOMAIN != ''
         working-directory: apps/web
         run: |
-          rm -rf functions
           host="ontodecide-ce.${APP_DOMAIN}"
-          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/ontodecide-ce/domains"
-          status="$(curl -sS -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${api}/${host}")"
-          case "${status}" in
-            200) echo "Pages custom domain ${host} attached" ;;
-            404)
-              curl -sS --fail-with-body -X POST \
-                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-                -H 'Content-Type: application/json' \
-                -d "{\"name\":\"${host}\"}" "${api}" > /dev/null
-              echo "Attached Pages custom domain ${host}"
-              ;;
-            *) echo "::error::Pages domain lookup failed (HTTP ${status})"; exit 1 ;;
-          esac
+          if npx wrangler pages domain list --project-name ontodecide-ce 2>/dev/null \
+            | grep -qxF "${host}"; then
+            echo "Pages custom domain ${host} attached"
+          else
+            npx wrangler pages domain create "${host}" --project-name ontodecide-ce
+          fi
       - name: Deploy Pages
         working-directory: apps/web
         run: npx wrangler pages deploy dist --project-name ontodecide-ce --branch main
