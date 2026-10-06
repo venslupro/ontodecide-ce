@@ -1,19 +1,14 @@
 # Custom domain (修订说明书 4.1 / 4.4 / 4.5), only when var.domain is set.
-# The Cloudflare zone already exists in the account (owned by the project
-# that uses the apex domain). Terraform only looks it up here, then attaches
-# the Pages custom domain ontodecide-ce.<domain> to the Pages project (DNS
-# is created by Cloudflare automatically) and bulk-redirects the pages.dev
-# host to it.
+# The Cloudflare zone is created if it does not exist; the CI workflow runs
+# terraform import before apply so an existing zone is imported into state
+# instead of being recreated. Terraform only manages the zone container
+# itself — no zone-level DNS records, rulesets or TLS settings — and
+# prevent_destroy blocks accidental terraform destroy.
 #
 #   ontodecide-ce.<domain>     Pages custom domain (CNAME → pages.dev, proxied)
 #   ontodecide-ce.pages.dev    301 → https://ontodecide-ce.<domain> (Bulk Redirect)
 #   /api/*                     Workers Route on ontodecide-ce.<domain>/api/*
 #                              (apps/api-gateway/wrangler.jsonc.tpl)
-#
-# Zone-level resources (apex DNS records, _dmarc, mail records, apex redirect,
-# TLS settings, WAF rate limit) belong to the project that owns the apex zone
-# and are not managed here. Run scripts/reset.sh before each apply to start
-# from zero; it never deletes the zone itself.
 
 locals {
   zone_count = var.domain == "" ? 0 : 1
@@ -23,12 +18,13 @@ locals {
   pages_redirect_list = "${replace(local.prefix, "-", "_")}_pages_redirect"
 }
 
-# Look up the existing Cloudflare zone owned by another project; only reads
-# its id and metadata. Terraform never creates, modifies or deletes the zone.
-data "cloudflare_zone" "main" {
-  count = local.zone_count
-  filter = {
-    name = var.domain
+resource "cloudflare_zone" "main" {
+  count   = local.zone_count
+  account = { id = var.account_id }
+  name    = var.domain
+
+  lifecycle {
+    prevent_destroy = true
   }
 }
 

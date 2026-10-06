@@ -64,9 +64,9 @@ output "app" {
 }
 
 output "zone" {
-  description = "Cloudflare zone looked up by data source (the zone itself is owned by another project): id and name."
+  description = "Cloudflare zone: id and name (created if absent, imported by CI, never destroyed)."
   value = var.domain == "" ? null : {
-    id   = data.cloudflare_zone.main[0].id
-    name = data.cloudflare_zone.main[0].name
+    id   = cloudflare_zone.main[0].id
+    name = cloudflare_zone.main[0].name
   }
 }

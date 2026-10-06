@@ -51,11 +51,11 @@ variable "archive_sign_active" {
 
 variable "domain" {
   description = <<-EOT
-    Apex domain whose zone already exists in the Cloudflare account
-    (TF_VAR_domain from the GitHub variable APP_DOMAIN), e.g. example.com.
-    The zone is owned by another project; Terraform only looks it up here,
-    attaches the Pages custom domain https://ontodecide-ce.<domain> and
-    bulk-redirects the pages.dev host to it. Empty: no domain resources;
+    Apex domain for the Cloudflare zone (TF_VAR_domain from the GitHub
+    variable APP_DOMAIN), e.g. example.com. The zone is created if it does
+    not exist; the CI workflow imports an existing zone before apply so it
+    is not recreated. prevent_destroy blocks terraform destroy. The app is
+    served at https://ontodecide-ce.<domain>. Empty: no domain resources;
     the app stays on https://ontodecide-ce.pages.dev (Pages Functions proxy
     fallback).
   EOT

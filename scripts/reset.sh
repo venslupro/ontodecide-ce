@@ -10,9 +10,9 @@
 #
 #   --dry-run  Only list what would be deleted.
 #   --yes      Skip the confirmation prompt.
-#   --domain   The APP_DOMAIN in use (default: $APP_DOMAIN). The zone itself
-#              is owned by another project and is never deleted here; this
-#              script only deletes the Pages custom domain CNAME
+#   --domain   The APP_DOMAIN in use (default: $APP_DOMAIN). The zone is
+#              managed by Terraform (prevent_destroy) and is never deleted
+#              here; this script only deletes the Pages custom domain CNAME
 #              (ontodecide-ce.<domain>), the api-gateway Workers Route on
 #              that zone, and the account-level pages.dev bulk redirect
 #              (list + ruleset) Terraform created.
@@ -708,11 +708,12 @@ reset_zone() {
   elif [[ -z "${zone}" ]]; then
     warn "zone ${DOMAIN} not found in the account"
   else
-    # The zone itself, its apex DNS records, rulesets and TLS settings are
-    # owned by the project that owns the apex domain and are never touched
-    # here. This project only creates the Pages custom domain CNAME below
-    # (ontodecide-ce.<domain> → ontodecide-ce.pages.dev, via
-    # cloudflare_pages_domain.app) and the api-gateway Workers Route.
+    # The zone is managed by Terraform (resource cloudflare_zone with
+    # prevent_destroy) and is never deleted here; CI imports it before apply
+    # so it survives the reset → apply cycle. The zone-level DNS records,
+    # rulesets and TLS settings are not managed by this project. Only the
+    # Pages custom domain CNAME and the api-gateway Workers Route below are
+    # this project's and are cleaned up here.
     delete_records "${zone}" "ontodecide-ce.${DOMAIN}" CNAME
     delete_worker_routes "${zone}"
   fi
