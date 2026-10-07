@@ -2385,7 +2385,7 @@ components:
             type: object
             required: [key, used, limit]
             properties:
-              key: {type: string, enum: [workers, d1Writes, neurons, queues, emailResend, emailBrevo]}
+              key: {type: string, enum: [workers, d1Writes, neurons, queues, emailResend]}
               used: {type: number}
               limit: {type: number}
         analyticsAt: {type: [string, 'null'], format: date-time}

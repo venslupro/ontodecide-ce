@@ -4,7 +4,7 @@
 // entry points of the five other services (no business RPC).
 // The */2 cron advances one lifecycle step per run.
 // Secrets (wrangler secret bulk): JWT_SIGNING_KEY, EMAIL_PEPPER,
-// EMAIL_ENC_KEY, RESEND_API_KEY, BREVO_API_KEY, TURNSTILE_SECRET,
+// EMAIL_ENC_KEY, RESEND_API_KEY, TURNSTILE_SECRET,
 // B2_WRITE_KEY_ID, B2_WRITE_APP_KEY, B2_SIGN_KEY_ID, B2_SIGN_APP_KEY,
 // CF_ANALYTICS_TOKEN, BOOTSTRAP_ADMIN_EMAIL, BOOTSTRAP_ADMIN_SETUP_CODE.
 {
@@ -41,7 +41,6 @@
     "ADMIN_SESSION_HOURS": "8",
     "RESEND_DAILY_CAP": "90",
     "RESEND_MONTHLY_CAP": "2900",
-    "BREVO_DAILY_CAP": "280",
     "B2_ARCHIVE_BUCKET": "${B2_ARCHIVE_BUCKET}",
     "B2_ENDPOINT": "${B2_ENDPOINT}",
     "B2_REGION": "${B2_REGION}",

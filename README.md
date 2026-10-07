@@ -37,7 +37,7 @@ flowchart LR
   OG -- domain-events --> S
   I -. TenantLifecycle .-> O & D & OG & S & DE
   I -.-> B2[(B2 archive)]
-  I -.-> M[Resend → Brevo]
+  I -.-> M[Resend]
   D -.-> AI[Workers AI]
   DE -.-> AI
 ```
@@ -125,7 +125,7 @@ Set `APP_DOMAIN` (GitHub variable) to the apex domain whose DNS stays with its r
 - Cloudflare: `CF_API_TOKEN` (Workers, D1, Queues, Pages, Turnstile, account rulesets/lists, Pages custom domain), `CF_ACCOUNT_ID`.
 - Backblaze: `B2_MASTER_KEY_ID` / `B2_MASTER_KEY`, and optionally `B2_STATE_KEY_ID` / `B2_STATE_KEY`.
 - Signing and encryption: `JWT_SIGNING_KEY` (Ed25519 JWK; add `JWT_SIGNING_KEY_PREV` during a key rotation), `EMAIL_PEPPER`, `EMAIL_ENC_KEY`, `BOOTSTRAP_ADMIN_SETUP_CODE`. Generate all four with `pnpm gen:secrets`.
-- E-mail: `RESEND_API_KEY`, `BREVO_API_KEY`.
+- E-mail: `RESEND_API_KEY`.
 - Optional: `CF_ANALYTICS_TOKEN` (read-only Analytics token, for the account-wide 80% check).
 - `NEO4J_AURA_CLIENT_ID` / `NEO4J_AURA_CLIENT_SECRET`: keep only until the V1.3 cleanup below is done.
 
@@ -141,7 +141,7 @@ The Turnstile secret and the B2 archive keys come from Terraform outputs, so you
 1. Merge to `main`. Terraform stops managing the old resources without deleting them: the KV namespaces, the 10 queues, the raw bucket and its key, the situation D1 and the Neo4j instance (`infra/legacy.tf`).
 2. Set the variable `D1_RESET_LEGACY=true` for **one** deploy. The V2.4 schema replaces the V1.3 one, and **all data in the five databases is dropped**; without the flag, the deploy stops before touching them.
 3. Remove `D1_RESET_LEGACY`. Run `scripts/cleanup_legacy.sh`, which deletes the released resources and old Worker secrets, skipping anything still bound. Then delete `infra/legacy.tf`, the neo4jaura provider, the AURA secrets, and the old secrets `JWT_SECRET`, `APPROVAL_SECRET`, `WRITEBACK_SECRET`, `CONNECTOR_ENC_KEY`, `BOOTSTRAP_ADMIN_PASSWORD`, `GEMINI_API_KEY`, `GROQ_API_KEY` and variables `APP_BASE_URL`, `EMAIL_FROM`.
-4. In both the Resend and Brevo dashboards, turn off open and click tracking, so the archive download links in e-mails are not rewritten. HSTS and other zone TLS settings are now the zone owner's responsibility (this project no longer manages the zone).
+4. In the Resend dashboard, turn off open and click tracking, so the archive download links in e-mails are not rewritten. HSTS and other zone TLS settings are now the zone owner's responsibility (this project no longer manages the zone).
 
 Before go-live, the design asks for three live checks:
 - `/api/*` on `ontodecide-ce.<domain>` reaches api-gateway through the Pages Function proxy, not the static Pages host.
@@ -158,7 +158,7 @@ Before go-live, the design asks for three live checks:
   * single-statement `json_each` batch writes;
   * skipping writes when the props hash is unchanged.
 * Scarce actions use atomic capped counters.
-* Degradation paths: when the AI quota runs out or a model fails, recommendations fall back to rule ranking (labelled 「规则排序」). When Resend is over quota, e-mail goes through Brevo. When the WebSocket fails, the cockpit polls every 30 s.
+* Degradation paths: when the AI quota runs out or a model fails, recommendations fall back to rule ranking (labelled 「规则排序」). When Resend is over quota or returns 429 / 5xx, e-mail is deferred and retried on the next cron tick. When the WebSocket fails, the cockpit polls every 30 s.
 
 ## License
 

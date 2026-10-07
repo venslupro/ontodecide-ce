@@ -178,14 +178,13 @@ export async function createSystem() {
   } as unknown as IdentityEnv;
   const blobs = new InMemoryBlobStore();
   const resend = new FakeEmailSender('resend');
-  const brevo = new FakeEmailSender('brevo');
   const identity = createIdentity(identityEnv, {
     ...opts,
     blobs,
     signer: new FakeLinkSigner(),
     webauthn: new FakeWebAuthn(),
     turnstile: new FakeTurnstile(),
-    mail: {mode: 'live', resend, brevo},
+    mail: {mode: 'live', resend},
     analytics: null,
   });
 
@@ -258,9 +257,9 @@ export async function createSystem() {
     await objects.scheduled!('*/15 * * * *', clock.now());
   }
 
-  /** Captured e-mails of both providers, oldest first. */
+  /** Captured e-mails of the provider, oldest first. */
   function mails() {
-    return [...resend.sent, ...brevo.sent];
+    return [...resend.sent];
   }
 
   /** The last 6-digit code mailed to an address. */

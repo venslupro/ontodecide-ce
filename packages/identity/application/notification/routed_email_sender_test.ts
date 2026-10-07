@@ -1,7 +1,7 @@
 /**
- * @fileoverview Mail routing (详细设计 表 14 邮件路由): 91st → Brevo, month
- * cap, 429 / 5xx switch, other 4xx no switch, Brevo cap, OTP priority,
- * refunds and idempotency keys.
+ * @fileoverview Mail routing (详细设计 表 14 邮件路由): daily and monthly
+ * caps, 429 / 5xx refund, other 4xx no switch, OTP priority, refunds and
+ * idempotency keys.
  */
 
 import {beforeEach, describe, expect, it} from 'vitest';
@@ -29,71 +29,67 @@ const normal: EmailMessage = {
 describe('RoutedEmailSender', () => {
   let usage: D1UsageCounter;
   let resend: FakeEmailSender;
-  let brevo: FakeEmailSender;
   let router: RoutedEmailSender;
   const clock = new FixedClock('2026-09-24T08:00:00Z');
 
   beforeEach(() => {
     usage = new D1UsageCounter(createTestD1('identity-access'));
     resend = new FakeEmailSender('resend');
-    brevo = new FakeEmailSender('brevo');
     router = new RoutedEmailSender(
       [
         {
           caps: {name: 'resend', dailyCap: 90, monthlyCap: 2900},
           sender: resend,
         },
-        {caps: {name: 'brevo', dailyCap: 280}, sender: brevo},
       ],
       usage,
       clock,
     );
   });
 
-  it('sends the 91st mail of the day through Brevo', async () => {
-    for (let i = 0; i < 91; i++) {
+  it('defers the 91st mail of the day when the daily cap is used', async () => {
+    for (let i = 0; i < 90; i++) {
       const r = await router.send(otp, `k${i}`);
       expect(r.ok).toBe(true);
     }
+    const r = await router.send(otp, 'k90');
+    expect(r).toMatchObject({ok: false, status: 503, deferred: false});
     expect(resend.sent).toHaveLength(90);
-    expect(brevo.sent).toHaveLength(1);
     expect(await usage.read('2026-09-24', 'email:resend')).toBe(90);
-    expect(await usage.read('2026-09-24', 'email:brevo')).toBe(1);
     expect(await usage.read('2026-09', 'email:resend:month:2026-09')).toBe(90);
   });
 
-  it('switches to Brevo when the monthly Resend cap is used', async () => {
+  it('refuses when the monthly Resend cap is used', async () => {
     await usage.set('2026-09', 'email:resend:month:2026-09', 2900);
     const r = await router.send(otp, 'k');
-    expect(r.channel).toBe('brevo');
+    expect(r).toMatchObject({ok: false, status: 503});
     expect(await usage.read('2026-09-24', 'email:resend')).toBe(0);
   });
 
-  it('switches on 429 and 5xx and refunds the Resend count', async () => {
+  it('refunds the Resend count on 429 and 5xx', async () => {
     resend.script.push(429, 503);
-    expect((await router.send(otp, 'a')).channel).toBe('brevo');
-    expect((await router.send(otp, 'b')).channel).toBe('brevo');
+    // No fallback channel: a switchable error surfaces as 503.
+    expect(await router.send(otp, 'a')).toMatchObject({
+      ok: false,
+      status: 503,
+      deferred: false,
+    });
+    expect(await router.send(otp, 'b')).toMatchObject({
+      ok: false,
+      status: 503,
+      deferred: false,
+    });
     expect(await usage.read('2026-09-24', 'email:resend')).toBe(0);
-    expect(brevo.sent.map(m => m.key)).toEqual(['a', 'b']);
   });
 
   it('does not switch on other 4xx', async () => {
     resend.script.push(422);
     const r = await router.send(otp, 'a');
     expect(r).toMatchObject({ok: false, status: 422, channel: 'resend'});
-    expect(brevo.calls).toBe(0);
-  });
-
-  it('refuses the 281st Brevo mail when Resend is also full', async () => {
-    await usage.set('2026-09-24', 'email:resend', 90);
-    await usage.set('2026-09-24', 'email:brevo', 280);
-    const r = await router.send(otp, 'x');
-    expect(r).toMatchObject({ok: false, status: 503, deferred: false});
   });
 
   it('gives codes priority: other mail yields when < 15 sends are left', async () => {
     await usage.set('2026-09-24', 'email:resend', 76);
-    await usage.set('2026-09-24', 'email:brevo', 266);
     const r = await router.send(normal, 'reminder');
     expect(r).toMatchObject({ok: false, deferred: true});
     expect((await router.send(otp, 'code')).channel).toBe('resend');
@@ -101,7 +97,6 @@ describe('RoutedEmailSender', () => {
 
   it('passes the same idempotency key on retries', async () => {
     resend.script.push(500);
-    brevo.script.push(500);
     expect((await router.send(normal, 'archive:t1')).ok).toBe(false);
     expect((await router.send(normal, 'archive:t1')).ok).toBe(true);
     expect((await router.send(normal, 'archive:t1')).ok).toBe(true);

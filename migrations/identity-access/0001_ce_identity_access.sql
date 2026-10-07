@@ -155,7 +155,7 @@ CREATE TABLE tenant_tombstone (
 );
 
 -- Capped counters: signup, signup_ip:{hmac}, signup_closed, purge_rows,
--- email:resend, email:brevo, email:resend:month:{yyyy-mm}, archive_* metrics.
+-- email:resend, email:resend:month:{yyyy-mm}, archive_* metrics.
 CREATE TABLE usage_counter (
   day   TEXT NOT NULL,
   key   TEXT NOT NULL,

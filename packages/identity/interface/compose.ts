@@ -55,7 +55,7 @@ import {
 /** Mail delivery: providers (routed and counted) or the local log sender. */
 export type MailSetup =
   | {mode: 'log'; sender: EmailSender}
-  | {mode: 'live'; resend: EmailSender | null; brevo: EmailSender | null};
+  | {mode: 'live'; resend: EmailSender | null};
 
 /** Everything the modules need. */
 export interface IdentityOptions {
@@ -121,28 +121,18 @@ export function composeIdentity(o: IdentityOptions): IdentityServices {
     o.mail.mode === 'log'
       ? o.mail.sender
       : new RoutedEmailSender(
-          [
-            ...(o.mail.resend
-              ? [
-                  {
-                    caps: {
-                      name: 'resend' as const,
-                      dailyCap: cfg.resendDailyCap,
-                      monthlyCap: cfg.resendMonthlyCap,
-                    },
-                    sender: o.mail.resend,
+          o.mail.resend
+            ? [
+                {
+                  caps: {
+                    name: 'resend' as const,
+                    dailyCap: cfg.resendDailyCap,
+                    monthlyCap: cfg.resendMonthlyCap,
                   },
-                ]
-              : []),
-            ...(o.mail.brevo
-              ? [
-                  {
-                    caps: {name: 'brevo' as const, dailyCap: cfg.brevoDailyCap},
-                    sender: o.mail.brevo,
-                  },
-                ]
-              : []),
-          ],
+                  sender: o.mail.resend,
+                },
+              ]
+            : [],
           usage,
           clock,
         );
@@ -282,7 +272,6 @@ export function composeIdentity(o: IdentityOptions): IdentityServices {
     trialHours: cfg.trialHours,
     archiveDays: cfg.archiveDays,
     resendDailyCap: cfg.resendDailyCap,
-    brevoDailyCap: cfg.brevoDailyCap,
   });
   const maintenance = new MaintenanceService({
     pending: pendingRepo,

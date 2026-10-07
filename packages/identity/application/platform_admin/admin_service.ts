@@ -104,7 +104,6 @@ export interface AdminDeps {
   trialHours: number;
   archiveDays: number;
   resendDailyCap: number;
-  brevoDailyCap: number;
 }
 
 function iso(ms: number | null): string | null {
@@ -194,7 +193,6 @@ export class AdminService {
       metrics.map(m => this.d.usage.read(day, ANALYTICS_KEYS[m])),
     );
     const resend = channelKeys('resend', now);
-    const brevo = channelKeys('brevo', now);
     return {
       activeTrials: {used: active, limit: s.activeWorkspaceLimit},
       signupsToday: {used: signups, limit: s.signupDailyLimit},
@@ -211,11 +209,6 @@ export class AdminService {
           key: 'emailResend' as const,
           used: await this.d.usage.read(resend.day, resend.key),
           limit: this.d.resendDailyCap,
-        },
-        {
-          key: 'emailBrevo' as const,
-          used: await this.d.usage.read(brevo.day, brevo.key),
-          limit: this.d.brevoDailyCap,
         },
       ],
       analyticsAt:

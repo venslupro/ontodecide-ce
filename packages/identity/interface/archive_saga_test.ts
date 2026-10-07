@@ -228,7 +228,6 @@ describe('archive saga', () => {
     expect(dataKeys(h)).toEqual([key]);
 
     h.resend.script.push(500);
-    h.brevo.script.push(500);
     expect(await h.services.saga.tick()).toBe('mail_failed');
     const firstHash = await h.db
       .prepare('SELECT deletion_token_hash AS t FROM archive_index')
@@ -266,7 +265,6 @@ describe('archive saga', () => {
     for (let i = 0; i < 9; i++) await h.services.saga.tick();
     expect((await ledger(h, tid))!.phase).toBe('exported');
     h.resend.script.push(500, 500);
-    h.brevo.script.push(500, 500);
     expect(await h.services.saga.tick()).toBe('mail_failed');
     expect(
       await n(
@@ -472,7 +470,6 @@ describe('archive deleted before the saga finished (A1)', () => {
   it('admin deletes the ZIP before the mail went out: deletion notice, no index', async () => {
     await tickUntil('exported');
     h.resend.script.push(500);
-    h.brevo.script.push(500);
     expect(await h.services.saga.tick()).toBe('mail_failed');
     const idx = await h.services.trials['d'].archives.get(tid);
     await h.services.trials.finalDelete(idx!);

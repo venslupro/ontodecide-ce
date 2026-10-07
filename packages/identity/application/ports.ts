@@ -459,7 +459,7 @@ export interface SendResult {
   deferred?: boolean;
 }
 
-/** One e-mail provider (Resend, Brevo, the local log sender). */
+/** One e-mail provider (Resend or the local log sender). */
 export interface EmailSender {
   send(msg: EmailMessage, idempotencyKey: string): Promise<SendResult>;
 }
