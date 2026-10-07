@@ -1,7 +1,8 @@
 /**
- * @fileoverview 56 px top bar: global search, realtime status, 中文 | EN,
- * notifications bell, and the account chip (e-mail + 所有者 Owner / 平台管理员
- * Admin) with account, "About" (build version) and sign-out entries.
+ * @fileoverview 56 px top bar: global search, realtime status, notifications
+ * bell, and the account chip (e-mail + 所有者 Owner / 平台管理员 Admin) with
+ * account, "About" (build version) and sign-out entries. Language is changed
+ * on the Account page.
  */
 
 import {useQueryClient} from '@tanstack/react-query';
@@ -11,7 +12,6 @@ import {useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useSession} from '../../entities/session/store';
 import {logout} from '../../features/identity/api';
-import {LangSwitch} from '../../features/identity/components/lang_switch';
 import {cn} from '../../shared/lib/cn';
 import {APP_VERSION} from '../../shared/lib/version';
 import {releaseAll, useRealtimeStatus} from '../../shared/ws/stream';
@@ -153,7 +153,6 @@ export function TopBar() {
       <GlobalSearch />
       <RealtimeBadge />
       <div className="ml-auto flex items-center gap-3">
-        <LangSwitch />
         <NotificationBell />
         <AccountChip />
       </div>
