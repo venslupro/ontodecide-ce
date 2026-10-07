@@ -6,6 +6,7 @@
 import {AppError, FixedClock} from '@ontodecide/shared-kernel';
 import type {ObjectGraphRpc} from '@ontodecide/object-graph/contract';
 import type {OntologyRpc} from '@ontodecide/ontology/contract';
+import type {SituationRpc} from '@ontodecide/situation/contract';
 import {
   createTestD1,
   FakeWorkersAi,
@@ -16,6 +17,7 @@ import {describe, expect, it} from 'vitest';
 import {
   FakeObjectGraph,
   fakeOntology,
+  fakeSituation,
 } from '../../../packages/integration/interface/test_fixtures';
 import type {Env} from './env';
 import {configFrom} from './container';
@@ -27,6 +29,7 @@ function env(overrides: Partial<Env> = {}): Env & {graph: FakeObjectGraph} {
     INTEGRATION_DB: createTestD1('data-integration'),
     ONTOLOGY: rpcBinding(fakeOntology() as OntologyRpc),
     OBJECTS: rpcBinding(graph as unknown as ObjectGraphRpc),
+    SITUATION: rpcBinding(fakeSituation() as SituationRpc),
     graph,
     ...overrides,
   };

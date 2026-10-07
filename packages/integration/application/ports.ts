@@ -6,6 +6,7 @@
 import type {CallCtx, Clock, Logger} from '@ontodecide/shared-kernel';
 import type {OntologyRpc} from '@ontodecide/ontology/contract';
 import type {ObjectGraphRpc} from '@ontodecide/object-graph/contract';
+import type {SituationRpc} from '@ontodecide/situation/contract';
 import type {BatchResult, MappingSpec, RejectDto} from '../contract';
 import type {BatchDelta, JobRecord} from '../domain';
 
@@ -129,6 +130,7 @@ export interface IntegrationDeps {
   usage: UsageRepository;
   ontology: Pick<OntologyRpc, 'getCompiledSchema' | 'setTemplate'>;
   objects: Pick<ObjectGraphRpc, 'stats' | 'upsertBatch'>;
+  situation: Pick<SituationRpc, 'resetForTemplate'>;
   /** Absent locally (no Workers AI binding): drafts use rules only. */
   ai: AiPort | null;
   clock: Clock;

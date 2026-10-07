@@ -141,6 +141,7 @@ export async function createSystem() {
     INTEGRATION_DB: createTestD1('data-integration'),
     ONTOLOGY: rpcBinding(ontology.rpc),
     OBJECTS: rpcBinding(objects.rpc),
+    SITUATION: rpcBinding(situation.rpc),
     ENVIRONMENT: 'test',
   } as unknown as IntegrationEnv;
   const integration = createIntegration(integrationEnv, {...opts, ai: null});

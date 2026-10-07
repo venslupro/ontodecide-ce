@@ -48,4 +48,6 @@ export interface SituationRpc {
   issueStreamTicket(ctx: CallCtx): Promise<StreamTicket>;
   /** Called by decision-engine when a recommendation is created or decided. */
   pushRecommendation(ctx: CallCtx, rec: RecommendationSummary): Promise<void>;
+  /** Reloads the room's KPIs and sample automations after a template switch. */
+  resetForTemplate(ctx: CallCtx): Promise<void>;
 }

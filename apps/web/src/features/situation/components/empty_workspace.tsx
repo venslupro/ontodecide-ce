@@ -1,9 +1,10 @@
 /**
  * @fileoverview Empty-workspace hero: pick one of the built-in example
- * scenarios (POST /workspace/sample-data, once per workspace, within a
- * global daily seed budget) or import a file. QUOTA_EXCEEDED (budget used
- * up today) and CONFLICT (already loaded) are shown inline. The system is
- * not coupled to any scenario — the list comes from the contract.
+ * scenarios (POST /workspace/sample-data, within a global daily seed budget)
+ * or import a file. QUOTA_EXCEEDED (budget used up today) is shown inline.
+ * The system is not coupled to any scenario — the list comes from the
+ * contract, and users may also import their own data and model a custom
+ * ontology.
  */
 
 import {BUILT_IN_SCENARIOS} from '@ontodecide/integration/contract';
@@ -99,10 +100,6 @@ export function EmptyWorkspace() {
               timeZone,
             ),
           })}
-        </p>
-      ) : isApiError(err, 'CONFLICT') ? (
-        <p role="status" className="text-xs text-muted">
-          {t('empty.alreadyLoaded')}
         </p>
       ) : err ? (
         <p role="alert" className="text-xs text-crit">

@@ -21,7 +21,6 @@ import {
   type QueryClient,
 } from '@tanstack/react-query';
 import {api, apiRequest} from '../../shared/api/client';
-import {isApiError} from '../../shared/api/errors';
 import {qk} from '../../shared/api/query_keys';
 import type {OverviewView} from './model';
 
@@ -112,9 +111,11 @@ export function useAckAlert() {
 }
 
 /**
- * Loads a built-in example scenario once per workspace. Pass a scenario id
- * (e.g. `'supply-chain'`, `'urban-emergency'`); the workspace ontology is
- * switched to that scenario's template first.
+ * Loads (or reloads) an example scenario. Pass a scenario id (e.g.
+ * `'supply-chain'`, `'urban-emergency'`); the workspace ontology is switched
+ * to that scenario's template first, then the sample rows are written. The
+ * situation room is reset so KPIs and automations match the new template.
+ * Reloading is allowed (users may switch scenarios); upserts are keyed.
  */
 export function useLoadSample() {
   const qc = useQueryClient();
@@ -122,8 +123,7 @@ export function useLoadSample() {
     mutationFn: (scenarioId: string) =>
       api.post<JobDto>('/workspace/sample-data', {scenarioId}),
     onSettled: (_job, err) => {
-      // Success, or CONFLICT (already loaded): the workspace has data now.
-      if (err && !isApiError(err, 'CONFLICT')) return;
+      if (err) return;
       void qc.invalidateQueries({queryKey: ['situation']});
       void qc.invalidateQueries({queryKey: OBJECT_PREFIX});
       void qc.invalidateQueries({queryKey: qk.me()});

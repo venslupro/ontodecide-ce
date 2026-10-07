@@ -45,6 +45,28 @@ export async function ensureInitialized(rt: RoomRuntime): Promise<void> {
   return rt.initializing;
 }
 
+/**
+ * Resets the room after the workspace ontology template changes. Clears the
+ * previously installed KPIs and automations (they belong to the old template),
+ * drops the initialized flag and re-runs initialization so the new template's
+ * seeds take effect. This keeps the system decoupled from any specific
+ * scenario: switching templates simply reloads the new template's KPI and
+ * automation seeds.
+ */
+export async function resetForTemplate(
+  rt: RoomRuntime,
+  ctx: CallCtx,
+): Promise<void> {
+  rt.touch(ctx);
+  const store = rt.deps.store;
+  for (const k of store.listKpis()) store.deleteKpi(k.id);
+  for (const a of store.listAutomations()) store.deleteAutomation(a.id);
+  store.deleteMeta(META.initialized);
+  rt.reset();
+  rt.rulesChanged();
+  await ensureInitialized(rt);
+}
+
 async function initialize(rt: RoomRuntime): Promise<void> {
   const tid = rt.tid();
   if (!tid) throw new AppError('INTERNAL', 'Room is not bound to a workspace');

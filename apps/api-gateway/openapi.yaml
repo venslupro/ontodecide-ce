@@ -311,14 +311,18 @@ paths:
     post:
       tags: [workspace]
       operationId: loadSampleData
-      summary: Load a built-in example scenario once per workspace
+      summary: Load or reload an example scenario
       description: |
         Selects one of the built-in example scenarios (supply-chain,
         urban-emergency, predictive-maintenance, financial-fraud,
         energy-grid, intelligence-fusion), switches the workspace ontology
-        to that scenario's template, and loads its sample data. Runs once
-        per workspace within the global daily seed budget. The system is
-        not coupled to any scenario — users may also import their own data.
+        to that scenario's template, and loads its sample data. Reloading
+        is allowed so users can switch scenarios; upserts are keyed so the
+        data stays idempotent. The situation room's KPIs and sample
+        automations are reset to match the newly applied template. Runs
+        within the global daily seed budget. The system is not coupled to
+        any scenario — users may also import their own data and model a
+        custom ontology in the ontology workbench.
       parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
       requestBody:
         required: false
@@ -337,7 +341,6 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Job'}
-        '409': {$ref: '#/components/responses/Problem'}
         '429': {$ref: '#/components/responses/Problem'}
         default: {$ref: '#/components/responses/Problem'}
 

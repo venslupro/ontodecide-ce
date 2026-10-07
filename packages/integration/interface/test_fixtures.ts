@@ -21,6 +21,7 @@ import type {
 import type {AiPort, IntegrationDeps} from '../application';
 import {supplyChainSchema} from '../domain/schema_fixture';
 import {D1JobRepository, D1UsageRepository} from '../infrastructure';
+import type {SituationRpc} from '@ontodecide/situation/contract';
 
 interface StoredObject {
   type: string;
@@ -136,6 +137,13 @@ export function fakeOntology(
   };
 }
 
+/** Fake situation-awareness; resetForTemplate is a no-op in tests. */
+export function fakeSituation(): Pick<SituationRpc, 'resetForTemplate'> {
+  return {
+    resetForTemplate: async () => {},
+  };
+}
+
 /** Test dependencies over a migrated test D1. */
 export function testDeps(
   db: D1Database,
@@ -153,6 +161,7 @@ export function testDeps(
     usage: new D1UsageRepository(db),
     ontology: fakeOntology(),
     objects,
+    situation: fakeSituation(),
     ai: opts.ai ?? null,
     clock,
     logger: silentLogger,

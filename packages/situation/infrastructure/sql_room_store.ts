@@ -273,6 +273,11 @@ export class SqlRoomStore implements RoomStore {
     );
   }
 
+  deleteKpi(id: string): void {
+    this.run('DELETE FROM kpi_value WHERE id = ?', id);
+    this.run('DELETE FROM kpi_def WHERE id = ?', id);
+  }
+
   // --- Metric points ------------------------------------------------------
 
   lastPoint(metric: string): PointRecord | null {
