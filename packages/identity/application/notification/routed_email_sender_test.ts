@@ -69,12 +69,12 @@ describe('RoutedEmailSender', () => {
   it('refunds the Resend count on 429 and 5xx', async () => {
     resend.script.push(429, 503);
     // No fallback channel: a switchable error surfaces as 503.
-    expect((await router.send(otp, 'a'))).toMatchObject({
+    expect(await router.send(otp, 'a')).toMatchObject({
       ok: false,
       status: 503,
       deferred: false,
     });
-    expect((await router.send(otp, 'b'))).toMatchObject({
+    expect(await router.send(otp, 'b')).toMatchObject({
       ok: false,
       status: 503,
       deferred: false,

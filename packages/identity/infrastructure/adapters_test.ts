@@ -10,11 +10,7 @@ import {FetchMock} from '@ontodecide/testing';
 import type {EmailMessage} from '../application';
 import {B2BlobStore, B2LinkSigner} from './b2_blob_store';
 import {CloudflareAnalytics} from './cf_analytics';
-import {
-  LogEmailSender,
-  ResendSender,
-  parseMailFrom,
-} from './email_senders';
+import {LogEmailSender, ResendSender, parseMailFrom} from './email_senders';
 import {
   HttpTurnstileVerifier,
   TURNSTILE_VERIFY_URL,
@@ -159,7 +155,10 @@ describe('mail providers', () => {
       name: 'Name',
       email: 'a@b.c',
     });
-    expect(parseMailFrom('a@b.c')).toEqual({name: 'OntoDecide', email: 'a@b.c'});
+    expect(parseMailFrom('a@b.c')).toEqual({
+      name: 'OntoDecide',
+      email: 'a@b.c',
+    });
   });
 
   it('the log sender writes one redacted line', async () => {
