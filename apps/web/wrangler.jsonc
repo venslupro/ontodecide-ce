@@ -22,5 +22,14 @@
       "service": "ontodecide-prd-situation-awareness",
       "entrypoint": "SituationRpc"
     }
-  ]
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SITUATION_ROOM",
+        "script_name": "ontodecide-prd-situation-awareness",
+        "class_name": "SituationRoom"
+      }
+    ]
+  }
 }

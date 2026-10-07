@@ -67,8 +67,9 @@
   },
   "empty": {
     "title": "工作区还没有数据",
-    "description": "加载「供应链风险」示例场景（{objects} 个对象、{links} 条关系），或导入你自己的 CSV / XLSX / JSON 文件。",
-    "loadSample": "加载示例场景",
+    "description": "选择一个示例场景立即开始探索，或导入你自己的 CSV / XLSX / JSON 文件。",
+    "loadSample": "加载所选场景",
+    "selectScenario": "选择场景…",
     "importFile": "导入文件",
     "loaded": "示例场景已开始加载",
     "budgetUsed": "今日示例场景名额已用完，{at} 重置；你仍可导入文件。",

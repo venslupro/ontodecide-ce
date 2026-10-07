@@ -127,7 +127,7 @@ export interface IntegrationConfig {
 export interface IntegrationDeps {
   jobs(ctx: CallCtx): JobRepository;
   usage: UsageRepository;
-  ontology: Pick<OntologyRpc, 'getCompiledSchema'>;
+  ontology: Pick<OntologyRpc, 'getCompiledSchema' | 'setTemplate'>;
   objects: Pick<ObjectGraphRpc, 'stats' | 'upsertBatch'>;
   /** Absent locally (no Workers AI binding): drafts use rules only. */
   ai: AiPort | null;

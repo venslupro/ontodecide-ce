@@ -13,11 +13,14 @@
  * gateway's response — including `Set-Cookie` and a 101 with its
  * `webSocket` — is returned as is.
  *
- * WebSocket upgrades to /situation/stream bypass the gateway and go directly
- * to the SITUATION service binding (1 hop instead of 3). Multi-hop
- * WebSocket proxying through service bindings is unreliable, and the
- * situation-awareness worker already performs its own Origin check and
- * ticket validation (defense in depth), so security is not reduced.
+ * WebSocket upgrades to /situation/stream go directly to the SituationRoom
+ * Durable Object (1 hop: Pages Function → DO). The ticket's `{tid}` prefix
+ * selects the room; the DO redeems the single-use 30 s ticket and accepts
+ * the hibernatable WebSocket. Multi-hop WebSocket proxying through service
+ * bindings (Pages → GATEWAY → SITUATION → DO, or even Pages → SITUATION →
+ * DO) is unreliable for the 101 upgrade, so we terminate the chain at the
+ * DO. The DO already validates the ticket; Origin is checked against the
+ * request host as defense in depth.
  */
 
 /** Minimal service binding shape (avoids pulling in workers-types). */
@@ -25,10 +28,23 @@ interface Fetcher {
   fetch(request: Request): Promise<Response>;
 }
 
+/** Minimal Durable Object namespace (idFromName + get + stub.fetch). */
+interface DurableObjectStub {
+  fetch(request: Request): Promise<Response>;
+}
+interface DurableObjectId {
+  readonly name?: string;
+}
+interface DurableObjectNamespace {
+  idFromName(name: string): DurableObjectId;
+  get(id: DurableObjectId): DurableObjectStub;
+}
+
 /** Minimal Pages Function environment. */
 interface PagesEnv {
   GATEWAY: Fetcher;
   SITUATION: Fetcher;
+  SITUATION_ROOM: DurableObjectNamespace;
 }
 
 /** Minimal Pages Function context. */
@@ -42,12 +58,24 @@ type PagesFunction<Env> = (
   ctx: EventContext<Env>,
 ) => Response | Promise<Response>;
 
-/** Path prefix for direct WebSocket routing to SITUATION. */
+/** Path of the realtime stream endpoint. */
 const STREAM_PATH = '/api/v1/situation/stream';
 
 /**
+ * Extracts the workspace id from a stream ticket (`{tid}.{random}`). The DO
+ * re-validates the full ticket; here we only need the prefix to route to the
+ * right room.
+ */
+function tidFromTicket(ticket: string | null): string | null {
+  if (!ticket) return null;
+  const dot = ticket.indexOf('.');
+  if (dot < 0) return null;
+  return ticket.slice(0, dot);
+}
+
+/**
  * Proxies to the gateway unchanged (REST, cookies). WebSocket upgrades to
- * /situation/stream go directly to the SITUATION service (1 hop); all other
+ * /situation/stream go directly to the SituationRoom DO (1 hop); all other
  * requests — including the ticket endpoint — go through GATEWAY as before.
  *
  * The original Request object is handed over so the upgrade and the body
@@ -60,7 +88,16 @@ export const onRequest: PagesFunction<PagesEnv> = ({request, env}) => {
     upgrade.toLowerCase() === 'websocket' &&
     new URL(request.url).pathname === STREAM_PATH
   ) {
-    return env.SITUATION.fetch(request);
+    const ticket = new URL(request.url).searchParams.get('ticket');
+    const tid = tidFromTicket(ticket);
+    if (!tid) {
+      return new Response(JSON.stringify({error: 'Invalid stream ticket'}), {
+        status: 401,
+        headers: {'content-type': 'application/problem+json'},
+      });
+    }
+    const id = env.SITUATION_ROOM.idFromName(tid);
+    return env.SITUATION_ROOM.get(id).fetch(request);
   }
   return env.GATEWAY.fetch(request);
 };

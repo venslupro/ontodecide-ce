@@ -268,5 +268,20 @@ export interface TemplateSeeds {
   automations: AutomationSeed[];
 }
 
-/** Built-in template id ("supply chain risk"). */
+/** Built-in template ids (one per example scenario). */
 export const SUPPLY_CHAIN_TEMPLATE_ID = 'supply-chain';
+export const URBAN_EMERGENCY_TEMPLATE_ID = 'urban-emergency';
+export const PREDICTIVE_MAINTENANCE_TEMPLATE_ID = 'predictive-maintenance';
+export const FINANCIAL_FRAUD_TEMPLATE_ID = 'financial-fraud';
+export const ENERGY_GRID_TEMPLATE_ID = 'energy-grid';
+export const INTELLIGENCE_FUSION_TEMPLATE_ID = 'intelligence-fusion';
+
+/** All built-in template ids. */
+export const BUILT_IN_TEMPLATE_IDS = [
+  SUPPLY_CHAIN_TEMPLATE_ID,
+  URBAN_EMERGENCY_TEMPLATE_ID,
+  PREDICTIVE_MAINTENANCE_TEMPLATE_ID,
+  FINANCIAL_FRAUD_TEMPLATE_ID,
+  ENERGY_GRID_TEMPLATE_ID,
+  INTELLIGENCE_FUSION_TEMPLATE_ID,
+] as const;

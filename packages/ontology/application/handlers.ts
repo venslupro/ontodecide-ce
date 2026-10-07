@@ -6,7 +6,7 @@
 
 import type {CallCtx} from '@ontodecide/shared-kernel';
 import type {OntologyRpc} from '../contract';
-import {DEFAULT_TEMPLATE} from '../domain';
+import {BUILT_IN_TEMPLATES} from '../domain';
 import {deleteDefinition, putDefinition} from './change_definition';
 import {getCompiledSchema} from './get_compiled_schema';
 import {
@@ -17,6 +17,7 @@ import {
 } from './get_schema';
 import type {OntologyDeps} from './ports';
 import {TemplateSeeder} from './support';
+import {setTemplate} from './set_template';
 
 /** The ontology use cases (same surface as the RPC contract). */
 export type OntologyHandlers = OntologyRpc;
@@ -24,7 +25,10 @@ export type OntologyHandlers = OntologyRpc;
 /** Creates the use-case handlers. */
 export function createOntologyHandlers(deps: OntologyDeps): OntologyHandlers {
   const seeder = new TemplateSeeder(deps.templates, deps.logger);
-  const seeded = () => seeder.ensure(DEFAULT_TEMPLATE);
+  // Seed every built-in template so setTemplate / getTemplateSeeds can find
+  // any of them (not only the default).
+  const seeded = () =>
+    Promise.all(BUILT_IN_TEMPLATES.map(t => seeder.ensure(t))).then(() => {});
   return {
     async getCompiledSchema(ctx: CallCtx) {
       await seeded();
@@ -53,6 +57,10 @@ export function createOntologyHandlers(deps: OntologyDeps): OntologyHandlers {
     async deleteDefinition(ctx, kind, id, ifMatch) {
       await seeded();
       return deleteDefinition(deps, ctx, kind, id, ifMatch);
+    },
+    async setTemplate(ctx, templateId) {
+      await seeded();
+      return setTemplate(deps, ctx, templateId);
     },
   };
 }

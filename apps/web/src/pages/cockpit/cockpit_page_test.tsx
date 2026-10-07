@@ -35,7 +35,7 @@ describe('CockpitPage', () => {
     expect(within(item).getByText(/置信度 0.78/)).toBeInTheDocument();
     expect(screen.getByRole('img', {name: /趋势/})).toBeInTheDocument();
     // no sample-data CTA when the workspace has objects
-    expect(screen.queryByRole('button', {name: '加载示例场景'})).toBeNull();
+    expect(screen.queryByRole('button', {name: '加载所选场景'})).toBeNull();
   });
 
   it('orders alerts by severity', async () => {
@@ -103,7 +103,7 @@ describe('CockpitPage', () => {
       emptyStats();
       renderWithProviders(<CockpitPage />, {url: '/cockpit'});
       await userEvent.click(
-        await screen.findByRole('button', {name: '加载示例场景'}),
+        await screen.findByRole('button', {name: '加载所选场景'}),
       );
       await waitFor(() => expect(businessDb.sampleLoaded).toBe(true));
       expect(
@@ -122,7 +122,7 @@ describe('CockpitPage', () => {
       );
       renderWithProviders(<CockpitPage />, {url: '/cockpit'});
       await userEvent.click(
-        await screen.findByRole('button', {name: '加载示例场景'}),
+        await screen.findByRole('button', {name: '加载所选场景'}),
       );
       expect(
         await screen.findByText(/今日示例场景名额已用完/),
@@ -135,7 +135,7 @@ describe('CockpitPage', () => {
       businessDb.sampleLoaded = true;
       renderWithProviders(<CockpitPage />, {url: '/cockpit'});
       await userEvent.click(
-        await screen.findByRole('button', {name: '加载示例场景'}),
+        await screen.findByRole('button', {name: '加载所选场景'}),
       );
       expect(await screen.findByText(/示例场景已加载过/)).toBeInTheDocument();
     });

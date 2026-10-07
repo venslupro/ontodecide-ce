@@ -52,10 +52,11 @@ export interface IntegrationRpc {
     input: MappingDraftInput,
   ): Promise<MappingDraft>;
   /**
-   * Loads the sample scenario once per workspace, within the global daily
-   * seed budget (QUOTA_EXCEEDED) — CONFLICT when already loaded.
+   * Loads a built-in example scenario once per workspace, within the global
+   * daily seed budget (QUOTA_EXCEEDED) — CONFLICT when already loaded. The
+   * workspace ontology is switched to the scenario's template first.
    */
-  loadSample(ctx: CallCtx): Promise<JobDto>;
+  loadSample(ctx: CallCtx, scenarioId: string): Promise<JobDto>;
   /** importRowsToday and mappingDraftsToday of the caller. */
   usage(ctx: CallCtx): Promise<QuotaItem[]>;
 }

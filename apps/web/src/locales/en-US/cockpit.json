@@ -67,8 +67,9 @@
   },
   "empty": {
     "title": "Your workspace has no data yet",
-    "description": "Load the “supply-chain risk” sample scenario ({objects} objects, {links} links) or import your own CSV / XLSX / JSON file.",
-    "loadSample": "Load sample scenario",
+    "description": "Pick an example scenario to explore right away, or import your own CSV / XLSX / JSON file.",
+    "loadSample": "Load selected scenario",
+    "selectScenario": "Choose a scenario…",
     "importFile": "Import a file",
     "loaded": "Loading the sample scenario",
     "budgetUsed": "Today's sample scenario budget is used up; resets {at}. You can still import a file.",

@@ -1,21 +1,19 @@
 /**
- * @fileoverview POST /workspace/sample-data: loads the built-in supply-chain
- * scenario (80 objects, 160 links) once per workspace, within the global
- * daily seed budget, through the same mapping + upsertBatch path as file
- * imports (a `sample` job, one batch per object type, ≤ 100 rows each).
+ * @fileoverview POST /workspace/sample-data: loads a built-in example
+ * scenario once per workspace, within the global daily seed budget, through
+ * the same mapping + upsertBatch path as file imports (a `sample` job, one
+ * batch per object type, ≤ 100 rows each). The caller picks a scenario id;
+ * the workspace ontology is switched to that scenario's template first, so
+ * the sample rows' object and link types exist. The system is not coupled to
+ * any scenario — any of the six built-in ones may be loaded, and users can
+ * still import their own CSV / XLSX / JSON data.
  */
 
 import {AppError, utcDay} from '@ontodecide/shared-kernel';
 import type {CallCtx} from '@ontodecide/shared-kernel';
-import {SUPPLY_CHAIN_TEMPLATE_ID} from '@ontodecide/ontology/contract';
 import type {CompiledSchema} from '@ontodecide/ontology/contract';
-import type {JobDto, MappingSpec} from '../contract';
-import {
-  SAMPLE_ROWS,
-  SAMPLE_SEED_ROWS,
-  sampleDatasets,
-  toJobDto,
-} from '../domain';
+import type {JobDto, MappingSpec, SampleScenario} from '../contract';
+import {getSampleScenario, toJobDto} from '../domain';
 import type {JobRecord} from '../domain';
 import {ingestBatch, MAX_BATCH_ROWS} from './batch_ingest';
 import type {IntegrationDeps, StoredBatch, UsageRef} from './ports';
@@ -42,11 +40,16 @@ function fitMapping(spec: MappingSpec, schema: CompiledSchema): MappingSpec {
   };
 }
 
-/** Loads the sample scenario; see the file overview. */
+/** Loads the sample scenario `scenarioId`; see the file overview. */
 export async function loadSample(
   deps: IntegrationDeps,
   ctx: CallCtx,
+  scenarioId: string,
 ): Promise<JobDto> {
+  const scenario: SampleScenario | null = getSampleScenario(scenarioId);
+  if (!scenario) {
+    throw new AppError('NOT_FOUND', `Unknown sample scenario: ${scenarioId}`);
+  }
   const marker = seedLoadedRef(ctx);
   if ((await deps.usage.read(marker)) > 0) {
     throw new AppError('CONFLICT', 'SAMPLE_ALREADY_LOADED');
@@ -56,26 +59,31 @@ export async function loadSample(
   if (
     !(await deps.usage.take(
       budget,
-      SAMPLE_SEED_ROWS,
+      scenario.seedRows,
       deps.config.seedRowsDaily,
     ))
   ) {
     throw new AppError('QUOTA_EXCEEDED', 'SEED_ROWS_DAILY');
   }
   if (!(await deps.usage.take(marker, 1, 1))) {
-    await deps.usage.adjust(budget, -SAMPLE_SEED_ROWS);
+    await deps.usage.adjust(budget, -scenario.seedRows);
     throw new AppError('CONFLICT', 'SAMPLE_ALREADY_LOADED');
   }
+
+  // Switch the workspace ontology to the scenario's template so the sample
+  // rows' types exist. The first call copies the template; subsequent calls
+  // overwrite the copy.
+  await deps.ontology.setTemplate(ctx, scenario.templateId);
 
   const nowMs = now.getTime();
   let job: JobRecord = {
     id: deps.newId(nowMs),
     kind: 'sample',
     fileName: null,
-    targetType: SUPPLY_CHAIN_TEMPLATE_ID,
+    targetType: scenario.templateId,
     mapping: null,
     status: 'RECEIVING',
-    totalRows: SAMPLE_ROWS,
+    totalRows: scenario.objects,
     received: 0,
     upserted: 0,
     skipped: 0,
@@ -87,7 +95,7 @@ export async function loadSample(
   try {
     await jobs.insert(job);
     const schema = await deps.ontology.getCompiledSchema(ctx);
-    const chunks = sampleDatasets().flatMap(d => {
+    const chunks = scenario.datasets().flatMap(d => {
       const out: {mapping: MappingSpec; rows: typeof d.rows}[] = [];
       for (let i = 0; i < d.rows.length; i += MAX_BATCH_ROWS) {
         out.push({
@@ -120,9 +128,10 @@ export async function loadSample(
     // Let the workspace retry: writes are idempotent upserts by key.
     await jobs.markFailed(job.id, deps.clock.now().getTime()).catch(() => {});
     await deps.usage.adjust(marker, -1);
-    await deps.usage.adjust(budget, -SAMPLE_SEED_ROWS);
+    await deps.usage.adjust(budget, -scenario.seedRows);
     deps.logger.warn('sample load failed', {
       tid: ctx.tid,
+      scenarioId,
       code: AppError.from(e).code,
     });
     throw e;

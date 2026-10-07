@@ -61,3 +61,6 @@ export const mappingDraftSchema = z.object({
   sampleRows: z.array(z.array(z.unknown())).max(20),
   targetType: apiName,
 });
+
+/** POST /workspace/sample-data scenario id. */
+export const scenarioIdSchema = z.string().min(1).max(100);
