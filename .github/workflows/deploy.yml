@@ -211,7 +211,6 @@ jobs:
       EMAIL_PEPPER: ${{ secrets.EMAIL_PEPPER }}
       EMAIL_ENC_KEY: ${{ secrets.EMAIL_ENC_KEY }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-      BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
       CF_ANALYTICS_TOKEN: ${{ secrets.CF_ANALYTICS_TOKEN }}
       BOOTSTRAP_ADMIN_SETUP_CODE: ${{ secrets.BOOTSTRAP_ADMIN_SETUP_CODE }}
       # TURNSTILE_SECRET and B2_* come from Terraform outputs (deploy-worker).
@@ -225,7 +224,7 @@ jobs:
           admin-email: ${{ needs.approve.outputs.admin-email }}
           secrets: >-
             JWT_SIGNING_KEY EMAIL_PEPPER EMAIL_ENC_KEY RESEND_API_KEY
-            BREVO_API_KEY TURNSTILE_SECRET B2_WRITE_KEY_ID B2_WRITE_APP_KEY
+            TURNSTILE_SECRET B2_WRITE_KEY_ID B2_WRITE_APP_KEY
             B2_SIGN_KEY_ID B2_SIGN_APP_KEY CF_ANALYTICS_TOKEN
             BOOTSTRAP_ADMIN_EMAIL BOOTSTRAP_ADMIN_SETUP_CODE
 

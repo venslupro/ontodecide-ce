@@ -1,8 +1,7 @@
 /**
- * @fileoverview EmailSender adapters: Resend (primary, REST with
- * Idempotency-Key), Brevo (fallback, REST with an idempotency header) and
+ * @fileoverview EmailSender adapters: Resend (REST with Idempotency-Key) and
  * the local `EMAIL_MODE=log` sender. Open and click tracking are disabled in
- * both provider accounts (links must not be rewritten); nothing here adds
+ * the Resend account (links must not be rewritten); nothing here adds
  * tracking.
  */
 
@@ -40,36 +39,6 @@ export class ResendSender implements EmailSender {
         subject: msg.subject,
         html: msg.html,
         text: msg.text,
-      }),
-    });
-    return {ok: res.ok, status: res.status};
-  }
-}
-
-/** Brevo transactional REST adapter. */
-export class BrevoSender implements EmailSender {
-  constructor(
-    private readonly apiKey: string,
-    private readonly from: string,
-    private readonly fetchFn: typeof fetch = fetch,
-  ) {}
-
-  async send(msg: EmailMessage, idempotencyKey: string): Promise<SendResult> {
-    const f = parseMailFrom(this.from);
-    const res = await this.fetchFn('https://api.brevo.com/v3/smtp/email', {
-      method: 'POST',
-      headers: {
-        'api-key': this.apiKey,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify({
-        sender: {name: f.name, email: f.email},
-        to: [{email: msg.to}],
-        subject: msg.subject,
-        htmlContent: msg.html,
-        textContent: msg.text,
-        headers: {idempotencyKey},
       }),
     });
     return {ok: res.ok, status: res.status};

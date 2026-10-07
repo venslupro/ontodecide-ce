@@ -137,7 +137,6 @@ export function overview(): PlatformOverview {
       {key: 'neurons', used: 5800, limit: 10000},
       {key: 'queues', used: 2130, limit: 10000},
       {key: 'emailResend', used: 84, limit: 100},
-      {key: 'emailBrevo', used: 9, limit: 300},
     ],
     analyticsAt: '2026-09-28T11:00:00.000Z',
     recentActions: [

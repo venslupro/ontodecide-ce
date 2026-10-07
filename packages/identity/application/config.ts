@@ -20,7 +20,6 @@ export interface IdentityConfig {
   adminSessionHours: number;
   resendDailyCap: number;
   resendMonthlyCap: number;
-  brevoDailyCap: number;
   archiveLinkTtlS: number;
   rpId: string;
   rpName: string;

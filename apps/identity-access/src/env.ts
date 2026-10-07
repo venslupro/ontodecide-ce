@@ -23,7 +23,7 @@ export interface Env {
   // Vars.
   APP_ORIGIN: string;
   MAIL_FROM: string;
-  /** `live` (Resend + Brevo) or `log` (local: redacted log line only). */
+  /** `live` (Resend) or `log` (local: redacted log line only). */
   EMAIL_MODE?: string;
   TRIAL_HOURS?: string;
   ARCHIVE_DAYS?: string;
@@ -34,7 +34,6 @@ export interface Env {
   ADMIN_SESSION_HOURS?: string;
   RESEND_DAILY_CAP?: string;
   RESEND_MONTHLY_CAP?: string;
-  BREVO_DAILY_CAP?: string;
   B2_ARCHIVE_BUCKET: string;
   B2_ENDPOINT: string;
   B2_REGION: string;
@@ -51,7 +50,6 @@ export interface Env {
   EMAIL_PEPPER: string;
   EMAIL_ENC_KEY: string;
   RESEND_API_KEY?: string;
-  BREVO_API_KEY?: string;
   TURNSTILE_SECRET: string;
   B2_WRITE_KEY_ID: string;
   B2_WRITE_APP_KEY: string;

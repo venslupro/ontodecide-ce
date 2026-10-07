@@ -32,8 +32,7 @@
     "d1Writes": "D1 行写入",
     "neurons": "Workers AI Neurons",
     "queues": "Queues 操作",
-    "emailResend": "邮件 · Resend",
-    "emailBrevo": "邮件 · Brevo（溢出）"
+    "emailResend": "邮件 · Resend"
   },
   "signup": {
     "title": "注册控制",

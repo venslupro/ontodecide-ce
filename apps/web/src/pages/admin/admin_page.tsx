@@ -1,6 +1,6 @@
 /**
  * @fileoverview /admin "平台概览" (效果图 c9, role admin only): KPI cards,
- * today's free-tier usage (Resend / Brevo included; ≥ 80% amber + text,
+ * today's free-tier usage (Resend included; ≥ 80% amber + text,
  * "80% 自动关闭注册"), sign-up controls (pause / resume, daily and active
  * limits with sliders; If-Match + passkey step-up), recent admin actions,
  * the workspace table, B2 archives, and the tools: blocked domains, audit

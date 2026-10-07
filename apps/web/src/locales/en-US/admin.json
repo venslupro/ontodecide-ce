@@ -32,8 +32,7 @@
     "d1Writes": "D1 rows written",
     "neurons": "Workers AI neurons",
     "queues": "Queue operations",
-    "emailResend": "E-mail · Resend",
-    "emailBrevo": "E-mail · Brevo (overflow)"
+    "emailResend": "E-mail · Resend"
   },
   "signup": {
     "title": "Sign-up control",

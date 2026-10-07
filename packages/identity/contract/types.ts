@@ -168,7 +168,7 @@ export interface ExportChunk {
 
 /** Free-tier resources shown on the platform overview. */
 export type FreeQuotaKey =
-  'workers' | 'd1Writes' | 'neurons' | 'queues' | 'emailResend' | 'emailBrevo';
+  'workers' | 'd1Writes' | 'neurons' | 'queues' | 'emailResend';
 
 /** GET /admin/overview. */
 export interface PlatformOverview {

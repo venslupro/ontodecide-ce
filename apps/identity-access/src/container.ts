@@ -1,7 +1,7 @@
 /**
  * @fileoverview Composition root of identity-access: parses the environment
- * and binds the modules to D1, B2, Resend / Brevo, Turnstile, WebAuthn and
- * the five TenantLifecycle bindings. Tests override adapters.
+ * and binds the modules to D1, B2, Resend, Turnstile, WebAuthn and the five
+ * TenantLifecycle bindings. Tests override adapters.
  */
 
 import type {IdentityRpc} from '@ontodecide/identity/contract';
@@ -16,7 +16,6 @@ import type {
 import {
   B2BlobStore,
   B2LinkSigner,
-  BrevoSender,
   CloudflareAnalytics,
   FakeLinkSigner,
   HttpTurnstileVerifier,
@@ -46,7 +45,7 @@ import type {Env} from './env';
 export interface Overrides {
   clock?: Clock;
   logger?: Logger;
-  /** Outbound fetch (Turnstile, Resend, Brevo, B2, Analytics). */
+  /** Outbound fetch (Turnstile, Resend, B2, Analytics). */
   fetch?: typeof fetch;
   blobs?: BlobStore;
   signer?: LinkSigner;
@@ -89,7 +88,6 @@ export function parseConfig(env: Env): IdentityConfig {
     ),
     resendDailyCap: int(env.RESEND_DAILY_CAP, 90),
     resendMonthlyCap: int(env.RESEND_MONTHLY_CAP, 2900),
-    brevoDailyCap: int(env.BREVO_DAILY_CAP, 280),
     archiveLinkTtlS: int(env.ARCHIVE_LINK_TTL_S, 604_800),
     rpId: env.WEBAUTHN_RP_ID,
     rpName: env.WEBAUTHN_RP_NAME ?? 'OntoDecide CE',
@@ -118,9 +116,6 @@ function mailSetup(
     mode: 'live',
     resend: env.RESEND_API_KEY
       ? new ResendSender(env.RESEND_API_KEY, cfg.mailFrom, f)
-      : null,
-    brevo: env.BREVO_API_KEY
-      ? new BrevoSender(env.BREVO_API_KEY, cfg.mailFrom, f)
       : null,
   };
 }

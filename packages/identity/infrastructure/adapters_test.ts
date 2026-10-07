@@ -1,6 +1,6 @@
 /**
  * @fileoverview Contract tests of the external adapters against FetchMock:
- * B2 (S3 API + presign), Turnstile, Resend, Brevo, the log sender and
+ * B2 (S3 API + presign), Turnstile, Resend, the log sender and
  * GraphQL Analytics.
  */
 
@@ -11,7 +11,6 @@ import type {EmailMessage} from '../application';
 import {B2BlobStore, B2LinkSigner} from './b2_blob_store';
 import {CloudflareAnalytics} from './cf_analytics';
 import {
-  BrevoSender,
   LogEmailSender,
   ResendSender,
   parseMailFrom,
@@ -155,26 +154,12 @@ describe('mail providers', () => {
     );
   });
 
-  it('Brevo sends sender, content and the idempotency header', async () => {
-    const f = new FetchMock(() =>
-      Response.json({messageId: 'x'}, {status: 201}),
-    );
-    const r = await new BrevoSender('bk', 'noreply@mail.test', f.fetch).send(
-      msg,
-      'archive:t',
-    );
-    expect(r.ok).toBe(true);
-    expect(f.calls[0].headers['api-key']).toBe('bk');
-    const body = JSON.parse(f.calls[0].body);
-    expect(body).toMatchObject({
-      sender: {email: 'noreply@mail.test'},
-      to: [{email: 'user@example.com'}],
-      headers: {idempotencyKey: 'archive:t'},
-    });
+  it('parseMailFrom handles name-addr and bare address forms', async () => {
     expect(parseMailFrom('Name <a@b.c>')).toEqual({
       name: 'Name',
       email: 'a@b.c',
     });
+    expect(parseMailFrom('a@b.c')).toEqual({name: 'OntoDecide', email: 'a@b.c'});
   });
 
   it('the log sender writes one redacted line', async () => {

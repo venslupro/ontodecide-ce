@@ -1,9 +1,8 @@
 /**
  * @fileoverview E-mail channel routing rules (修订说明书 4.3, 详细设计
- * 6.11.6): Resend first (≤ 90 / day, ≤ 2,900 / month), Brevo fallback
- * (≤ 280 / day). Switch only on 429 / 5xx or an exhausted cap; other 4xx are
- * request errors. Codes have priority: other mail yields when a channel has
- * fewer than 15 sends left.
+ * 6.11.6): Resend (≤ 90 / day, ≤ 2,900 / month). A failed send is refunded
+ * only on 429 / 5xx or an exhausted cap; other 4xx are request errors. Codes
+ * have priority: other mail yields when fewer than 15 sends are left.
  */
 
 /** Mail priority. */
@@ -13,7 +12,7 @@ export type MailPriority = 'otp' | 'normal';
 export const OTP_RESERVE = 15;
 
 /** Channel names. */
-export type ChannelName = 'resend' | 'brevo';
+export type ChannelName = 'resend';
 
 /** Caps of a channel. */
 export interface ChannelCaps {
@@ -32,7 +31,7 @@ export function shouldSwitch(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
-/** usage_counter keys: the daily key and (for Resend) the monthly key. */
+/** usage_counter keys: the daily key and the monthly key. */
 export function channelKeys(
   name: ChannelName,
   now: Date,

@@ -17,8 +17,8 @@ this guide disagree, fix one of them in the same change.
   exported to one ZIP in B2, a 7-day presigned download link is e-mailed, and
   the business data and account (including the e-mail) are deleted at once.
   The ZIP is deleted after 7 days.
-* Everything runs on free tiers (Cloudflare Free, Backblaze B2, Resend with
-  Brevo fallback, Workers AI). The only paid item is the domain.
+* Everything runs on free tiers (Cloudflare Free, Backblaze B2, Resend,
+  Workers AI). The only paid item is the domain.
 
 ## 2. Deployment units
 
@@ -97,7 +97,7 @@ the five; api-gateway after all six; Pages last.
 | situation-awareness | `SITUATION_ROOM` (DO), `OBJECTS`, `ONTOLOGY`; consumer of `domain-events` | `APP_ORIGIN` | — |
 | decision-engine | `DECISION_DB`, `OBJECTS`, `SITUATION`, `ONTOLOGY`, `AI` | `AI_MODEL`, `AI_FALLBACK_MODEL`, `REC_AI_USER_DAILY_LIMIT`=3, `NEURONS_DAILY_BUDGET`=6500, `NEURONS_RESERVE_FACTOR`=1.3, `REC_EXPIRE_HOURS`=24 | — |
 | data-integration | `INTEGRATION_DB`, `ONTOLOGY`, `OBJECTS`, `AI` | `AI_MODEL`, `NEURONS_DAILY_BUDGET`=1500, `IMPORT_ROWS_DAILY`=2000, `SEED_ROWS_DAILY`=20000, `MAPPING_AI_DAILY`=2 | — |
-| identity-access | `IDENTITY_DB`, `LC_*` | `APP_ORIGIN`, `MAIL_FROM`, `EMAIL_MODE` (`live`\|`log`), `TRIAL_HOURS`=72, `ARCHIVE_DAYS`=7, `ARCHIVE_DELAY_MIN`=16, `PURGE_BACKLOG_LIMIT`=10, `PURGE_ROWS_DAILY`=30000, `MAX_SESSIONS`=3, `ADMIN_SESSION_HOURS`=8, `RESEND_DAILY_CAP`=90, `RESEND_MONTHLY_CAP`=2900, `BREVO_DAILY_CAP`=280, `B2_ARCHIVE_BUCKET`, `B2_ENDPOINT`, `B2_REGION`, `ARCHIVE_LINK_TTL_S`=604800, `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME`, `CF_ACCOUNT_ID`, `ENVIRONMENT`, `APP_VERSION` | `JWT_SIGNING_KEY` (Ed25519 private JWK with kid), `EMAIL_PEPPER`, `EMAIL_ENC_KEY`, `RESEND_API_KEY`, `BREVO_API_KEY`, `TURNSTILE_SECRET`, `B2_WRITE_KEY_ID`, `B2_WRITE_APP_KEY`, `B2_SIGN_KEY_ID`, `B2_SIGN_APP_KEY`, `CF_ANALYTICS_TOKEN` (optional), `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_SETUP_CODE` |
+| identity-access | `IDENTITY_DB`, `LC_*` | `APP_ORIGIN`, `MAIL_FROM`, `EMAIL_MODE` (`live`\|`log`), `TRIAL_HOURS`=72, `ARCHIVE_DAYS`=7, `ARCHIVE_DELAY_MIN`=16, `PURGE_BACKLOG_LIMIT`=10, `PURGE_ROWS_DAILY`=30000, `MAX_SESSIONS`=3, `ADMIN_SESSION_HOURS`=8, `RESEND_DAILY_CAP`=90, `RESEND_MONTHLY_CAP`=2900, `B2_ARCHIVE_BUCKET`, `B2_ENDPOINT`, `B2_REGION`, `ARCHIVE_LINK_TTL_S`=604800, `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME`, `CF_ACCOUNT_ID`, `ENVIRONMENT`, `APP_VERSION` | `JWT_SIGNING_KEY` (Ed25519 private JWK with kid), `EMAIL_PEPPER`, `EMAIL_ENC_KEY`, `RESEND_API_KEY`, `TURNSTILE_SECRET`, `B2_WRITE_KEY_ID`, `B2_WRITE_APP_KEY`, `B2_SIGN_KEY_ID`, `B2_SIGN_APP_KEY`, `CF_ANALYTICS_TOKEN` (optional), `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_SETUP_CODE` |
 | api-gateway | the six services, `RL_USER_READ` (120/60 s), `RL_USER_WRITE` (30/60 s), `RL_EMAIL` (5/60 s), `RL_IP_AUTH` (10/60 s) | `APP_ORIGIN`, `JWT_PUBLIC_KEYS` (JWK set, rendered from the signing key(s)), `MAX_BODY_BYTES`=524288, `ACT_AS_CACHE_S`=60, `ENVIRONMENT`, `APP_VERSION` | — |
 
 Crons (2 in total): identity-access `*/2 * * * *` (reminders, expiry, one

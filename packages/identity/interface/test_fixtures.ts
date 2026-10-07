@@ -199,7 +199,6 @@ export interface Harness {
   rpc: IdentityRpc;
   blobs: InMemoryBlobStore;
   resend: FakeEmailSender;
-  brevo: FakeEmailSender;
   lifecycles: FakeLifecycles;
   logger: CaptureLogger;
 }
@@ -231,7 +230,6 @@ export async function createHarness(
     adminSessionHours: 8,
     resendDailyCap: 90,
     resendMonthlyCap: 2900,
-    brevoDailyCap: 280,
     archiveLinkTtlS: 604_800,
     rpId: 'app.test',
     rpName: 'OntoDecide CE',
@@ -244,7 +242,6 @@ export async function createHarness(
   };
   const blobs = new InMemoryBlobStore();
   const resend = new FakeEmailSender('resend');
-  const brevo = new FakeEmailSender('brevo');
   const lifecycles = fakeLifecycles();
   const logger = new CaptureLogger();
   const services = composeIdentity({
@@ -257,7 +254,7 @@ export async function createHarness(
     signer: new FakeLinkSigner(),
     webauthn: new FakeWebAuthn(),
     turnstile: new FakeTurnstile(),
-    mail: mail ?? {mode: 'live', resend, brevo},
+    mail: mail ?? {mode: 'live', resend},
     analytics: extras.analytics ?? null,
   });
   return {
@@ -268,15 +265,14 @@ export async function createHarness(
     rpc: createIdentityRpc(services),
     blobs,
     resend,
-    brevo,
     lifecycles,
     logger,
   };
 }
 
-/** All mails captured by both providers, oldest first. */
+/** All mails captured by the provider, oldest first. */
 export function allMail(h: Harness): SentMail[] {
-  return [...h.resend.sent, ...h.brevo.sent];
+  return [...h.resend.sent];
 }
 
 /** The last 6-digit code mailed to an address. */
