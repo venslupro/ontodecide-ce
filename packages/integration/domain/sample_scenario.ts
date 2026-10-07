@@ -12,15 +12,10 @@
  * test) so the manual import demo produces the same graph.
  */
 
-import type {MappingSpec, Row} from '../contract';
+import type {Row, SampleDataset} from '../contract';
 
 /** One sample dataset: rows of one object type and their mapping. */
-export interface SampleDataset {
-  /** CSV file name under samples/supply-chain. */
-  file: string;
-  mapping: MappingSpec;
-  rows: Row[];
-}
+// SampleDataset is imported from '../contract'.
 
 const PRODUCT_NAMES = [
   'Edge Gateway X1',

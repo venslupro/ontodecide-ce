@@ -111,11 +111,16 @@ export function useAckAlert() {
   });
 }
 
-/** Loads the sample scenario (80 objects / 160 links) once per workspace. */
+/**
+ * Loads a built-in example scenario once per workspace. Pass a scenario id
+ * (e.g. `'supply-chain'`, `'urban-emergency'`); the workspace ontology is
+ * switched to that scenario's template first.
+ */
 export function useLoadSample() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<JobDto>('/workspace/sample-data', undefined),
+    mutationFn: (scenarioId: string) =>
+      api.post<JobDto>('/workspace/sample-data', {scenarioId}),
     onSettled: (_job, err) => {
       // Success, or CONFLICT (already loaded): the workspace has data now.
       if (err && !isApiError(err, 'CONFLICT')) return;

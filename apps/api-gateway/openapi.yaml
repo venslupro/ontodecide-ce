@@ -311,8 +311,26 @@ paths:
     post:
       tags: [workspace]
       operationId: loadSampleData
-      summary: Load the sample scenario (80 objects, 160 links) once
+      summary: Load a built-in example scenario once per workspace
+      description: |
+        Selects one of the built-in example scenarios (supply-chain,
+        urban-emergency, predictive-maintenance, financial-fraud,
+        energy-grid, intelligence-fusion), switches the workspace ontology
+        to that scenario's template, and loads its sample data. Runs once
+        per workspace within the global daily seed budget. The system is
+        not coupled to any scenario — users may also import their own data.
       parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scenarioId:
+                  type: string
+                  description: Scenario to load; defaults to supply-chain.
+                  example: supply-chain
       responses:
         '202':
           description: Sample job

@@ -8,7 +8,7 @@ import {AppError, FixedClock, silentLogger} from '@ontodecide/shared-kernel';
 import {writeTombstone} from '@ontodecide/shared-kernel/d1';
 import {createTestD1, TEST_TID, testCtx} from '@ontodecide/testing';
 import {beforeEach, describe, expect, it} from 'vitest';
-import {SUPPLY_CHAIN_TEMPLATE_ID} from '../contract';
+import {BUILT_IN_TEMPLATE_IDS, SUPPLY_CHAIN_TEMPLATE_ID} from '../contract';
 import type {LinkTypeDef, ObjectTypeDef} from '../contract';
 import {
   SUPPLY_CHAIN_DEFINITION,
@@ -91,22 +91,24 @@ describe('ontology use cases', () => {
     await h.getOntology(ctx);
     const rows = (
       await db
-        .prepare('SELECT * FROM ont_template')
+        .prepare('SELECT * FROM ont_template ORDER BY template_id')
         .all<Record<string, string>>()
     ).results;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
+    // All built-in templates are seeded (not only the default).
+    expect(rows).toHaveLength(BUILT_IN_TEMPLATE_IDS.length);
+    const sc = rows.find(r => r.template_id === SUPPLY_CHAIN_TEMPLATE_ID)!;
+    expect(sc).toMatchObject({
       template_id: SUPPLY_CHAIN_TEMPLATE_ID,
       version: SUPPLY_CHAIN_TEMPLATE_VERSION,
     });
-    expect(JSON.parse(rows[0].definition)).toEqual(SUPPLY_CHAIN_DEFINITION);
-    expect(
-      JSON.parse(rows[0].compiled).objectTypes.Supplier.indexedProps,
-    ).toContain('riskScore');
-    expect(JSON.parse(rows[0].kpi_seed).length).toBeGreaterThanOrEqual(3);
-    expect(JSON.parse(rows[0].automation_seed).length).toBe(2);
+    expect(JSON.parse(sc.definition)).toEqual(SUPPLY_CHAIN_DEFINITION);
+    expect(JSON.parse(sc.compiled).objectTypes.Supplier.indexedProps).toContain(
+      'riskScore',
+    );
+    expect(JSON.parse(sc.kpi_seed).length).toBeGreaterThanOrEqual(3);
+    expect(JSON.parse(sc.automation_seed).length).toBe(2);
 
-    // A second isolate seeding the same template is a no-op.
+    // A second isolate seeding the same templates is a no-op.
     const again = createOntologyHandlers({
       schemas: tid => new D1WorkspaceSchemaRepository(db, tid),
       templates: new D1TemplateRepository(db),
@@ -118,7 +120,7 @@ describe('ontology use cases', () => {
     const n = await db
       .prepare('SELECT COUNT(*) AS n FROM ont_template')
       .first('n');
-    expect(n).toBe(1);
+    expect(n).toBe(BUILT_IN_TEMPLATE_IDS.length);
   });
 
   it('serves the shared template until the first change', async () => {

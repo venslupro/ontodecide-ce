@@ -51,7 +51,7 @@ describe('data-integration service', () => {
     const e = env({IMPORT_ROWS_DAILY: '100'});
     const svc = createService(e, {clock});
     const ctx = testCtx();
-    const sample = await svc.rpc.loadSample(ctx);
+    const sample = await svc.rpc.loadSample(ctx, 'supply-chain');
     expect(sample.status).toBe('DONE');
     expect(e.graph.links.get(ctx.tid)!.size).toBe(160);
     try {

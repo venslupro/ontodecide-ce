@@ -7,4 +7,5 @@ export * from './job';
 export * from './mapping';
 export * from './matching';
 export * from './sample_scenario';
+export * from './scenarios';
 export * from './transforms';

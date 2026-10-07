@@ -1,13 +1,15 @@
 /**
- * @fileoverview Empty-workspace hero: 「加载示例场景」 (POST
- * /workspace/sample-data: 80 objects / 160 links, once per workspace, within
- * a global daily seed budget) and 「导入文件」. QUOTA_EXCEEDED (budget used
- * up today) and CONFLICT (already loaded) are shown inline.
+ * @fileoverview Empty-workspace hero: pick one of the built-in example
+ * scenarios (POST /workspace/sample-data, once per workspace, within a
+ * global daily seed budget) or import a file. QUOTA_EXCEEDED (budget used
+ * up today) and CONFLICT (already loaded) are shown inline. The system is
+ * not coupled to any scenario — the list comes from the contract.
  */
 
-import {SAMPLE_SCENARIO} from '@ontodecide/integration/contract';
+import {BUILT_IN_SCENARIOS} from '@ontodecide/integration/contract';
 import {useNavigate} from '@tanstack/react-router';
 import {Clock, Database, Upload} from 'lucide-react';
+import {useMemo, useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {errorMessage} from '../../../shared/api/error_message';
 import {isApiError} from '../../../shared/api/errors';
@@ -24,6 +26,14 @@ export function EmptyWorkspace() {
   const load = useLoadSample();
   const {quotas, timeZone} = useQuotas();
   const err = load.error;
+  const [scenarioId, setScenarioId] = useState(BUILT_IN_SCENARIOS[0]!.id);
+  const lang = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
+  const selected = useMemo(
+    () =>
+      BUILT_IN_SCENARIOS.find(s => s.id === scenarioId) ??
+      BUILT_IN_SCENARIOS[0],
+    [scenarioId],
+  );
   return (
     <section
       className="glass flex flex-col items-center gap-4 px-6 py-12 text-center"
@@ -35,19 +45,35 @@ export function EmptyWorkspace() {
       <h2 id="empty-ws-title" className="text-lg font-semibold text-text">
         {t('empty.title')}
       </h2>
-      <p className="max-w-xl text-sm text-muted">
-        {t('empty.description', {
-          objects: SAMPLE_SCENARIO.objects,
-          links: SAMPLE_SCENARIO.links,
-        })}
-      </p>
+      <p className="max-w-xl text-sm text-muted">{t('empty.description')}</p>
+      <div className="flex w-full max-w-md flex-col gap-2">
+        <label className="sr-only" htmlFor="scenario-select">
+          {t('empty.selectScenario')}
+        </label>
+        <select
+          id="scenario-select"
+          value={scenarioId}
+          onChange={e => setScenarioId(e.target.value)}
+          className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm text-text"
+        >
+          {BUILT_IN_SCENARIOS.map(s => (
+            <option key={s.id} value={s.id}>
+              {s.name[lang]}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-muted">
+          {selected.description[lang]} · {selected.objects} objects /{' '}
+          {selected.links} links
+        </p>
+      </div>
       <div className="flex flex-wrap justify-center gap-2">
         <Button
           variant="primary"
           size="lg"
           loading={load.isPending}
           onClick={() =>
-            load.mutate(undefined, {
+            load.mutate(scenarioId, {
               onSuccess: () => toast.success(t('empty.loaded')),
             })
           }

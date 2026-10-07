@@ -10,6 +10,7 @@ import {
   createImportSchema,
   mappingDraftSchema,
   mappingSpecSchema,
+  scenarioIdSchema,
 } from '../contract';
 import type {IntegrationRpc, MappingSpec} from '../contract';
 import {
@@ -60,7 +61,8 @@ export function createIntegrationRpc(deps: IntegrationDeps): IntegrationRpc {
         parseOrThrow(jobIdSchema, jobId),
         parseOrThrow(mappingDraftSchema, input),
       ),
-    loadSample: ctx => loadSample(deps, ctx),
+    loadSample: (ctx, scenarioId) =>
+      loadSample(deps, ctx, parseOrThrow(scenarioIdSchema, scenarioId)),
     usage: ctx => usage(deps, ctx),
   };
 }

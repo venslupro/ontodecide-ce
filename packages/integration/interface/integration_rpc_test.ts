@@ -697,7 +697,7 @@ describe('IntegrationRpc', () => {
 
   describe('loadSample', () => {
     it('writes 80 objects and 160 links once per workspace', async () => {
-      const job = await rpc.loadSample(ctx);
+      const job = await rpc.loadSample(ctx, 'supply-chain');
       expect(job).toMatchObject({
         kind: 'sample',
         status: 'DONE',
@@ -710,28 +710,36 @@ describe('IntegrationRpc', () => {
       expect(deps.objects.links.get(TEST_TID)!.size).toBe(160);
       expect(deps.objects.calls.every(c => c.cmds.length <= 100)).toBe(true);
       expect(deps.objects.calls.every(c => c.jobId === job.id)).toBe(true);
-      expect(await code(rpc.loadSample(ctx))).toBe('CONFLICT');
+      expect(await code(rpc.loadSample(ctx, 'supply-chain'))).toBe('CONFLICT');
       expect((await rpc.listImports(ctx, {})).items[0].id).toBe(job.id);
     });
 
     it('respects the global daily seed budget', async () => {
       // Room for exactly two sample loads today.
       wire({config: {seedRowsDaily: 2 * SAMPLE_SEED_ROWS + 100}});
-      await rpc.loadSample(ctx);
-      await rpc.loadSample(testCtx({tid: OTHER_TID}));
+      await rpc.loadSample(ctx, 'supply-chain');
+      await rpc.loadSample(testCtx({tid: OTHER_TID}), 'supply-chain');
       expect(
         await code(
-          rpc.loadSample(testCtx({tid: '01K6A000000000000000000T03'})),
+          rpc.loadSample(
+            testCtx({tid: '01K6A000000000000000000T03'}),
+            'supply-chain',
+          ),
         ),
       ).toBe('QUOTA_EXCEEDED');
       deps.clock.advance(24 * 60 * MINUTE_MS);
-      await rpc.loadSample(testCtx({tid: '01K6A000000000000000000T03'}));
+      await rpc.loadSample(
+        testCtx({tid: '01K6A000000000000000000T03'}),
+        'supply-chain',
+      );
     });
 
     it('can be retried after a write failure', async () => {
       deps.objects.failNext = new AppError('UNAVAILABLE');
-      expect(await code(rpc.loadSample(ctx))).toBe('UNAVAILABLE');
-      const job = await rpc.loadSample(ctx);
+      expect(await code(rpc.loadSample(ctx, 'supply-chain'))).toBe(
+        'UNAVAILABLE',
+      );
+      const job = await rpc.loadSample(ctx, 'supply-chain');
       expect(job.status).toBe('DONE');
       const jobs = (await rpc.listImports(ctx, {})).items.map(j => j.status);
       expect(jobs.sort()).toEqual(['DONE', 'FAILED']);

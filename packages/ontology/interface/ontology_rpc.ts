@@ -47,5 +47,7 @@ export function createOntologyRpc(
       guard(logger, 'deleteDefinition', () =>
         h.deleteDefinition(ctx, kind, id, ifMatch),
       ),
+    setTemplate: (ctx, templateId) =>
+      guard(logger, 'setTemplate', () => h.setTemplate(ctx, templateId)),
   };
 }

@@ -19,7 +19,7 @@ async function seeded() {
   const rpc = rpcBinding(createIntegrationRpc(deps));
   for (const tid of [TEST_TID, OTHER_TID]) {
     const ctx = testCtx({tid});
-    await rpc.loadSample(ctx);
+    await rpc.loadSample(ctx, 'supply-chain');
     const job = await rpc.createImport(ctx, {
       fileName: 'p.csv',
       targetType: 'Product',

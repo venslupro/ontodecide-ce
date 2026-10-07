@@ -8,4 +8,5 @@ export * from './get_schema';
 export * from './handlers';
 export * from './lifecycle';
 export * from './ports';
+export * from './set_template';
 export * from './support';

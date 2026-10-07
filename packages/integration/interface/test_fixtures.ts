@@ -127,8 +127,13 @@ export class FakeObjectGraph implements Pick<
 /** Fake ontology returning a fixed compiled schema. */
 export function fakeOntology(
   schema: CompiledSchema = supplyChainSchema(),
-): Pick<OntologyRpc, 'getCompiledSchema'> {
-  return {getCompiledSchema: async () => structuredClone(schema)};
+): Pick<OntologyRpc, 'getCompiledSchema' | 'setTemplate'> {
+  return {
+    getCompiledSchema: async () => structuredClone(schema),
+    // The fake always serves the supply-chain schema; setTemplate is a no-op
+    // for tests that load the supply-chain scenario.
+    setTemplate: async () => ({etag: 1}),
+  };
 }
 
 /** Test dependencies over a migrated test D1. */

@@ -65,4 +65,10 @@ export interface OntologyRpc {
     id: string,
     ifMatch: number,
   ): Promise<{etag: number}>;
+  /**
+   * Replaces the workspace ontology with a built-in template (used when
+   * loading an example scenario). The first call copies the template;
+   * subsequent calls overwrite the copy. Returns the new etag.
+   */
+  setTemplate(ctx: CallCtx, templateId: string): Promise<{etag: number}>;
 }
