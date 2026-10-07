@@ -64,18 +64,44 @@ const TRANSIENT = new Set([
 ]);
 const RETRY_DELAYS_S = [2, 5, 10, 20, 30];
 
+/** Markers that identify a Cloudflare edge error page (Error 1xxx):
+ *  DNS resolution (1001), SSL handshake (1020), worker limit (1023), etc.
+ *  These pages are served with an arbitrary status (409, 530, …) right
+ *  after a custom domain is (re)attached; the routing is not ready
+ *  everywhere instantly and should be retried. */
+const CF_EDGE_ERROR =
+  /DNS resolution error|cf-error-details|Cloudflare Ray ID|Error 1\d{3}/i;
+
+/** Peeks at the body without consuming the stream; true if this is a
+ *  Cloudflare edge error page (transient, worth retrying). */
+async function isCloudflareEdgeError(res) {
+  const ct = res.headers.get('content-type') ?? '';
+  if (!ct.includes('text/html')) return false;
+  try {
+    const text = await res.clone().text();
+    return CF_EDGE_ERROR.test(text);
+  } catch {
+    return false;
+  }
+}
+
 /** fetch() that retries transient edge errors (see the file comment).
- *  Also retries network-level failures (DNS, connection reset, TLS) which
- *  happen right after a custom domain is (re)attached: Cloudflare's edge
- *  routing for the new hostname is not ready everywhere instantly. */
+ *  Also retries network-level failures (DNS, connection reset, TLS) and
+ *  Cloudflare edge error pages (Error 1xxx) which happen right after a
+ *  custom domain is (re)attached: Cloudflare's edge routing for the new
+ *  hostname is not ready everywhere instantly. */
 async function fetchRetry(url, init) {
   for (let attempt = 0; ; attempt++) {
     const delay = RETRY_DELAYS_S[attempt];
     try {
       const res = await fetch(url, init);
-      if (!TRANSIENT.has(res.status) || delay === undefined) return res;
+      const cfError = await isCloudflareEdgeError(res);
+      if ((!TRANSIENT.has(res.status) && !cfError) || delay === undefined)
+        return res;
       await res.body?.cancel();
-      console.log(`  … ${res.status} from ${url}, retrying in ${delay}s`);
+      console.log(
+        `  … ${res.status}${cfError ? ' (Cloudflare edge)' : ''} from ${url}, retrying in ${delay}s`,
+      );
     } catch (e) {
       if (delay === undefined) throw e;
       console.log(`  … ${e.message} from ${url}, retrying in ${delay}s`);
