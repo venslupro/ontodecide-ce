@@ -88,6 +88,7 @@ export function createContainer(
     usage: new D1UsageRepository(db),
     ontology: env.ONTOLOGY,
     objects: env.OBJECTS,
+    situation: env.SITUATION,
     ai,
     clock,
     logger,

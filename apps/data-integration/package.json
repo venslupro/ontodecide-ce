@@ -12,6 +12,7 @@
     "@ontodecide/integration": "workspace:*",
     "@ontodecide/ontology": "workspace:*",
     "@ontodecide/object-graph": "workspace:*",
+    "@ontodecide/situation": "workspace:*",
     "zod": "^4.1.12"
   },
   "devDependencies": {

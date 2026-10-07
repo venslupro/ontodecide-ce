@@ -67,8 +67,8 @@ describe('TenantLifecycle', () => {
   it('purges in bounded steps, then writes the tombstone', async () => {
     const {db, lc} = await seeded();
     const before = await lc.countTenant(TEST_TID);
-    // jobs 2, batches 3 + 1, rejects 1, mapping 1, usage import_rows + seed_loaded.
-    expect(before).toBe(10);
+    // jobs 2, batches 3 + 1, rejects 1, mapping 1, usage import_rows.
+    expect(before).toBe(9);
     let deleted = 0;
     let steps = 0;
     for (;;) {
@@ -80,7 +80,7 @@ describe('TenantLifecycle', () => {
       expect(await hasTombstone(db, TEST_TID)).toBe(false);
     }
     expect(deleted).toBe(before);
-    expect(steps).toBeGreaterThanOrEqual(4);
+    expect(steps).toBeGreaterThanOrEqual(3);
     expect(await lc.countTenant(TEST_TID)).toBe(0);
     expect(await hasTombstone(db, TEST_TID)).toBe(true);
     // Other workspaces and service-wide budgets are untouched.

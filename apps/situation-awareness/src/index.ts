@@ -67,6 +67,9 @@ export class SituationRpc extends WorkerEntrypoint<Env> implements Contract {
   pushRecommendation(...a: Parameters<Contract['pushRecommendation']>) {
     return svc(this.env).rpc.pushRecommendation(...a);
   }
+  resetForTemplate(...a: Parameters<Contract['resetForTemplate']>) {
+    return svc(this.env).rpc.resetForTemplate(...a);
+  }
 }
 
 /** Lifecycle entrypoint, bound only to identity-access. */
@@ -137,6 +140,9 @@ export class SituationRoom
   }
   pushRecommendation(...a: Parameters<SituationRoomApi['pushRecommendation']>) {
     return this.core.pushRecommendation(...a);
+  }
+  resetForTemplate(...a: Parameters<SituationRoomApi['resetForTemplate']>) {
+    return this.core.resetForTemplate(...a);
   }
   applyEvents(tid: string, events: DomainEventMsg[]) {
     return this.core.applyEvents(tid, events);

@@ -4,6 +4,7 @@
 
 import type {ObjectGraphRpc} from '@ontodecide/object-graph/contract';
 import type {OntologyRpc} from '@ontodecide/ontology/contract';
+import type {SituationRpc} from '@ontodecide/situation/contract';
 
 /** data-integration environment. */
 export interface Env {
@@ -12,6 +13,8 @@ export interface Env {
   ONTOLOGY: OntologyRpc;
   /** Service binding → object-graph / ObjectGraphRpc. */
   OBJECTS: ObjectGraphRpc;
+  /** Service binding → situation-awareness / SituationRpc. */
+  SITUATION: SituationRpc;
   /** Workers AI; absent locally, then mapping drafts use rules only. */
   AI?: Ai;
   /** Default `@cf/qwen/qwen3-30b-a3b-fp8`. */

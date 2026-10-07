@@ -48,7 +48,8 @@ describe('core loop', () => {
     expect(empty.body.initialized).toBe(true);
     expect(empty.body.kpis.length).toBeGreaterThan(0);
 
-    // Sample scenario: 80 objects / 160 links, once per workspace.
+    // Sample scenario: 80 objects / 160 links. Reloading is allowed (users
+    // may switch scenarios); upserts are keyed so the data stays idempotent.
     const sample = await sys.api('POST', '/workspace/sample-data', {
       token: owner.token,
     });
@@ -58,8 +59,7 @@ describe('core loop', () => {
       '/workspace/sample-data',
       {token: owner.token},
     );
-    expect(again.status).toBe(409);
-    expect(again.body.code).toBe('CONFLICT');
+    expect(again.status).toBe(202);
     expect(await rowsOf(sys.dbs.objects, 'og_object', owner.tid)).toBe(80);
     expect(await rowsOf(sys.dbs.objects, 'og_link', owner.tid)).toBe(160);
 

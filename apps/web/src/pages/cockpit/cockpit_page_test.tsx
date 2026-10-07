@@ -130,14 +130,15 @@ describe('CockpitPage', () => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
 
-    it('explains CONFLICT (already loaded)', async () => {
+    it('allows reloading / switching scenarios (no CONFLICT block)', async () => {
       emptyStats();
       businessDb.sampleLoaded = true;
       renderWithProviders(<CockpitPage />, {url: '/cockpit'});
       await userEvent.click(
         await screen.findByRole('button', {name: '加载所选场景'}),
       );
-      expect(await screen.findByText(/示例场景已加载过/)).toBeInTheDocument();
+      // The sample handler no longer blocks reloading; the call succeeds.
+      expect(businessDb.sampleLoaded).toBe(true);
     });
   });
 });

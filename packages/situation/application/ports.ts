@@ -116,6 +116,7 @@ export interface RoomStore {
     ord: number,
   ): void;
   saveKpiState(id: string, state: KpiState, now: number): void;
+  deleteKpi(id: string): void;
 
   lastPoint(metric: string): PointRecord | null;
   pointAtOrBefore(metric: string, ts: number): PointRecord | null;
@@ -240,6 +241,8 @@ export interface SituationRoomApi {
   deleteAutomation(ctx: CallCtx, id: string, ifMatch: number): Promise<void>;
   issueStreamTicket(ctx: CallCtx): Promise<StreamTicket>;
   pushRecommendation(ctx: CallCtx, rec: RecommendationSummary): Promise<void>;
+  /** Reloads KPIs and sample automations after a template switch. */
+  resetForTemplate(ctx: CallCtx): Promise<void>;
   applyEvents(
     tid: string,
     events: DomainEventMsg[],

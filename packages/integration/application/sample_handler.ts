@@ -1,12 +1,15 @@
 /**
  * @fileoverview POST /workspace/sample-data: loads a built-in example
- * scenario once per workspace, within the global daily seed budget, through
- * the same mapping + upsertBatch path as file imports (a `sample` job, one
- * batch per object type, ≤ 100 rows each). The caller picks a scenario id;
- * the workspace ontology is switched to that scenario's template first, so
- * the sample rows' object and link types exist. The system is not coupled to
- * any scenario — any of the six built-in ones may be loaded, and users can
- * still import their own CSV / XLSX / JSON data.
+ * scenario, within the global daily seed budget, through the same mapping +
+ * upsertBatch path as file imports (a `sample` job, one batch per object
+ * type, ≤ 100 rows each). The caller picks a scenario id; the workspace
+ * ontology is switched to that scenario's template first, so the sample
+ * rows' object and link types exist. The system is not coupled to any
+ * scenario — any of the built-in ones may be loaded, and users can still
+ * import their own CSV / XLSX / JSON data. Loading is not restricted to
+ * once per workspace: users may switch scenarios or reload (upserts are
+ * keyed, so reloading the same scenario is idempotent); only the daily
+ * seed-row budget limits usage.
  */
 
 import {AppError, utcDay} from '@ontodecide/shared-kernel';
@@ -17,14 +20,6 @@ import {getSampleScenario, toJobDto} from '../domain';
 import type {JobRecord} from '../domain';
 import {ingestBatch, MAX_BATCH_ROWS} from './batch_ingest';
 import type {IntegrationDeps, StoredBatch, UsageRef} from './ports';
-
-/** `day` of the once-per-workspace marker (not a calendar day). */
-export const SEED_LOADED_DAY = 'once';
-
-/** The workspace's sample marker. */
-export function seedLoadedRef(ctx: CallCtx): UsageRef {
-  return {day: SEED_LOADED_DAY, scope: ctx.tid, key: 'seed_loaded'};
-}
 
 /**
  * Keeps only mapped properties the workspace ontology defines, so a
@@ -50,10 +45,6 @@ export async function loadSample(
   if (!scenario) {
     throw new AppError('NOT_FOUND', `Unknown sample scenario: ${scenarioId}`);
   }
-  const marker = seedLoadedRef(ctx);
-  if ((await deps.usage.read(marker)) > 0) {
-    throw new AppError('CONFLICT', 'SAMPLE_ALREADY_LOADED');
-  }
   const now = deps.clock.now();
   const budget: UsageRef = {day: utcDay(now), scope: '*', key: 'seed_rows'};
   if (
@@ -64,10 +55,6 @@ export async function loadSample(
     ))
   ) {
     throw new AppError('QUOTA_EXCEEDED', 'SEED_ROWS_DAILY');
-  }
-  if (!(await deps.usage.take(marker, 1, 1))) {
-    await deps.usage.adjust(budget, -scenario.seedRows);
-    throw new AppError('CONFLICT', 'SAMPLE_ALREADY_LOADED');
   }
 
   // Switch the workspace ontology to the scenario's template so the sample
@@ -127,7 +114,6 @@ export async function loadSample(
   } catch (e) {
     // Let the workspace retry: writes are idempotent upserts by key.
     await jobs.markFailed(job.id, deps.clock.now().getTime()).catch(() => {});
-    await deps.usage.adjust(marker, -1);
     await deps.usage.adjust(budget, -scenario.seedRows);
     deps.logger.warn('sample load failed', {
       tid: ctx.tid,
@@ -136,5 +122,9 @@ export async function loadSample(
     });
     throw e;
   }
+  // Reload the situation room so KPIs and sample automations match the newly
+  // applied template and the just-loaded objects. This keeps the cockpit in
+  // sync with whatever scenario (built-in or custom) the workspace switched to.
+  await deps.situation.resetForTemplate(ctx);
   return toJobDto(job, deps.clock.now().getTime());
 }

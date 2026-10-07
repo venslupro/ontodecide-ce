@@ -105,6 +105,9 @@ importers:
       '@ontodecide/shared-kernel':
         specifier: workspace:*
         version: link:../../packages/shared-kernel
+      '@ontodecide/situation':
+        specifier: workspace:*
+        version: link:../../packages/situation
       zod:
         specifier: ^4.1.12
         version: 4.6.5
@@ -456,6 +459,9 @@ importers:
       '@ontodecide/shared-kernel':
         specifier: workspace:*
         version: link:../shared-kernel
+      '@ontodecide/situation':
+        specifier: workspace:*
+        version: link:../situation
       zod:
         specifier: ^4.1.12
         version: 4.6.5

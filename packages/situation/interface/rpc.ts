@@ -75,5 +75,6 @@ export function createSituationRpc(rooms: RoomResolver): SituationRpc {
     issueStreamTicket: async ctx => room(ctx).issueStreamTicket(ctx),
     pushRecommendation: async (ctx, rec) =>
       room(ctx).pushRecommendation(ctx, rec),
+    resetForTemplate: async ctx => room(ctx).resetForTemplate(ctx),
   };
 }

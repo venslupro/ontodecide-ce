@@ -696,7 +696,7 @@ describe('IntegrationRpc', () => {
   });
 
   describe('loadSample', () => {
-    it('writes 80 objects and 160 links once per workspace', async () => {
+    it('writes 80 objects and 160 links; reloading is idempotent', async () => {
       const job = await rpc.loadSample(ctx, 'supply-chain');
       expect(job).toMatchObject({
         kind: 'sample',
@@ -710,8 +710,15 @@ describe('IntegrationRpc', () => {
       expect(deps.objects.links.get(TEST_TID)!.size).toBe(160);
       expect(deps.objects.calls.every(c => c.cmds.length <= 100)).toBe(true);
       expect(deps.objects.calls.every(c => c.jobId === job.id)).toBe(true);
-      expect(await code(rpc.loadSample(ctx, 'supply-chain'))).toBe('CONFLICT');
-      expect((await rpc.listImports(ctx, {})).items[0].id).toBe(job.id);
+      // Reloading the same scenario is idempotent (upserts are keyed).
+      const again = await rpc.loadSample(ctx, 'supply-chain');
+      expect(again.status).toBe('DONE');
+      expect(deps.objects.objects.get(TEST_TID)!.size).toBe(80);
+      const jobs = await rpc.listImports(ctx, {});
+      // Two sample jobs now (the once-per-workspace restriction is gone);
+      // both are present and the original job is intact.
+      expect(jobs.items.map(j => j.id)).toContain(job.id);
+      expect(jobs.items.map(j => j.id)).toContain(again.id);
     });
 
     it('respects the global daily seed budget', async () => {

@@ -40,6 +40,7 @@ import type {
 } from './ports';
 import {applyEvents} from './process_situation_event';
 import {pushRecommendation} from './push_recommendation';
+import {resetForTemplate} from './install_pack_content';
 import {
   closeStreams,
   issueStreamTicket,
@@ -106,6 +107,10 @@ export class SituationRoomCore implements SituationRoomApi {
 
   pushRecommendation(ctx: CallCtx, rec: RecommendationSummary): Promise<void> {
     return pushRecommendation(this.rt, ctx, rec);
+  }
+
+  resetForTemplate(ctx: CallCtx): Promise<void> {
+    return resetForTemplate(this.rt, ctx);
   }
 
   applyEvents(

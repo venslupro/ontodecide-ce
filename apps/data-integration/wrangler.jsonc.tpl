@@ -16,7 +16,8 @@
   "ai": {"binding": "AI"},
   "services": [
     {"binding": "ONTOLOGY", "service": "${PREFIX}-ontology-manager", "entrypoint": "OntologyRpc"},
-    {"binding": "OBJECTS", "service": "${PREFIX}-object-graph", "entrypoint": "ObjectGraphRpc"}
+    {"binding": "OBJECTS", "service": "${PREFIX}-object-graph", "entrypoint": "ObjectGraphRpc"},
+    {"binding": "SITUATION", "service": "${PREFIX}-situation-awareness", "entrypoint": "SituationRpc"}
   ],
   "vars": {
     "AI_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8",
