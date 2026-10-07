@@ -22,8 +22,9 @@
 #   Wrangler:  Pages project ontodecide-ce (custom domains deleted first,
 #              then the project itself)
 #   Wrangler:  7 Workers (with their Durable Objects, crons and secrets);
-#              deleted with ?force=true so producer/consumer queue bindings
-#              are released, allowing the queues to be deleted next
+#              queue consumers are stripped first (?force=true releases
+#              producer bindings but not consumer bindings), then Workers
+#              are deleted with ?force=true
 #   Terraform: 2 queues (consumers are also removed as a safety net)
 #   Terraform: 5 D1 databases, B2 archive bucket (emptied first) and its 3
 #              keys, Turnstile widget, and the account-level pages.dev
@@ -564,9 +565,36 @@ delete_worker() {
   cf_ok DELETE "/workers/scripts/$1?force=true"
 }
 
+#######################################
+# Removes every consumer from every queue, so Workers can be deleted.
+# ?force=true releases producer bindings but NOT consumer bindings, and a
+# Worker that is still a consumer of an existing queue cannot be deleted
+# (HTTP 403 "Cannot delete this Worker as it is a consumer for a Queue").
+# Stripping consumers first lets reset_workers delete every Worker in one
+# pass; delete_queue() still removes any remaining consumers as a safety
+# net.
+#######################################
+strip_queue_consumers() {
+  [[ "${MODE}" == delete ]] || return 0
+  local existing name id consumer
+  if ! existing="$(cf_list /queues '"\(.queue_name) \(.queue_id)"')"; then
+    return 0
+  fi
+  for name in "${QUEUES[@]}"; do
+    id="$(id_of "${PREFIX}-${name}" <<<"${existing}")"
+    [[ -n "${id}" ]] || continue
+    while IFS= read -r consumer; do
+      [[ -n "${consumer}" ]] || continue
+      cf DELETE "/queues/${id}/consumers/${consumer}" >/dev/null
+    done < <(cf GET "/queues/${id}/consumers" \
+      | jq -r '.result[]?.consumer_id // empty')
+  done
+}
+
 reset_workers() {
   local existing name
   step "Delete Workers"
+  strip_queue_consumers
   if ! existing="$(cf_get /workers/scripts | jq -r '.result[]?.id')"; then
     list_failed "Workers"
     return 0
@@ -694,9 +722,11 @@ reset_redirect() {
 
 # Runs every deletion step (or, in verify mode, every check).
 # Workers are deleted before queues: a queue cannot be deleted while a
-# Worker still has a producer or consumer binding to it. Workers are
-# deleted with ?force=true, which releases those bindings; delete_queue()
-# also removes any remaining consumers as a safety net.
+# Worker still has a producer binding to it. Workers are deleted with
+# ?force=true, which releases producer bindings; consumer bindings are
+# NOT released by ?force=true, so strip_queue_consumers() removes them
+# first (otherwise a Worker that is a queue consumer cannot be deleted).
+# delete_queue() also removes any remaining consumers as a safety net.
 reset_all() {
   reset_pages
   reset_workers
