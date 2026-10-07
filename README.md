@@ -42,7 +42,7 @@ flowchart LR
   DE -.-> AI
 ```
 
-The system is 7 Workers plus 1 static Pages project. Five of the Workers each own one D1 database. situation-awareness keeps its data in one Durable Object per workspace. Only api-gateway is reachable from the Internet. The other Workers set `workers_dev: false` and are called only through Service Bindings. Queues: `domain-events` and `dead-letter`. Crons: identity-access `*/2` and object-graph `*/15`.
+The system is 7 Workers plus 1 static Pages project. Five of the Workers each own one D1 database. situation-awareness keeps its data in one Durable Object per workspace. Only the Pages project is reachable from the Internet; `/api/*` is proxied to api-gateway by a Pages Function (GATEWAY service binding). The other Workers set `workers_dev: false` and are called only through Service Bindings. Queues: `domain-events` and `dead-letter`. Crons: identity-access `*/2` and object-graph `*/15`.
 
 Every deployed resource is named `{project}-{env}-{service|module}`, for example `ontodecide-prd-api-gateway`, `ontodecide-prd-object-graph-db`, `ontodecide-prd-domain-events` and `ontodecide-prd-archive`. Two resources are exceptions: the Pages project `ontodecide-ce` and the Terraform state bucket `ontodecide-ce-tfstate`.
 
@@ -54,7 +54,7 @@ Every deployed resource is named `{project}-{env}-{service|module}`, for example
 | `data-integration` | Data fusion (supporting) | D1 `…-data-integration-db`, Workers AI (mapping drafts) |
 | `object-graph` | Object graph (core) | D1 `…-object-graph-db`, producer of `…-domain-events` |
 | `situation-awareness` | Situation (supporting) | Durable Object `SituationRoom` (SQLite) |
-| `decision-engine` | Decision (core) | D1 `…-decision-engine-db`, Workers AI (qwen3-30b-a3b, gpt-oss-20b fallback) |
+| `decision-engine` | Decision (core) | D1 `…-decision-engine-db`, Workers AI (`@cf/qwen/qwen3-30b-a3b-fp8`, `@cf/openai/gpt-oss-20b` fallback) |
 
 ## Repository layout
 
@@ -69,9 +69,13 @@ packages/<context>/       contract/ domain/ application/ infrastructure/ interfa
 packages/testing/         D1 over node:sqlite, DO SQL storage, queues, RPC bindings, Workers AI and rate-limit fakes
 migrations/<service>/     D1 migrations (one directory per database)
 infra/                    Terraform: D1, Queues, B2 bucket + keys, Turnstile, pages.dev bulk redirect
-scripts/                  gen_wrangler.mjs, gen_secrets.mjs, dev.sh, smoke.mjs, check_sql.mjs, cleanup_legacy.sh
+scripts/                  gen_wrangler.mjs, gen_secrets.mjs, dev.sh, smoke.mjs, d1_migrate.mjs,
+                          check_sql.mjs, check_openapi.mjs, check_bundle.mjs,
+                          admin_pending_change.mjs, reset.sh, cleanup_legacy.sh
 samples/supply-chain/     demo CSVs matching the template
 tests/e2e/                in-process full-loop tests through the gateway
+tests/budget/             D1 rows-written and CPU timing budgets
+tests/contract/           response bodies vs openapi.yaml
 ```
 
 ## Getting started
@@ -105,7 +109,7 @@ CI, Terraform and Deploy start together on every pull request and every push to 
 CI green → approve Terraform apply → approve Deploy
 ```
 
-* **`ci.yml`** runs typecheck, lint (gts, dependency-cruiser and the SQL tenant-scope check), tests, the web build with the 250 KB bundle budget, and Worker dry-run bundles.
+* **`ci.yml`** runs typecheck, lint (gts, dependency-cruiser and the SQL tenant-scope check), OpenAPI lint (official 3.2 schema + JSON Schema 2020-12), all Vitest suites with the coverage gate (packages/**/domain ≥ 80 % lines), CPU budget tests, script self-tests, the web build with the 60 KB gzip `/ended` hard-load budget, and Worker dry-run bundles.
 * **`terraform.yml`** runs Format → Validate → Lint → Plan on every PR and on `main`. Apply runs only on `main`, only when the plan has changes, and only after a reviewer approves the `production` environment. A nightly run checks for drift.
 * **`deploy.yml`** runs Build (production configs, dry-run bundles, web build) on every PR. On `main` it pauses for one approval, then deploys each service in its own job in dependency order:
 
@@ -115,7 +119,7 @@ CI green → approve Terraform apply → approve Deploy
                                                         identity-access ◄────┘ ─► api-gateway ─► Pages
   ```
 
-Set `APP_DOMAIN` (GitHub variable) to the apex domain whose Cloudflare zone already exists in the account, e.g. `opcbridge.top` (the zone is owned by another project; Terraform only looks it up). Terraform attaches the Pages custom domain `https://ontodecide-ce.<domain>` and bulk-redirects the pages.dev host to it. The SPA is then served at `https://ontodecide-ce.<domain>` and the API at `https://ontodecide-ce.<domain>/api/*` (Workers Route, same origin). Until it is set, the SPA falls back to `https://ontodecide-ce.pages.dev` with a Pages Function forwarding `/api/*` to the gateway. The full list with comments is in [`.env.example`](.env.example).
+Set `APP_DOMAIN` (GitHub variable) to the apex domain whose DNS stays with its registrar (e.g. `opcbridge.top`). No Cloudflare zone is created by this project, so there is no Workers Route: the operator points a CNAME `ontodecide-ce.<domain>` → `ontodecide-ce.pages.dev` at the DNS provider. Wrangler attaches the Pages custom domain in the CD pipeline; Terraform only creates the account-level pages.dev → custom-domain bulk redirect. The SPA is served at `https://ontodecide-ce.<domain>` and the API at `https://ontodecide-ce.<domain>/api/*` through the Pages Function [`apps/web/functions/api/[[path]].ts`](apps/web/functions/api/%5B%5Bpath%5D%5D.ts) (GATEWAY service binding, same origin). Until `APP_DOMAIN` is set, the SPA falls back to `https://ontodecide-ce.pages.dev` with the same Pages Function proxy. The full list with comments is in [`.env.example`](.env.example).
 
 **GitHub secrets:**
 - Cloudflare: `CF_API_TOKEN` (Workers, D1, Queues, Pages, Turnstile, account rulesets/lists, Pages custom domain), `CF_ACCOUNT_ID`.
@@ -140,8 +144,8 @@ The Turnstile secret and the B2 archive keys come from Terraform outputs, so you
 4. In both the Resend and Brevo dashboards, turn off open and click tracking, so the archive download links in e-mails are not rewritten. HSTS and other zone TLS settings are now the zone owner's responsibility (this project no longer manages the zone).
 
 Before go-live, the design asks for three live checks:
-- `/api/*` on `ontodecide-ce.<domain>` reaches the Worker Route, not Pages.
-- Workers AI qwen3 accepts `enable_thinking: false` and JSON-schema output. The code falls back automatically either way.
+- `/api/*` on `ontodecide-ce.<domain>` reaches api-gateway through the Pages Function proxy, not the static Pages host.
+- Workers AI `@cf/qwen/qwen3-30b-a3b-fp8` accepts `enable_thinking: false` and JSON-schema output. The code falls back to `@cf/openai/gpt-oss-20b` automatically either way.
 - The Rate Limiting bindings work on the Free plan.
 
 ## Free-tier guardrails
