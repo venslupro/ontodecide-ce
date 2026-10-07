@@ -5,8 +5,10 @@
  * - Every (re)connect first obtains a 30 s single-use ticket (the caller's
  *   `connectUrl()` does `POST /situation/stream-tickets`), then opens
  *   `wss://<same host>/api/v1/situation/stream?ticket=…`.
- * - No application heartbeat: protocol-level ping/pong is answered by the
- *   Durable Object without waking it.
+ * - Application heartbeat: every `heartbeatMs` (default 25 s) the client
+ *   sends `{"type":"ping"}`; the Durable Object's `setWebSocketAutoResponse`
+ *   replies with `pong` without waking the object, keeping the Cloudflare
+ *   edge from closing an idle connection at zero DO CPU cost.
  * - Tracks the server `seq`. After a reconnect it sends
  *   `{"type":"resume","lastSeq":n}` once; a gap during a session sends the
  *   same message and drops out-of-order frames until the replay (≤ 200) or
@@ -69,6 +71,8 @@ export interface WsClientOptions {
   maxBackoffMs?: number;
   pollMs?: number;
   failuresBeforePolling?: number;
+  /** Heartbeat interval in ms (0 disables; default 25 s). */
+  heartbeatMs?: number;
 }
 
 /** Boundary values (前端详细设计 表 11). */
@@ -77,6 +81,10 @@ export const WS_DEFAULTS = {
   pollMs: 30_000,
   failuresBeforePolling: 3,
   hiddenDisconnectMs: 5 * 60_000,
+  /** Heartbeat interval: keeps the Cloudflare edge from closing an idle
+   * WebSocket. The DO's `setWebSocketAutoResponse('ping','pong')` answers
+   * without waking the object, so the heartbeat costs zero DO CPU. */
+  heartbeatMs: 25_000,
 } as const;
 
 /** Close codes meaning "too many connections" (switch to polling at once). */
@@ -109,6 +117,7 @@ export class WsClient {
   private attempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private readonly o: Required<
     Omit<WsClientOptions, 'onState' | 'poll' | 'onEnded'>
   > &
@@ -122,6 +131,7 @@ export class WsClient {
       maxBackoffMs: WS_DEFAULTS.maxBackoffMs,
       pollMs: WS_DEFAULTS.pollMs,
       failuresBeforePolling: WS_DEFAULTS.failuresBeforePolling,
+      heartbeatMs: WS_DEFAULTS.heartbeatMs,
       ...opts,
     };
   }
@@ -190,6 +200,7 @@ export class WsClient {
   private closeSocket(): void {
     const s = this.socket;
     this.socket = null;
+    this.stopHeartbeat();
     if (!s) return;
     s.onopen = s.onclose = s.onmessage = s.onerror = null;
     try {
@@ -237,6 +248,7 @@ export class WsClient {
     this.opened = true;
     this.failures = 0;
     this.stopPolling();
+    this.startHeartbeat();
     this.setState('open');
     if (this.lastSeq > 0) {
       // Reconnect: ask for the missed increments (or a fresh snapshot).
@@ -249,6 +261,7 @@ export class WsClient {
 
   private handleClose(code: number | undefined): void {
     this.socket = null;
+    this.stopHeartbeat();
     if (this.stopped || this.paused) return;
     if (code === STREAM_CLOSE_EXPIRED) {
       this.stopped = true;
@@ -309,6 +322,31 @@ export class WsClient {
   private stopPolling(): void {
     clearInterval(this.pollTimer);
     this.pollTimer = undefined;
+  }
+
+  /**
+   * Sends a `ping` frame every `heartbeatMs` to keep the Cloudflare edge
+   * from closing an idle WebSocket. The DO's `setWebSocketAutoResponse`
+   * replies with `pong` without waking the object. The auto-response
+   * matches the literal string "ping", so we bypass {@link send} (which
+   * JSON-encodes) and write the raw string.
+   */
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    const ms = this.o.heartbeatMs;
+    if (!ms || ms <= 0) return;
+    this.heartbeatTimer = setInterval(() => {
+      try {
+        this.socket?.send('ping');
+      } catch {
+        // Not open; the close handler takes over.
+      }
+    }, ms);
+  }
+
+  private stopHeartbeat(): void {
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = undefined;
   }
 
   private send(msg: unknown): void {

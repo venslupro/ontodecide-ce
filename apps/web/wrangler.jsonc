@@ -2,14 +2,25 @@
 // from main by .github/workflows/deploy.yml via Direct Upload). The project
 // and its custom domain are created by Wrangler, not Terraform. The project
 // name is exempt from {project}-{env}-{service}: it fixes the public URL
-// https://ontodecide-ce.pages.dev. The GATEWAY binding (named by the rule)
-// powers functions/api/[[path]].ts, the /api/* proxy to api-gateway (used
-// on both pages.dev and the custom domain — no Cloudflare zone → no Workers
-// Route).
+// https://ontodecide-ce.pages.dev. The GATEWAY binding powers
+// functions/api/[[path]].ts, the /api/* proxy to api-gateway (used on both
+// pages.dev and the custom domain — no Cloudflare zone → no Workers Route).
+// The SITUATION binding lets the Pages Function route WebSocket upgrades
+// (/api/v1/situation/stream) directly to the situation-awareness Worker
+// (1 hop), bypassing the 3-hop chain (Pages → GATEWAY → SITUATION → DO)
+// that is unreliable for WebSocket proxying; the SITUATION Worker already
+// performs its own Origin check and ticket validation.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "ontodecide-ce",
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-09-01",
-  "services": [{"binding": "GATEWAY", "service": "ontodecide-prd-api-gateway"}]
+  "services": [
+    {"binding": "GATEWAY", "service": "ontodecide-prd-api-gateway"},
+    {
+      "binding": "SITUATION",
+      "service": "ontodecide-prd-situation-awareness",
+      "entrypoint": "SituationRpc"
+    }
+  ]
 }

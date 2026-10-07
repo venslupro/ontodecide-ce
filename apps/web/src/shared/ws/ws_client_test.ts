@@ -1,5 +1,5 @@
 /**
- * @fileoverview WsClient: ticket per connect, no app heartbeat, resume
+ * @fileoverview WsClient: ticket per connect, heartbeat ping, resume
  * after reconnect, gap handling, backoff with jitter, polling after 3
  * failures or a limit close, pause / resume, close 4401 stops for good.
  */
@@ -87,18 +87,32 @@ describe('backoffDelay', () => {
 });
 
 describe('WsClient', () => {
-  it('fetches a fresh ticket for every connection and sends no heartbeat', async () => {
+  it('fetches a fresh ticket for every connection and sends heartbeat pings', async () => {
     const t = setup();
     t.client.start();
     await flush();
     expect(t.sockets[0].url).toContain('ticket=t1');
     t.sockets[0].open();
     expect(t.states.at(-1)).toBe('open');
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(t.sockets[0].sent).toEqual([]);
+    // Heartbeat: every 25 s the client sends the literal "ping" string
+    // (the DO's setWebSocketAutoResponse replies "pong" without waking).
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(t.sockets[0].sent).toEqual(['ping']);
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(t.sockets[0].sent).toEqual(['ping', 'ping']);
     t.sockets[0].drop();
     await vi.advanceTimersByTimeAsync(1000);
     expect(t.sockets[1].url).toContain('ticket=t2');
+  });
+
+  it('does not send heartbeat when heartbeatMs is 0', async () => {
+    const t = setup({heartbeatMs: 0});
+    t.client.start();
+    await flush();
+    t.sockets[0].open();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(t.sockets[0].sent).toEqual([]);
+    t.sockets[0].drop();
   });
 
   it('applies consecutive frames, requests a replay on a gap, drops duplicates', async () => {
