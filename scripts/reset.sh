@@ -21,8 +21,10 @@
 # apps/*/wrangler.jsonc.tpl, prefix ontodecide-prd):
 #   Wrangler:  Pages project ontodecide-ce (custom domains deleted first,
 #              then the project itself)
-#   Terraform: 2 queues (consumers removed first, so Workers can be deleted)
-#   Wrangler:  7 Workers (with their Durable Objects, crons and secrets)
+#   Wrangler:  7 Workers (with their Durable Objects, crons and secrets);
+#              deleted with ?force=true so producer/consumer queue bindings
+#              are released, allowing the queues to be deleted next
+#   Terraform: 2 queues (consumers are also removed as a safety net)
 #   Terraform: 5 D1 databases, B2 archive bucket (emptied first) and its 3
 #              keys, Turnstile widget, and the account-level pages.dev
 #              bulk redirect (list + ruleset) when the Pages project has
@@ -691,13 +693,14 @@ reset_redirect() {
 }
 
 # Runs every deletion step (or, in verify mode, every check).
-# Queues are deleted before Workers: a Worker that is a queue consumer
-# cannot be deleted until the consumer binding is removed, which
-# delete_queue() does before deleting the queue itself.
+# Workers are deleted before queues: a queue cannot be deleted while a
+# Worker still has a producer or consumer binding to it. Workers are
+# deleted with ?force=true, which releases those bindings; delete_queue()
+# also removes any remaining consumers as a safety net.
 reset_all() {
   reset_pages
-  reset_queues
   reset_workers
+  reset_queues
   reset_d1
   reset_b2_bucket
   reset_b2_keys
