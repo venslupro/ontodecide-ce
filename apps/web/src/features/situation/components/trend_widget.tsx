@@ -133,6 +133,11 @@ export function TrendWidget({
     range: t(`range.${range}`),
     alerts: markers.length,
   });
+  if (shown.length === 0)
+    return (
+      <p className="py-6 text-center text-sm text-dim">{t('trend.none')}</p>
+    );
+
   return (
     <div>
       <EChart option={option} height={300} ariaLabel={label} />

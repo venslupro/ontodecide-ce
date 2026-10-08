@@ -110,7 +110,13 @@ export function EChart({
   }, []);
 
   useEffect(() => {
-    inst.current?.setOption(built, true);
+    if (!inst.current) return;
+    try {
+      inst.current.setOption(built, true);
+    } catch {
+      // ECharts may throw on edge-case options (e.g. empty series);
+      // the accessible label remains as fallback.
+    }
   }, [built]);
 
   useEffect(() => {

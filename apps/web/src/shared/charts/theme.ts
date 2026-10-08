@@ -74,9 +74,12 @@ export function seriesColors(t: ChartTokens): string[] {
   return [t.cyan, t.blue, t.violet, t.orange];
 }
 
-/** Returns the (constant) chart tokens. */
+let cachedTokens: ChartTokens | null = null;
+
+/** Returns the (constant) chart tokens (memoized; stable reference). */
 export function useChartTokens(): ChartTokens {
-  return readChartTokens();
+  if (!cachedTokens) cachedTokens = readChartTokens();
+  return cachedTokens;
 }
 
 /**
