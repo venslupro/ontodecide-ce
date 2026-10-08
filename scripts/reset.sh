@@ -691,16 +691,13 @@ reset_redirect() {
   local ids id list_id
   local list_name="${PREFIX//-/_}_pages_redirect"
   step "Delete the pages.dev bulk redirect"
-  if [[ -z "${PAGES_CUSTOM_DOMAINS}" ]]; then
-    [[ "${MODE}" == verify ]] || note "${DIM}" \
-      "– Pages project has no custom domains"
-    return 0
-  fi
   # No Cloudflare zone (the apex DNS stays with its registrar), so there are
   # no zone-level DNS records or Workers Routes to clean up. Only the
   # account-level pages.dev → custom-domain bulk redirect (list + ruleset)
-  # Terraform created is deleted here. The ruleset references the list, so
-  # delete it first.
+  # Terraform created is deleted here. The list and ruleset can outlive the
+  # Pages project (e.g. after the state was hidden while the project was
+  # already gone), so always delete them by name — even when no custom
+  # domain is present. The ruleset references the list, so delete it first.
   if ids="$(cf_get /rulesets | jq -r --arg n "${PREFIX}-pages-redirect" \
     '.result[]? | select(.name == $n) | .id')"; then
     while IFS= read -r id; do
