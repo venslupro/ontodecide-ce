@@ -34,10 +34,13 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
+        # grep -vxF returns 1 when no line survives the filter (i.e. no other
+        # job failed), which under `set -e -o pipefail` would abort the step
+        # before the `if` below. `|| true` keeps an empty result valid.
         failed="$(gh api --paginate \
           "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs" \
           --jq '.jobs[] | select(.conclusion == "failure") | .name' \
-          | grep -vxF "${GITHUB_JOB}")"
+          | grep -vxF "${GITHUB_JOB}" || true)"
         if [[ -n "${failed}" ]]; then
           echo "::error::Not deploying: failed earlier in this run: ${failed//$'\n'/, }"
           exit 1
