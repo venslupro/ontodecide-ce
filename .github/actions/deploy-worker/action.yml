@@ -27,6 +27,8 @@ runs:
     # Fail fast: independent services deploy in parallel, but once any job
     # of this run has failed no further service starts. Jobs already running
     # finish, so no migration or deploy is interrupted halfway.
+    # Exclude the current job so a re-run of a previously failed job is not
+    # blocked by its own stale conclusion from an earlier attempt.
     - name: Stop if another service failed
       shell: bash
       env:
@@ -34,7 +36,8 @@ runs:
       run: |
         failed="$(gh api --paginate \
           "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs" \
-          --jq '.jobs[] | select(.conclusion == "failure") | .name')"
+          --jq '.jobs[] | select(.conclusion == "failure") | .name' \
+          | grep -vxF "${GITHUB_JOB}")"
         if [[ -n "${failed}" ]]; then
           echo "::error::Not deploying: failed earlier in this run: ${failed//$'\n'/, }"
           exit 1
