@@ -2,7 +2,7 @@
   "name": "ontodecide-ce",
   "version": "2.4.0",
   "private": true,
-  "description": "OntoDecide CE \u2014 ontology-driven decision intelligence on the Cloudflare free tier.",
+  "description": "OntoDecide CE — ontology-driven decision intelligence on the Cloudflare free tier.",
   "type": "module",
   "packageManager": "pnpm@9.12.0",
   "engines": {
@@ -26,7 +26,7 @@
     "test:cpu": "vitest run --project backend tests/budget/cpu_budget_test.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260923.1",
+    "@cloudflare/workers-types": "^5.20261008.1",
     "@seriousme/openapi-schema-validator": "^2.11.0",
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^4.1.11",
@@ -40,7 +40,7 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.1",
     "vitest": "^4.1.11",
-    "wrangler": "^4.137.0",
+    "wrangler": "^4.148.0",
     "yaml": "^2.9.1"
   }
 }
