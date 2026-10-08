@@ -153,7 +153,12 @@ export function AdminPasskeyStep({
       const credential = await createPasskey(options);
       const r = await addAdminPasskey(credential, stepUp);
       const me = useSession.getState().me;
-      if (me) useSession.getState().setMe({...me, passkeys: r.total});
+      if (me)
+        useSession.getState().setMe({
+          ...me,
+          passkeys: r.total,
+          recoveryCodesLeft: r.recoveryCodes?.length ?? me.recoveryCodesLeft,
+        });
       if (r.recoveryCodes?.length) {
         setCodes(r.recoveryCodes);
         setPhase('codes');
