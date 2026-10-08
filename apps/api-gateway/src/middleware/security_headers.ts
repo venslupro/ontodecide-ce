@@ -12,7 +12,7 @@ import type {Middleware} from './chain';
 export const CSP = [
   "default-src 'self'",
   "connect-src 'self'",
-  "script-src 'self' https://challenges.cloudflare.com",
+  "script-src 'self' 'unsafe-eval' https://challenges.cloudflare.com",
   'frame-src https://challenges.cloudflare.com',
   "style-src 'self' 'unsafe-inline'",
   "frame-ancestors 'none'",
