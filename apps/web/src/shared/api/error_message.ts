@@ -7,13 +7,14 @@
 
 import type {TFunction} from 'i18next';
 import {ApiError} from './errors';
+import {DEFAULT_RETRY_AFTER_S} from './rate_limit';
 
 /** Localized message for any thrown value. */
 export function errorMessage(err: unknown, t: TFunction): string {
   if (err instanceof ApiError) {
     const x = err.extras;
     const base = t(`common:errors.${err.code}`, {
-      seconds: err.retryAfter ?? 0,
+      seconds: Math.max(1, err.retryAfter ?? DEFAULT_RETRY_AFTER_S),
       left: typeof x.left === 'number' ? x.left : 0,
       what: typeof x.what === 'string' ? x.what : '',
       resetAt: typeof x.resetAt === 'string' ? x.resetAt : '',
