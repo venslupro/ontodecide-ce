@@ -505,10 +505,7 @@ export const ROUTES: AnyRoute[] = [
       scenarioId: z.string().min(1),
     }),
     handler: async (env, i) =>
-      json(
-        await env.INTEGRATION.loadSample(i.ctx!, i.body.scenarioId),
-        202,
-      ),
+      json(await env.INTEGRATION.loadSample(i.ctx!, i.body.scenarioId), 202),
   }),
 
   // —— archive deletion links (public, by IP) ——

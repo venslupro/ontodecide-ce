@@ -8,7 +8,11 @@ import {AppError, FixedClock, silentLogger} from '@ontodecide/shared-kernel';
 import {writeTombstone} from '@ontodecide/shared-kernel/d1';
 import {createTestD1, TEST_TID, testCtx} from '@ontodecide/testing';
 import {beforeEach, describe, expect, it} from 'vitest';
-import {BUILT_IN_TEMPLATE_IDS, BLANK_TEMPLATE_ID, SUPPLY_CHAIN_TEMPLATE_ID} from '../contract';
+import {
+  BUILT_IN_TEMPLATE_IDS,
+  BLANK_TEMPLATE_ID,
+  SUPPLY_CHAIN_TEMPLATE_ID,
+} from '../contract';
 import type {LinkTypeDef, ObjectTypeDef} from '../contract';
 import {
   SUPPLY_CHAIN_DEFINITION,
@@ -384,9 +388,7 @@ describe('ontology use cases', () => {
       ]),
     );
     expect(await workspaceRows()).toHaveLength(2);
-    expect(
-      (await h.getCompiledSchema(ctx)).objectTypes.Depot,
-    ).toBeUndefined();
+    expect((await h.getCompiledSchema(ctx)).objectTypes.Depot).toBeUndefined();
   });
 
   it('caches compiled copies by (tid, etag)', async () => {
