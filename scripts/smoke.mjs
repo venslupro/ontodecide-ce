@@ -17,7 +17,8 @@
  *      by Pages static: the health response carries the gateway's
  *      `X-Request-Id`;
  *   8. CSP of the API response and of the SPA page contains
- *      `connect-src 'self'` (the SPA talks to no other backend);
+ *      `connect-src 'self' ws: wss:` (the SPA talks to its own backend
+ *      and opens realtime WebSocket connections to the same origin);
  *   9. with SMOKE_PAGES_URL (e.g. https://ontodecide-ce.pages.dev, set when
  *      a custom domain is used): it answers 301 to SMOKE_BASE_URL.
  *
@@ -149,14 +150,17 @@ function expect(cond, message) {
   if (!cond) throw new Error(message);
 }
 
-/** Asserts a CSP header whose connect-src is exactly 'self'. */
+/** Asserts a CSP header whose connect-src allows 'self' plus ws:/wss:. */
 function expectConnectSelf(csp) {
   expect(csp, 'no Content-Security-Policy header');
   const directive = csp
     .split(';')
     .map(d => d.trim())
     .find(d => d.startsWith('connect-src'));
-  expect(directive === "connect-src 'self'", `connect-src: ${directive}`);
+  expect(
+    directive === "connect-src 'self' ws: wss:",
+    `connect-src: ${directive}`,
+  );
 }
 
 function expectProblem(r, status, code) {
@@ -183,13 +187,13 @@ async function main() {
     );
   });
 
-  await check("API CSP has connect-src 'self'", async () => {
+  await check("API CSP has connect-src 'self' ws: wss:", async () => {
     const r = await call('GET', '/health');
     expectConnectSelf(r.headers.get('content-security-policy'));
   });
 
   if (/^https:/.test(BASE)) {
-    await check("SPA CSP has connect-src 'self'", async () => {
+    await check("SPA CSP has connect-src 'self' ws: wss:", async () => {
       const res = await fetchRetry(`${BASE}/`, {
         headers: {accept: 'text/html'},
       });
