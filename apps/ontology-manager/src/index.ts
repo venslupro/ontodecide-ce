@@ -4,7 +4,11 @@
  */
 
 import {WorkerEntrypoint} from 'cloudflare:workers';
-import type {DefByKind, DefKind} from '@ontodecide/ontology/contract';
+import type {
+  DefByKind,
+  DefKind,
+  OntologyRpc as Contract,
+} from '@ontodecide/ontology/contract';
 import type {CallCtx} from '@ontodecide/shared-kernel';
 import type {Env} from './env';
 import {createService} from './service';
@@ -20,7 +24,7 @@ function svc(env: Env): Service {
 }
 
 /** Business RPC entry point (`entrypoint: "OntologyRpc"`). */
-export class OntologyRpc extends WorkerEntrypoint<Env> {
+export class OntologyRpc extends WorkerEntrypoint<Env> implements Contract {
   getCompiledSchema(ctx: CallCtx) {
     return svc(this.env).rpc.getCompiledSchema(ctx);
   }
@@ -47,6 +51,9 @@ export class OntologyRpc extends WorkerEntrypoint<Env> {
   }
   deleteDefinition(ctx: CallCtx, kind: DefKind, id: string, ifMatch: number) {
     return svc(this.env).rpc.deleteDefinition(ctx, kind, id, ifMatch);
+  }
+  setTemplate(ctx: CallCtx, templateId: string) {
+    return svc(this.env).rpc.setTemplate(ctx, templateId);
   }
 }
 
