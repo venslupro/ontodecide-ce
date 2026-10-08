@@ -102,6 +102,8 @@ describe('CockpitPage', () => {
     it('loads the sample scenario', async () => {
       emptyStats();
       renderWithProviders(<CockpitPage />, {url: '/cockpit'});
+      const select = await screen.findByRole('combobox');
+      await userEvent.selectOptions(select, 'supply-chain');
       await userEvent.click(
         await screen.findByRole('button', {name: '加载所选场景'}),
       );
@@ -121,6 +123,8 @@ describe('CockpitPage', () => {
         ),
       );
       renderWithProviders(<CockpitPage />, {url: '/cockpit'});
+      const select = await screen.findByRole('combobox');
+      await userEvent.selectOptions(select, 'supply-chain');
       await userEvent.click(
         await screen.findByRole('button', {name: '加载所选场景'}),
       );
@@ -134,6 +138,8 @@ describe('CockpitPage', () => {
       emptyStats();
       businessDb.sampleLoaded = true;
       renderWithProviders(<CockpitPage />, {url: '/cockpit'});
+      const select = await screen.findByRole('combobox');
+      await userEvent.selectOptions(select, 'supply-chain');
       await userEvent.click(
         await screen.findByRole('button', {name: '加载所选场景'}),
       );

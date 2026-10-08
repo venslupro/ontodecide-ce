@@ -236,6 +236,7 @@ describe('POST /workspace/sample-data', () => {
     const gw = await makeGateway({integration: {loadSample}});
     const res = await call(gw, 'POST', '/workspace/sample-data', {
       token: await ownerToken(),
+      body: {scenarioId: 'supply-chain'},
     });
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({id: 'job-1'});
@@ -252,6 +253,7 @@ describe('POST /workspace/sample-data', () => {
     });
     const res = await call(gw, 'POST', '/workspace/sample-data', {
       token: await ownerToken(),
+      body: {scenarioId: 'supply-chain'},
     });
     expect(res.status).toBe(409);
   });

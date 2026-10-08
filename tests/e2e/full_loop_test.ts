@@ -38,7 +38,8 @@ describe('core loop', () => {
     );
     expect(me.body.quotas.objects).toEqual({used: 0, limit: 300});
 
-    // First cockpit open initializes KPIs and sample automations.
+    // First cockpit open initializes the room. With the blank default
+    // template (no scenario loaded yet), there are 0 KPIs and 0 automations.
     const empty = await sys.api<{initialized: boolean; kpis: unknown[]}>(
       'GET',
       '/situation/overview?range=24h',
@@ -46,18 +47,19 @@ describe('core loop', () => {
     );
     expect(empty.status).toBe(200);
     expect(empty.body.initialized).toBe(true);
-    expect(empty.body.kpis.length).toBeGreaterThan(0);
+    expect(empty.body.kpis.length).toBe(0);
 
     // Sample scenario: 80 objects / 160 links. Reloading is allowed (users
     // may switch scenarios); upserts are keyed so the data stays idempotent.
     const sample = await sys.api('POST', '/workspace/sample-data', {
       token: owner.token,
+      body: {scenarioId: 'supply-chain'},
     });
     expect(sample.status).toBe(202);
     const again = await sys.api<{code: string}>(
       'POST',
       '/workspace/sample-data',
-      {token: owner.token},
+      {token: owner.token, body: {scenarioId: 'supply-chain'}},
     );
     expect(again.status).toBe(202);
     expect(await rowsOf(sys.dbs.objects, 'og_object', owner.tid)).toBe(80);
@@ -207,7 +209,10 @@ describe('core loop', () => {
     const sys = await createSystem();
     const a = await signUp(sys, 'a@example.com', '198.51.100.31');
     const b = await signUp(sys, 'b@example.com', '198.51.100.32');
-    await sys.api('POST', '/workspace/sample-data', {token: a.token});
+    await sys.api('POST', '/workspace/sample-data', {
+      token: a.token,
+      body: {scenarioId: 'supply-chain'},
+    });
 
     const list = await sys.api<{items: ObjectItem[]}>(
       'GET',
@@ -263,6 +268,7 @@ describe('core loop', () => {
       '/workspace/sample-data',
       {
         token: owner.token,
+        body: {scenarioId: 'supply-chain'},
         headers: {origin: 'https://evil.example'},
       },
     );

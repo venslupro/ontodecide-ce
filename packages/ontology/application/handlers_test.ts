@@ -8,7 +8,11 @@ import {AppError, FixedClock, silentLogger} from '@ontodecide/shared-kernel';
 import {writeTombstone} from '@ontodecide/shared-kernel/d1';
 import {createTestD1, TEST_TID, testCtx} from '@ontodecide/testing';
 import {beforeEach, describe, expect, it} from 'vitest';
-import {BUILT_IN_TEMPLATE_IDS, SUPPLY_CHAIN_TEMPLATE_ID} from '../contract';
+import {
+  BUILT_IN_TEMPLATE_IDS,
+  BLANK_TEMPLATE_ID,
+  SUPPLY_CHAIN_TEMPLATE_ID,
+} from '../contract';
 import type {LinkTypeDef, ObjectTypeDef} from '../contract';
 import {
   SUPPLY_CHAIN_DEFINITION,
@@ -123,26 +127,27 @@ describe('ontology use cases', () => {
     expect(n).toBe(BUILT_IN_TEMPLATE_IDS.length);
   });
 
-  it('serves the shared template until the first change', async () => {
+  it('serves the blank template until a scenario is loaded', async () => {
     const a = await h.getCompiledSchema(ctx);
     const b = await h.getCompiledSchema(other);
     expect(a).toMatchObject({
       custom: false,
       etag: 0,
-      templateId: 'supply-chain',
+      templateId: BLANK_TEMPLATE_ID,
     });
     expect(a).toBe(b); // shared compiled template
     const dto = await h.getOntology(ctx);
     expect(dto).toMatchObject({custom: false, etag: 0, updatedAt: null});
-    expect(dto.definition).toEqual(SUPPLY_CHAIN_DEFINITION);
+    expect(dto.definition).toEqual({
+      objectTypes: [],
+      linkTypes: [],
+      actionTypes: [],
+      functions: [],
+      simulationKpis: [],
+    });
     const list = await h.listDefinitions(ctx, 'object-types');
     expect(list).toMatchObject({etag: 0, custom: false});
-    expect(list.items.map(t => t.apiName)).toEqual([
-      'Supplier',
-      'Material',
-      'Product',
-    ]);
-    expect((await h.getDefinition(ctx, 'link-types', 'supplies')).etag).toBe(0);
+    expect(list.items).toEqual([]);
     expect(await codeOf(h.getDefinition(ctx, 'link-types', 'nope'))).toBe(
       'NOT_FOUND',
     );
@@ -150,17 +155,20 @@ describe('ontology use cases', () => {
   });
 
   it('copies the template on the first change (copy-on-write)', async () => {
+    // Load the supply-chain scenario so the workspace has a concrete ontology.
+    await h.setTemplate(ctx, SUPPLY_CHAIN_TEMPLATE_ID);
+
     expect(
-      await h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 0),
+      await h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 1),
     ).toEqual({
-      etag: 1,
+      etag: 2,
     });
-    expect(await workspaceRows()).toEqual([{tenant_id: TEST_TID, etag: 1}]);
+    expect(await workspaceRows()).toEqual([{tenant_id: TEST_TID, etag: 2}]);
 
     const compiled = await h.getCompiledSchema(ctx);
     expect(compiled).toMatchObject({
       custom: true,
-      etag: 1,
+      etag: 2,
       templateId: 'supply-chain',
     });
     expect(Object.keys(compiled.objectTypes)).toEqual([
@@ -176,14 +184,14 @@ describe('ontology use cases', () => {
 
     clock.advance(1000);
     expect(
-      await h.putDefinition(ctx, 'link-types', 'storedIn', STORED_IN, 1),
+      await h.putDefinition(ctx, 'link-types', 'storedIn', STORED_IN, 2),
     ).toEqual({
-      etag: 2,
+      etag: 3,
     });
     const dto = await h.getOntology(ctx);
     expect(dto).toMatchObject({
       custom: true,
-      etag: 2,
+      etag: 3,
       updatedAt: '2026-09-24T00:00:01.000Z',
     });
     expect(dto.definition.linkTypes.map(l => l.apiName)).toContain('storedIn');
@@ -192,13 +200,14 @@ describe('ontology use cases', () => {
   });
 
   it('replaces an existing definition in place', async () => {
+    await h.setTemplate(ctx, SUPPLY_CHAIN_TEMPLATE_ID);
     const supplier = (await h.getDefinition(ctx, 'object-types', 'Supplier'))
       .item;
     const changed = {...supplier, icon: 'truck'};
-    await h.putDefinition(ctx, 'object-types', 'Supplier', changed, 0);
+    await h.putDefinition(ctx, 'object-types', 'Supplier', changed, 1);
     const {item, etag} = await h.getDefinition(ctx, 'object-types', 'Supplier');
     expect(item.icon).toBe('truck');
-    expect(etag).toBe(1);
+    expect(etag).toBe(2);
     expect((await h.listDefinitions(ctx, 'object-types')).items).toHaveLength(
       3,
     );
@@ -231,29 +240,30 @@ describe('ontology use cases', () => {
   });
 
   it('lets exactly one of two puts with the same If-Match win', async () => {
-    await h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 0);
+    await h.setTemplate(ctx, SUPPLY_CHAIN_TEMPLATE_ID);
+    await h.putDefinition(ctx, 'object-types', 'Warehouse', WAREHOUSE, 1);
     const results = await Promise.all([
-      codeOf(h.putDefinition(ctx, 'link-types', 'storedIn', STORED_IN, 1)),
+      codeOf(h.putDefinition(ctx, 'link-types', 'storedIn', STORED_IN, 2)),
       codeOf(
         h.putDefinition(
           ctx,
           'object-types',
           'Depot',
           {...WAREHOUSE, apiName: 'Depot'},
-          1,
+          2,
         ),
       ),
     ]);
     expect(results.sort()).toEqual(['OK', 'PRECONDITION_FAILED']);
-    expect((await h.getOntology(ctx)).etag).toBe(2);
+    expect((await h.getOntology(ctx)).etag).toBe(3);
     // A stale If-Match is rejected with the current etag in the problem.
     try {
-      await h.putDefinition(ctx, 'link-types', 'storedIn', STORED_IN, 1);
+      await h.putDefinition(ctx, 'link-types', 'storedIn', STORED_IN, 2);
       expect.unreachable();
     } catch (e) {
       const err = AppError.from(e);
       expect(err.code).toBe('PRECONDITION_FAILED');
-      expect(err.extras).toEqual({etag: 2});
+      expect(err.extras).toEqual({etag: 3});
     }
   });
 
@@ -265,12 +275,18 @@ describe('ontology use cases', () => {
     } catch (e) {
       const err = AppError.from(e);
       expect(err.code).toBe('VALIDATION_FAILED');
-      expect(err.extras.issues).toEqual([
-        {
-          path: 'linkTypes.2.to',
-          message: 'Object type does not exist: Nowhere',
-        },
-      ]);
+      expect(err.extras.issues).toEqual(
+        expect.arrayContaining([
+          {
+            path: 'linkTypes.0.from',
+            message: 'Object type does not exist: Material',
+          },
+          {
+            path: 'linkTypes.0.to',
+            message: 'Object type does not exist: Nowhere',
+          },
+        ]),
+      );
     }
     expect(await workspaceRows()).toEqual([]);
 
@@ -312,8 +328,9 @@ describe('ontology use cases', () => {
   });
 
   it('deletes definitions but rejects deleting referenced ones', async () => {
+    await h.setTemplate(ctx, SUPPLY_CHAIN_TEMPLATE_ID);
     try {
-      await h.deleteDefinition(ctx, 'object-types', 'Supplier', 0);
+      await h.deleteDefinition(ctx, 'object-types', 'Supplier', 1);
       expect.unreachable();
     } catch (e) {
       const err = AppError.from(e);
@@ -321,28 +338,29 @@ describe('ontology use cases', () => {
       expect(JSON.stringify(err.extras.issues)).toContain('link type supplies');
     }
     expect(
-      await codeOf(h.deleteDefinition(ctx, 'link-types', 'supplies', 0)),
+      await codeOf(h.deleteDefinition(ctx, 'link-types', 'supplies', 1)),
     ).toBe('VALIDATION_FAILED');
     expect(
-      await codeOf(h.deleteDefinition(ctx, 'link-types', 'ghost', 0)),
+      await codeOf(h.deleteDefinition(ctx, 'link-types', 'ghost', 1)),
     ).toBe('NOT_FOUND');
-    expect(await workspaceRows()).toEqual([]);
+    // Failed deletes don't change the etag.
+    expect(await workspaceRows()).toEqual([{tenant_id: TEST_TID, etag: 1}]);
 
-    // Deleting an unreferenced definition copies the template first.
+    // Deleting an unreferenced definition succeeds.
     expect(
-      await h.deleteDefinition(ctx, 'action-types', 'flagSupplier', 0),
-    ).toEqual({etag: 1});
+      await h.deleteDefinition(ctx, 'action-types', 'flagSupplier', 1),
+    ).toEqual({etag: 2});
     expect(
       (await h.listDefinitions(ctx, 'action-types')).items.map(a => a.apiName),
     ).toEqual(['switchSupplier', 'adjustSafetyStock']);
     expect(
       await codeOf(
-        h.deleteDefinition(ctx, 'action-types', 'switchSupplier', 0),
+        h.deleteDefinition(ctx, 'action-types', 'switchSupplier', 1),
       ),
     ).toBe('PRECONDITION_FAILED');
-    await h.deleteDefinition(ctx, 'action-types', 'switchSupplier', 1);
-    expect(await h.deleteDefinition(ctx, 'link-types', 'supplies', 2)).toEqual({
-      etag: 3,
+    await h.deleteDefinition(ctx, 'action-types', 'switchSupplier', 2);
+    expect(await h.deleteDefinition(ctx, 'link-types', 'supplies', 3)).toEqual({
+      etag: 4,
     });
   });
 
@@ -355,12 +373,12 @@ describe('ontology use cases', () => {
     expect(
       await codeOf(h.getDefinition(other, 'object-types', 'Warehouse')),
     ).toBe('NOT_FOUND');
-    // The other workspace starts its own copy from the template at etag 0.
+    // The other workspace starts its own copy from the blank template at etag 0.
     await h.putDefinition(
       other,
-      'link-types',
-      'storedIn',
-      {...STORED_IN, to: 'Product'},
+      'object-types',
+      'Depot',
+      {...WAREHOUSE, apiName: 'Depot'},
       0,
     );
     expect(await workspaceRows()).toEqual(
@@ -370,7 +388,7 @@ describe('ontology use cases', () => {
       ]),
     );
     expect(await workspaceRows()).toHaveLength(2);
-    expect((await h.getCompiledSchema(ctx)).linkTypes.storedIn).toBeUndefined();
+    expect((await h.getCompiledSchema(ctx)).objectTypes.Depot).toBeUndefined();
   });
 
   it('caches compiled copies by (tid, etag)', async () => {

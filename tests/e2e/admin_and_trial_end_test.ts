@@ -166,6 +166,7 @@ describe('admin', () => {
     const loaded = await sys.api('POST', '/workspace/sample-data', {
       token: admin,
       headers: {'x-act-as-tenant': owner.tid},
+      body: {scenarioId: 'supply-chain'},
     });
     expect(loaded.status).toBe(202);
     expect(await rowsOf(sys.dbs.objects, 'og_object', owner.tid)).toBe(80);
@@ -194,7 +195,10 @@ describe('trial end', () => {
   it('archives to B2, e-mails the link, purges every service and deletes the account', async () => {
     const sys = await createSystem();
     const owner = await signUp(sys, 'dora@example.com');
-    await sys.api('POST', '/workspace/sample-data', {token: owner.token});
+    await sys.api('POST', '/workspace/sample-data', {
+      token: owner.token,
+      body: {scenarioId: 'supply-chain'},
+    });
     await sys.drain();
     await sys.api('GET', '/situation/overview', {token: owner.token});
     await sys.api('PUT', '/object-types/Supplier', {

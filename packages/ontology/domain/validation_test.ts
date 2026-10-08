@@ -119,9 +119,10 @@ describe('supply-chain template', () => {
     }
   });
 
-  it('is registered as the default template', () => {
-    expect(DEFAULT_TEMPLATE.id).toBe('supply-chain');
-    expect(findTemplate('supply-chain')).toBe(DEFAULT_TEMPLATE);
+  it('is registered but no longer the default template', () => {
+    expect(DEFAULT_TEMPLATE.id).toBe('blank');
+    expect(findTemplate('supply-chain')).not.toBe(DEFAULT_TEMPLATE);
+    expect(findTemplate('blank')).toBe(DEFAULT_TEMPLATE);
     expect(findTemplate('nope')).toBeNull();
   });
 });

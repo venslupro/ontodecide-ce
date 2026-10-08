@@ -10,8 +10,10 @@
     "detail": "This workspace references the shared read-only template “{name}”. The first save copies it into your own ontology; after that every save takes effect immediately — there is no publishing or versioning."
   },
   "template": {
+    "blank": "Empty workspace",
     "supply-chain": "Supply chain risk"
   },
+  "blankNotice": "No ontology types yet. Create a new type on the left or load a scenario from the overview.",
   "unsaved": "Unsaved",
   "empty": "Select a definition on the left or create a new one.",
   "saved": "Saved “{name}”",
