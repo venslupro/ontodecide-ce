@@ -11,8 +11,8 @@ import type {Middleware} from './chain';
 /** Content-Security-Policy of API responses (same as the Pages `_headers`). */
 export const CSP = [
   "default-src 'self'",
-  "connect-src 'self'",
-  "script-src 'self' https://challenges.cloudflare.com",
+  "connect-src 'self' ws: wss:",
+  "script-src 'self' 'unsafe-eval' https://challenges.cloudflare.com",
   'frame-src https://challenges.cloudflare.com',
   "style-src 'self' 'unsafe-inline'",
   "frame-ancestors 'none'",
