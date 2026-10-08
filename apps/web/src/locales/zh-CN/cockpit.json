@@ -73,6 +73,8 @@
     "selectScenario": "选择场景…",
     "importFile": "导入文件",
     "loaded": "示例场景已开始加载",
+    "loadingData": "正在加载场景数据…",
+    "loadingHint": "正在准备对象、链接和本体 — {pct}%",
     "budgetUsed": "今日示例场景名额已用完，{at} 重置；你仍可导入文件。",
     "alreadyLoaded": "示例场景已加载过，正在刷新数据。"
   }

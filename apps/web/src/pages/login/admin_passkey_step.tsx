@@ -35,6 +35,7 @@ import {
 import {RecoveryCodes} from '../../features/identity/components/recovery_codes';
 import {isApiError} from '../../shared/api/errors';
 import {errorMessage} from '../../shared/api/error_message';
+import {qk} from '../../shared/api/query_keys';
 import {
   createPasskey,
   getPasskey,
@@ -153,12 +154,18 @@ export function AdminPasskeyStep({
       const credential = await createPasskey(options);
       const r = await addAdminPasskey(credential, stepUp);
       const me = useSession.getState().me;
-      if (me)
-        useSession.getState().setMe({
+      if (me) {
+        const updated = {
           ...me,
           passkeys: r.total,
           recoveryCodesLeft: r.recoveryCodes?.length ?? me.recoveryCodesLeft,
-        });
+        };
+        useSession.getState().setMe(updated);
+        // Keep the React Query cache in sync so the admin layout's useMe()
+        // does not overwrite the session store with the stale me (passkeys: 1,
+        // recoveryCodesLeft: 0) cached by applySession during runSetup.
+        qc.setQueryData(qk.me(), updated);
+      }
       if (r.recoveryCodes?.length) {
         setCodes(r.recoveryCodes);
         setPhase('codes');

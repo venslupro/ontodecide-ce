@@ -31,5 +31,6 @@
         "class_name": "SituationRoom"
       }
     ]
-  }
+  },
+  "observability": {"enabled": true, "head_sampling_rate": 0.5}
 }

@@ -73,6 +73,8 @@
     "selectScenario": "Choose a scenario…",
     "importFile": "Import a file",
     "loaded": "Loading the sample scenario",
+    "loadingData": "Loading scenario data…",
+    "loadingHint": "Preparing objects, links and ontology — {pct}%",
     "budgetUsed": "Today's sample scenario budget is used up; resets {at}. You can still import a file.",
     "alreadyLoaded": "The sample scenario was already loaded; refreshing."
   }
