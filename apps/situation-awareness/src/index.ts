@@ -181,9 +181,11 @@ export class SituationRoom
     // Fire-and-forget: return the 101 immediately so the handshake never
     // blocks on the snapshot. If the snapshot fails the socket stays open
     // and polling / the next frame refreshes the overview.
-    void this.core.connected(wrapSocket(server)).catch(e =>
-      console.error('situation.stream_connected_failed', String(e)),
-    );
+    void this.core
+      .connected(wrapSocket(server))
+      .catch(e =>
+        console.error('situation.stream_connected_failed', String(e)),
+      );
     return new Response(null, {status: 101, webSocket: client});
   }
 
