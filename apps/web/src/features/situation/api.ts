@@ -126,6 +126,11 @@ export function useLoadSample() {
       if (err) return;
       void qc.invalidateQueries({queryKey: ['situation']});
       void qc.invalidateQueries({queryKey: OBJECT_PREFIX});
+      // The workspace ontology switched templates; the object browser and
+      // ontology workbench depend on GET /ontology, so refresh it too.
+      void qc.invalidateQueries({queryKey: ['ontology']});
+      // Recommendations and scenario state may depend on the loaded data.
+      void qc.invalidateQueries({queryKey: ['decision']});
       void qc.invalidateQueries({queryKey: qk.me()});
     },
   });

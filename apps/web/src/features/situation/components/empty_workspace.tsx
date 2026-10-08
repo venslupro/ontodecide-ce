@@ -9,8 +9,8 @@
 
 import {BUILT_IN_SCENARIOS} from '@ontodecide/integration/contract';
 import {useNavigate} from '@tanstack/react-router';
-import {Clock, Database, Upload} from 'lucide-react';
-import {useMemo, useState} from 'react';
+import {Clock, Database, Loader2, Upload} from 'lucide-react';
+import {useEffect, useMemo, useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {errorMessage} from '../../../shared/api/error_message';
 import {isApiError} from '../../../shared/api/errors';
@@ -28,11 +28,31 @@ export function EmptyWorkspace() {
   const {quotas, timeZone} = useQuotas();
   const err = load.error;
   const [scenarioId, setScenarioId] = useState('');
+  const [progress, setProgress] = useState(0);
   const lang = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
   const selected = useMemo(
     () => BUILT_IN_SCENARIOS.find(s => s.id === scenarioId),
     [scenarioId],
   );
+
+  // Simulated loading progress while the sample-data mutation is in flight.
+  // The endpoint processes the import synchronously and returns 202; we cap
+  // the bar at 90 % until the mutation settles, then jump to 100 %.
+  useEffect(() => {
+    if (!load.isPending) {
+      setProgress(0);
+      return;
+    }
+    setProgress(0);
+    const start = Date.now();
+    const id = setInterval(() => {
+      const elapsed = (Date.now() - start) / 1000;
+      // Ease toward 90 % over ~12 s; never exceed it while pending.
+      const next = Math.min(0.9, 1 - Math.exp(-elapsed / 3));
+      setProgress(next);
+    }, 120);
+    return () => clearInterval(id);
+  }, [load.isPending]);
   return (
     <section
       className="glass flex flex-col items-center gap-4 px-6 py-12 text-center"
@@ -79,7 +99,10 @@ export function EmptyWorkspace() {
           disabled={!scenarioId || load.isPending}
           onClick={() =>
             load.mutate(scenarioId, {
-              onSuccess: () => toast.success(t('empty.loaded')),
+              onSuccess: () => {
+                setProgress(1);
+                toast.success(t('empty.loaded'));
+              },
             })
           }
         >
@@ -91,6 +114,31 @@ export function EmptyWorkspace() {
           {t('empty.importFile')}
         </Button>
       </div>
+      {load.isPending && (
+        <div
+          role="status"
+          className="flex w-full max-w-md flex-col items-center gap-2"
+        >
+          <div className="flex items-center gap-2 text-sm text-cyan">
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+            {t('empty.loadingData')}
+          </div>
+          <div
+            className="relative h-1.5 w-full overflow-hidden rounded-full bg-line-2"
+            aria-hidden
+          >
+            <div
+              className="h-full rounded-full bg-[linear-gradient(90deg,var(--cyan),var(--blue))] transition-[width] duration-150 ease-out"
+              style={{width: `${Math.round(progress * 100)}%`}}
+            />
+          </div>
+          <p className="text-xs text-muted">
+            {t('empty.loadingHint', {
+              pct: Math.round(progress * 100),
+            })}
+          </p>
+        </div>
+      )}
       {isApiError(err, 'QUOTA_EXCEEDED') ? (
         <p
           role="status"
