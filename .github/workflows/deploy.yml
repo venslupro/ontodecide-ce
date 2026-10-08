@@ -25,7 +25,7 @@
 #   object-graph        → ontology-manager
 #   situation-awareness → object-graph, ontology-manager
 #   decision-engine     → object-graph, situation-awareness, ontology-manager
-#   data-integration    → ontology-manager, object-graph
+#   data-integration    → ontology-manager, object-graph, situation-awareness
 #   identity-access     → TenantLifecycle of the five services above
 #   api-gateway         → all six services above
 #   web (Pages)         → api-gateway (Wrangler creates the Pages project and
@@ -185,7 +185,7 @@ jobs:
           admin-email: ${{ needs.approve.outputs.admin-email }}
 
   data-integration:
-    needs: [approve, ontology-manager, object-graph]
+    needs: [approve, ontology-manager, object-graph, situation-awareness]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
