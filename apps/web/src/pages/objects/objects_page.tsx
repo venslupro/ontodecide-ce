@@ -164,6 +164,27 @@ export function ObjectsPage() {
       />
     );
 
+  if (!modelLoading && model.types.length === 0) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader
+          breadcrumb={t('list.breadcrumb')}
+          title={t('list.title')}
+          description={t('list.description')}
+        />
+        <EmptyState
+          title={t('list.noTypes')}
+          description={t('list.noTypesHint')}
+          action={
+            <Button onClick={() => void navigate({to: '/imports/new'})}>
+              {t('list.import')}
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader

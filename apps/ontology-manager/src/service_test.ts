@@ -25,9 +25,15 @@ describe('createService', () => {
     const lc = rpcBinding(svc.lifecycle);
     const ctx = testCtx();
 
+    // Default is the blank template: no types, no index plan.
     const compiled = await rpc.getCompiledSchema(ctx);
     expect(compiled).toMatchObject({custom: false, etag: 0});
-    expect(compiled.indexPlan.length).toBeGreaterThan(0);
+    expect(compiled.indexPlan).toEqual([]);
+
+    // Load the supply-chain scenario so the workspace has a concrete ontology.
+    await rpc.setTemplate(ctx, 'supply-chain');
+    const sc = await rpc.getCompiledSchema(ctx);
+    expect(sc.indexPlan.length).toBeGreaterThan(0);
 
     const supplier = (await rpc.getDefinition(ctx, 'object-types', 'Supplier'))
       .item;
@@ -36,9 +42,9 @@ describe('createService', () => {
       'object-types',
       'Supplier',
       {...supplier, icon: 'truck'},
-      0,
+      1,
     );
-    expect(etag).toBe(1);
+    expect(etag).toBe(2);
     expect((await rpc.getOntology(ctx)).custom).toBe(true);
     expect(await lc.countTenant(TEST_TID)).toBe(1);
     expect(await lc.purgeTenant(TEST_TID, 500)).toEqual({

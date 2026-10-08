@@ -258,7 +258,7 @@ export function OntologyPage() {
         }
       />
 
-      {!o.custom && (
+      {!o.custom && o.templateId !== 'blank' && (
         <div
           role="note"
           data-testid="copy-on-write-notice"
@@ -270,6 +270,18 @@ export function OntologyPage() {
             <p className="mt-0.5 text-xs text-muted">
               {t('notice.detail', {name: templateName})}
             </p>
+          </div>
+        </div>
+      )}
+
+      {!o.custom && o.templateId === 'blank' && (
+        <div
+          role="note"
+          className="glass flex items-start gap-2.5 border-cyan/30 px-4 py-3 text-sm"
+        >
+          <Copy className="mt-0.5 size-4 shrink-0 text-cyan" aria-hidden />
+          <div>
+            <p className="font-medium text-text">{t('blankNotice')}</p>
           </div>
         </div>
       )}

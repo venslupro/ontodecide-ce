@@ -27,12 +27,10 @@ export function EmptyWorkspace() {
   const load = useLoadSample();
   const {quotas, timeZone} = useQuotas();
   const err = load.error;
-  const [scenarioId, setScenarioId] = useState(BUILT_IN_SCENARIOS[0]!.id);
+  const [scenarioId, setScenarioId] = useState('');
   const lang = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
   const selected = useMemo(
-    () =>
-      BUILT_IN_SCENARIOS.find(s => s.id === scenarioId) ??
-      BUILT_IN_SCENARIOS[0],
+    () => BUILT_IN_SCENARIOS.find(s => s.id === scenarioId),
     [scenarioId],
   );
   return (
@@ -57,22 +55,28 @@ export function EmptyWorkspace() {
           onChange={e => setScenarioId(e.target.value)}
           className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm text-text"
         >
+          <option value="" disabled>
+            {t('empty.selectScenario')}
+          </option>
           {BUILT_IN_SCENARIOS.map(s => (
             <option key={s.id} value={s.id}>
               {s.name[lang]}
             </option>
           ))}
         </select>
-        <p className="text-xs text-muted">
-          {selected.description[lang]} · {selected.objects} objects /{' '}
-          {selected.links} links
-        </p>
+        {selected && (
+          <p className="text-xs text-muted">
+            {selected.description[lang]} · {selected.objects} objects /{' '}
+            {selected.links} links
+          </p>
+        )}
       </div>
       <div className="flex flex-wrap justify-center gap-2">
         <Button
           variant="primary"
           size="lg"
           loading={load.isPending}
+          disabled={!scenarioId || load.isPending}
           onClick={() =>
             load.mutate(scenarioId, {
               onSuccess: () => toast.success(t('empty.loaded')),

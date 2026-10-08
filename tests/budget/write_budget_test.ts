@@ -53,6 +53,7 @@ describe('D1 write budget', () => {
     const before = written(sys);
     const res = await sys.api('POST', '/workspace/sample-data', {
       token: owner.token,
+      body: {scenarioId: 'supply-chain'},
     });
     expect(res.status).toBe(202);
     await sys.drain();
@@ -76,6 +77,7 @@ describe('D1 write budget', () => {
     const again = written(sys);
     const re = await sys.api('POST', '/workspace/sample-data', {
       token: owner.token,
+      body: {scenarioId: 'supply-chain'},
     });
     expect(re.status).toBe(202);
     await sys.drain();

@@ -70,6 +70,8 @@
     "noMatch": "No objects match",
     "empty": "No objects of this type yet",
     "emptyHint": "Import a file or load the sample scenario from the overview.",
+    "noTypes": "No object types defined",
+    "noTypesHint": "Load a scenario from the overview or create object types in the ontology workbench.",
     "import": "Import a file",
     "sortBy": "Sort by {prop}"
   },

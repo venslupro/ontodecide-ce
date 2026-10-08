@@ -1,10 +1,12 @@
 /**
- * @fileoverview Registry of the built-in shared read-only templates. CE
- * ships exactly one ("supply chain risk"); templates live in code and are
+ * @fileoverview Registry of built-in templates. A workspace starts from the
+ * BLANK_TEMPLATE (no scenario loaded); the six example scenarios are peers
+ * the user explicitly loads via setTemplate. Templates live in code and are
  * seeded into `ont_template` on first use.
  */
 
 import {
+  BLANK_TEMPLATE_ID,
   SUPPLY_CHAIN_TEMPLATE_ID,
   URBAN_EMERGENCY_TEMPLATE_ID,
   PREDICTIVE_MAINTENANCE_TEMPLATE_ID,
@@ -13,6 +15,11 @@ import {
   INTELLIGENCE_FUSION_TEMPLATE_ID,
 } from '../contract';
 import type {OntologyDef, TemplateSeeds} from '../contract';
+import {
+  BLANK_DEFINITION,
+  BLANK_SEEDS,
+  BLANK_TEMPLATE_VERSION,
+} from './packs/blank';
 import {
   SUPPLY_CHAIN_DEFINITION,
   SUPPLY_CHAIN_SEEDS,
@@ -52,17 +59,27 @@ export interface Template {
   seeds: TemplateSeeds;
 }
 
-/** Template new workspaces start from. */
+/**
+ * Template new workspaces start from: BLANK (no scenario loaded).
+ * A workspace acquires a concrete business-scenario ontology only when the
+ * user explicitly loads one via setTemplate.
+ */
 export const DEFAULT_TEMPLATE: Template = {
-  id: SUPPLY_CHAIN_TEMPLATE_ID,
-  version: SUPPLY_CHAIN_TEMPLATE_VERSION,
-  definition: SUPPLY_CHAIN_DEFINITION,
-  seeds: SUPPLY_CHAIN_SEEDS,
+  id: BLANK_TEMPLATE_ID,
+  version: BLANK_TEMPLATE_VERSION,
+  definition: BLANK_DEFINITION,
+  seeds: BLANK_SEEDS,
 };
 
-/** Every built-in template. */
+/** Every built-in template: blank default + six example scenarios. */
 export const BUILT_IN_TEMPLATES: readonly Template[] = [
   DEFAULT_TEMPLATE,
+  {
+    id: SUPPLY_CHAIN_TEMPLATE_ID,
+    version: SUPPLY_CHAIN_TEMPLATE_VERSION,
+    definition: SUPPLY_CHAIN_DEFINITION,
+    seeds: SUPPLY_CHAIN_SEEDS,
+  },
   {
     id: URBAN_EMERGENCY_TEMPLATE_ID,
     version: URBAN_EMERGENCY_TEMPLATE_VERSION,

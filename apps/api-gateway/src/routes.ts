@@ -501,17 +501,12 @@ export const ROUTES: AnyRoute[] = [
     service: 'INTEGRATION',
     scope: 'workspace',
     rate: ['write'],
-    body: z
-      .object({
-        scenarioId: z.string().min(1).default('supply-chain'),
-      })
-      .optional(),
+    body: z.object({
+      scenarioId: z.string().min(1),
+    }),
     handler: async (env, i) =>
       json(
-        await env.INTEGRATION.loadSample(
-          i.ctx!,
-          i.body?.scenarioId ?? 'supply-chain',
-        ),
+        await env.INTEGRATION.loadSample(i.ctx!, i.body.scenarioId),
         202,
       ),
   }),

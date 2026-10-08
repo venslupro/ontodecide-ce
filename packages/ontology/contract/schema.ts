@@ -268,6 +268,9 @@ export interface TemplateSeeds {
   automations: AutomationSeed[];
 }
 
+/** Id of the blank template (no scenario loaded). */
+export const BLANK_TEMPLATE_ID = 'blank';
+
 /** Built-in template ids (one per example scenario). */
 export const SUPPLY_CHAIN_TEMPLATE_ID = 'supply-chain';
 export const URBAN_EMERGENCY_TEMPLATE_ID = 'urban-emergency';
@@ -276,8 +279,9 @@ export const FINANCIAL_FRAUD_TEMPLATE_ID = 'financial-fraud';
 export const ENERGY_GRID_TEMPLATE_ID = 'energy-grid';
 export const INTELLIGENCE_FUSION_TEMPLATE_ID = 'intelligence-fusion';
 
-/** All built-in template ids. */
+/** All built-in template ids (blank + six example scenarios). */
 export const BUILT_IN_TEMPLATE_IDS = [
+  BLANK_TEMPLATE_ID,
   SUPPLY_CHAIN_TEMPLATE_ID,
   URBAN_EMERGENCY_TEMPLATE_ID,
   PREDICTIVE_MAINTENANCE_TEMPLATE_ID,

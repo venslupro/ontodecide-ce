@@ -68,7 +68,7 @@ describe('OntologyRpc and TenantLifecycle', () => {
     const page = await lc.exportTenant(TEST_TID, null);
     expect(page).toMatchObject({file: 'ontology.json', nextCursor: null});
     expect(JSON.parse(page.text)).toEqual({
-      templateId: 'supply-chain',
+      templateId: 'blank',
       templateVersion: '1.0.0',
     });
   });
@@ -78,14 +78,14 @@ describe('OntologyRpc and TenantLifecycle', () => {
     expect(await lc.countTenant(TEST_TID)).toBe(1);
     const doc = JSON.parse((await lc.exportTenant(TEST_TID, null)).text);
     expect(doc).toMatchObject({
-      templateId: 'supply-chain',
+      templateId: 'blank',
       templateVersion: '1.0.0',
       etag: 1,
       updatedAt: '2026-09-24T00:00:00.000Z',
     });
     expect(
       doc.definition.objectTypes.map((t: {apiName: string}) => t.apiName),
-    ).toEqual(['Supplier', 'Material', 'Product', 'Depot']);
+    ).toEqual(['Depot']);
   });
 
   it('purges the copy, writes the tombstone and then reads as empty', async () => {

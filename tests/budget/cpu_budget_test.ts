@@ -103,6 +103,7 @@ describe.skipIf(SKIP)('CPU budget', () => {
     dbs = [sys.dbs.objects, sys.dbs.ontology] as unknown as SqliteD1[];
     const res = await sys.api('POST', '/workspace/sample-data', {
       token: owner.token,
+      body: {scenarioId: 'supply-chain'},
     });
     expect(res.status).toBe(202);
     const list = await sys.api<{items: {rid: Rid}[]}>(
