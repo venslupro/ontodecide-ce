@@ -16,8 +16,7 @@
 #   push (main)       → Format … Apply, started together with CI and Deploy;
 #   workflow_dispatch → on main: up to Apply; on any other ref (e.g. a
 #                       branch without a PR): stops after Plan;
-#   schedule          → nightly drift check on main (Plan).
-#
+
 # Concurrency: runs on main share one serialized group (the B2 backend has
 # no verified locking); every other ref has its own group in which a newer
 # run cancels the older one.
@@ -31,8 +30,6 @@ on:
   pull_request:
   push:
     branches: [main]
-  schedule:
-    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
@@ -151,9 +148,6 @@ jobs:
           echo "exitcode=${code}" >> "$GITHUB_OUTPUT"
           { echo '### terraform plan'; echo '```'; tail -n 80 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           [[ ${code} -ne 1 ]]
-      - name: Drift detected
-        if: github.event_name == 'schedule' && steps.plan.outputs.exitcode == '2'
-        run: echo "::error::Infrastructure drift detected" && exit 1
 
   apply:
     name: Apply (production)

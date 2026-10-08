@@ -38,7 +38,8 @@
   },
   "trend": {
     "title": "关键指标趋势",
-    "aria": "{series} 的 {range} 趋势，含 {alerts} 个告警标记"
+    "aria": "{series} 的 {range} 趋势，含 {alerts} 个告警标记",
+    "none": "暂无指标数据"
   },
   "alerts": {
     "title": "实时告警",

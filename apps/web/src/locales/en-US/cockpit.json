@@ -38,7 +38,8 @@
   },
   "trend": {
     "title": "Key metric trends",
-    "aria": "{range} trend of {series} with {alerts} alert markers"
+    "aria": "{range} trend of {series} with {alerts} alert markers",
+    "none": "No KPI data yet"
   },
   "alerts": {
     "title": "Live alerts",
