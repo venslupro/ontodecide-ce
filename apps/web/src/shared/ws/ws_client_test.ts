@@ -87,6 +87,32 @@ describe('backoffDelay', () => {
 });
 
 describe('WsClient', () => {
+  it('opens a real WebSocket when createSocket is passed as undefined', async () => {
+    // The app passes `createSocket: config.createSocket`, which is undefined
+    // outside tests; it must not erase the default factory.
+    const opened: FakeSocket[] = [];
+    vi.stubGlobal(
+      'WebSocket',
+      class extends FakeSocket {
+        constructor(url: string) {
+          super(url);
+          opened.push(this);
+        }
+      },
+    );
+    try {
+      const {client, states} = setup({createSocket: undefined});
+      client.start();
+      await flush();
+      expect(opened).toHaveLength(1);
+      opened[0].open();
+      expect(states.at(-1)).toBe('open');
+      client.stop();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('fetches a fresh ticket for every connection and sends heartbeat pings', async () => {
     const t = setup();
     t.client.start();
