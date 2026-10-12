@@ -43,6 +43,26 @@ async function toMapping(user: ReturnType<typeof userEvent.setup>, file: File) {
 }
 
 describe('ImportWizardPage', () => {
+  it('points a blank workspace to the ontology and the example scenarios', async () => {
+    businessDb.ontology.definition.objectTypes = [];
+    renderWithProviders(<ImportWizardPage />, {url: '/imports/new'});
+    expect(
+      await screen.findByText('当前工作区还没有对象类型'),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/目标对象类型/)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', {name: '去定义对象类型'})).toHaveAttribute(
+      'href',
+      '/ontology',
+    );
+    expect(screen.getByRole('link', {name: '加载示例场景'})).toHaveAttribute(
+      'href',
+      '/cockpit',
+    );
+    expect(
+      screen.getByRole('button', {name: '下一步：上传文件'}),
+    ).toBeDisabled();
+  });
+
   it('parses, maps, validates and uploads in batches', async () => {
     const user = userEvent.setup();
     const {router} = renderWithProviders(<ImportWizardPage />, {
