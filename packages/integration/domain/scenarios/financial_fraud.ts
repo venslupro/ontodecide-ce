@@ -7,6 +7,9 @@
  * exist before their sources (otherwise the upsert rejects with REF_MISSING):
  * Customer owns Account, so Account is written first; Transaction references
  * Account via `from`/`to`, so Account is already present.
+ *
+ * `samples/financial-fraud/*.csv` contain exactly these rows (checked by
+ * scenarios_test) so the manual import demo produces the same graph.
  */
 
 import type {Row, SampleDataset} from '../../contract';

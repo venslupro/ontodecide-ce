@@ -1,0 +1,7 @@
+incidentId,type,severity,status,description,node
+INC-001,accident,HIGH,open,Rear-end collision on Riverside Avenue,TN-002
+INC-002,fire,CRITICAL,open,Warehouse fire near North Gate Junction,TN-003
+INC-003,congestion,MEDIUM,resolved,Rush hour congestion at Mall Intersection,TN-006
+INC-004,flooding,HIGH,open,Waterlogging at Port Terminal A,TN-009
+INC-005,collision,CRITICAL,open,Multi-vehicle pile-up on Bridge Southbound,TN-012
+INC-006,roadwork,LOW,resolved,Scheduled roadwork on West Park Loop,TN-005

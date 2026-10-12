@@ -55,4 +55,28 @@ describe('createService', () => {
       (await rpc.getTemplateSeeds('supply-chain')).kpis.length,
     ).toBeGreaterThan(0);
   });
+
+  it('switches the template of an existing copy (back to blank too)', async () => {
+    const svc = createService(
+      {
+        ONTOLOGY_DB: createTestD1('ontology-manager'),
+        ENVIRONMENT: 'test',
+        APP_VERSION: '2.4.0',
+      },
+      {clock: new FixedClock(), logger: silentLogger},
+    );
+    const rpc = rpcBinding(svc.rpc);
+    const ctx = testCtx();
+    await rpc.setTemplate(ctx, 'supply-chain');
+    await rpc.setTemplate(ctx, 'energy-grid');
+    expect((await rpc.getOntology(ctx)).templateId).toBe('energy-grid');
+    expect((await rpc.getCompiledSchema(ctx)).templateId).toBe('energy-grid');
+    expect(await rpc.getTemplateSeeds('energy-grid')).toBeTruthy();
+
+    await rpc.setTemplate(ctx, 'blank');
+    const blank = await rpc.getCompiledSchema(ctx);
+    expect(blank.templateId).toBe('blank');
+    expect(blank.objectTypes).toEqual({});
+    expect((await rpc.getOntology(ctx)).templateId).toBe('blank');
+  });
 });

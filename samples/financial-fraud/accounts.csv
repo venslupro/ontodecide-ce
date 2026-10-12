@@ -1,0 +1,13 @@
+accountId,holderName,type,balance,riskScore,status
+ACC-001,Zhang Wei,personal,158000,12,active
+ACC-002,Zhang Wei,business,820000,28,active
+ACC-003,Li Na,personal,45200,8,active
+ACC-004,Wang Qiang,personal,9800,65,frozen
+ACC-005,Wang Qiang,business,1250000,88,frozen
+ACC-006,Liu Yang,personal,67300,15,active
+ACC-007,Chen Min,personal,2300,91,closed
+ACC-008,Zhao Lei,business,2100000,34,active
+ACC-009,Sun Li,personal,51000,47,active
+ACC-010,Sun Li,business,430000,72,frozen
+ACC-011,Zhou Jie,personal,89000,22,active
+ACC-012,Zhou Jie,business,670000,55,active

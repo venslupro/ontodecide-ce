@@ -18,6 +18,8 @@ import type {RecRecord, TokenUsage} from '../domain';
 export interface ScenarioRepository {
   insert(s: ScenarioDto): Promise<void>;
   get(id: string): Promise<ScenarioDto | null>;
+  /** Deletes every scenario of the workspace; returns how many. */
+  deleteAll(): Promise<number>;
 }
 
 /** Fields written when a decision is claimed. */
@@ -37,6 +39,11 @@ export interface RecommendationRepository {
     q: {status?: RecStatus},
     page: PageRequest,
   ): Promise<PageResult<RecRecord>>;
+  /**
+   * Deletes every recommendation that was not executed (executed ones stay:
+   * the object-graph action audit references them). Returns how many.
+   */
+  deleteUnexecuted(): Promise<number>;
   /** Persists Proposed → Expired for due rows (all, or one id). */
   expireDue(nowMs: number, id?: string): Promise<number>;
   /**

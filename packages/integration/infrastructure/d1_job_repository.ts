@@ -232,4 +232,21 @@ export class D1JobRepository extends TenantRepository implements JobRepository {
       nowMs,
     ).run();
   }
+
+  async clearWorkspace(
+    nowMs: number,
+  ): Promise<{jobs: number; mappings: number}> {
+    const [jobs, mappings] = await this.db.batch([
+      this.stmt(
+        `UPDATE int_job SET status = 'FAILED', updated_at = ?2
+         WHERE tenant_id = ?1 AND status = 'RECEIVING'`,
+        nowMs,
+      ),
+      this.stmt('DELETE FROM int_mapping WHERE tenant_id = ?1'),
+    ]);
+    return {
+      jobs: Number(jobs.meta.changes ?? 0),
+      mappings: Number(mappings.meta.changes ?? 0),
+    };
+  }
 }

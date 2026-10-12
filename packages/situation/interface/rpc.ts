@@ -76,5 +76,6 @@ export function createSituationRpc(rooms: RoomResolver): SituationRpc {
     pushRecommendation: async (ctx, rec) =>
       room(ctx).pushRecommendation(ctx, rec),
     resetForTemplate: async ctx => room(ctx).resetForTemplate(ctx),
+    clearWorkspace: async ctx => room(ctx).clearWorkspace(ctx),
   };
 }

@@ -9,7 +9,9 @@
 
 import {AppError} from '@ontodecide/shared-kernel';
 import {TenantRepository} from '@ontodecide/shared-kernel/d1';
+import {CLEAR_WORKSPACE_ACTION} from '../contract/types';
 import type {
+  ClearAudit,
   CommitOutcome,
   GuardedUpdate,
   HashedObject,
@@ -362,5 +364,35 @@ export class D1ObjectWriter extends TenantRepository implements ObjectWriter {
       if (isUniqueViolation(e, 'og_action_log')) return 'duplicate';
       throw e;
     }
+  }
+
+  async clearAll(audit: ClearAudit): Promise<{objects: number; links: number}> {
+    const counts = `json_object(
+         'objects', (SELECT COUNT(*) FROM og_object WHERE tenant_id = ?1),
+         'links', (SELECT COUNT(*) FROM og_link WHERE tenant_id = ?1))`;
+    const results = await this.db.batch([
+      // Runs first, so the counts are taken before the deletes.
+      this.stmt(
+        `INSERT INTO og_action_log (tenant_id, id, action_type, target_rid,
+           params, before, after, actor, actor_user_id, recommendation_id,
+           idempotency_key, result, executed_at)
+         VALUES (?1, ?2, ?3, '', ${counts}, '{}', '{}', ?4, ?5, NULL, ?6,
+           ${counts}, ?7)`,
+        audit.id,
+        CLEAR_WORKSPACE_ACTION,
+        audit.actor,
+        audit.actorUserId,
+        `clear:${audit.id}`,
+        audit.executedAt,
+      ),
+      this.stmt('DELETE FROM og_prop_index WHERE tenant_id = ?1'),
+      this.stmt('DELETE FROM og_link WHERE tenant_id = ?1'),
+      this.stmt('DELETE FROM og_object WHERE tenant_id = ?1'),
+      this.stmt('DELETE FROM domain_event WHERE tenant_id = ?1'),
+    ]);
+    return {
+      links: Number(results[2].meta.changes ?? 0),
+      objects: Number(results[3].meta.changes ?? 0),
+    };
   }
 }

@@ -3,6 +3,7 @@
  */
 
 export * from './batch_ingest';
+export * from './clear_handler';
 export * from './draft_handler';
 export * from './import_handlers';
 export * from './ports';

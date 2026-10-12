@@ -10,7 +10,7 @@
 import {BUILT_IN_SCENARIOS} from '@ontodecide/integration/contract';
 import {useNavigate} from '@tanstack/react-router';
 import {Clock, Database, Loader2, Upload} from 'lucide-react';
-import {useEffect, useMemo, useState} from 'react';
+import {useEffect, useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {errorMessage} from '../../../shared/api/error_message';
 import {isApiError} from '../../../shared/api/errors';
@@ -30,10 +30,6 @@ export function EmptyWorkspace() {
   const [scenarioId, setScenarioId] = useState('');
   const [progress, setProgress] = useState(0);
   const lang = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
-  const selected = useMemo(
-    () => BUILT_IN_SCENARIOS.find(s => s.id === scenarioId),
-    [scenarioId],
-  );
 
   // Simulated loading progress while the sample-data mutation is in flight.
   // The endpoint processes the import synchronously and returns 202; we cap
@@ -65,32 +61,43 @@ export function EmptyWorkspace() {
         {t('empty.title')}
       </h2>
       <p className="max-w-xl text-sm text-muted">{t('empty.description')}</p>
-      <div className="flex w-full max-w-md flex-col gap-2">
-        <label className="sr-only" htmlFor="scenario-select">
-          {t('empty.selectScenario')}
-        </label>
-        <select
-          id="scenario-select"
-          value={scenarioId}
-          onChange={e => setScenarioId(e.target.value)}
-          className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm text-text"
-        >
-          <option value="" disabled>
-            {t('empty.selectScenario')}
-          </option>
+      <fieldset className="w-full max-w-4xl">
+        <legend className="sr-only">{t('empty.selectScenario')}</legend>
+        <div className="grid grid-cols-1 gap-3 text-left sm:grid-cols-2 lg:grid-cols-3">
           {BUILT_IN_SCENARIOS.map(s => (
-            <option key={s.id} value={s.id}>
-              {s.name[lang]}
-            </option>
+            <label
+              key={s.id}
+              className="flex cursor-pointer flex-col gap-1.5 rounded-lg border border-line bg-bg p-3 transition-colors hover:border-cyan/40 has-[:checked]:border-cyan has-[:checked]:bg-cyan/10 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-cyan/60"
+            >
+              <span className="flex items-start gap-2">
+                <input
+                  type="radio"
+                  name="scenario"
+                  value={s.id}
+                  checked={scenarioId === s.id}
+                  disabled={load.isPending}
+                  onChange={() => setScenarioId(s.id)}
+                  aria-labelledby={`scenario-${s.id}-name`}
+                  aria-describedby={`scenario-${s.id}-desc`}
+                  className="mt-0.5 accent-[var(--cyan)]"
+                />
+                <span
+                  id={`scenario-${s.id}-name`}
+                  className="text-sm font-medium text-text"
+                >
+                  {s.name[lang]}
+                </span>
+              </span>
+              <span id={`scenario-${s.id}-desc`} className="text-xs text-muted">
+                {s.description[lang]}
+              </span>
+              <span className="mt-auto text-xs text-cyan">
+                {t('empty.scenarioSize', {objects: s.objects, links: s.links})}
+              </span>
+            </label>
           ))}
-        </select>
-        {selected && (
-          <p className="text-xs text-muted">
-            {selected.description[lang]} · {selected.objects} objects /{' '}
-            {selected.links} links
-          </p>
-        )}
-      </div>
+        </div>
+      </fieldset>
       <div className="flex flex-wrap justify-center gap-2">
         <Button
           variant="primary"
@@ -152,6 +159,10 @@ export function EmptyWorkspace() {
               timeZone,
             ),
           })}
+        </p>
+      ) : isApiError(err, 'CONFLICT') ? (
+        <p role="alert" className="text-xs text-crit">
+          {t('empty.notEmpty')}
         </p>
       ) : err ? (
         <p role="alert" className="text-xs text-crit">

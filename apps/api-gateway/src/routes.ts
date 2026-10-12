@@ -61,7 +61,13 @@ import {
   sessionResultResponse,
   setupResponse,
 } from './auth_handlers';
-import {exportBff, getMeBff, getObjectWithLinksBff, overviewBff} from './bff';
+import {
+  clearWorkspaceBff,
+  exportBff,
+  getMeBff,
+  getObjectWithLinksBff,
+  overviewBff,
+} from './bff';
 import {empty, json, jsonWithEtag} from './http';
 import {OPENAPI_YAML} from './openapi_spec';
 import {route, type AnyRoute, type RouteHandler} from './route_types';
@@ -506,6 +512,15 @@ export const ROUTES: AnyRoute[] = [
     }),
     handler: async (env, i) =>
       json(await env.INTEGRATION.loadSample(i.ctx!, i.body.scenarioId), 202),
+  }),
+  route({
+    op: 'clearWorkspace',
+    method: 'POST',
+    path: '/workspace/clear',
+    service: 'OBJECTS',
+    scope: 'workspace',
+    rate: ['write'],
+    handler: (env, i) => clearWorkspaceBff(env, i.ctx!),
   }),
 
   // —— archive deletion links (public, by IP) ——

@@ -8,6 +8,7 @@ import type {
   ActionLogDto,
   ActionResult,
   ApplyActionCmd,
+  ClearedGraph,
   GraphSlice,
   GraphStats,
   ImpactQuery,
@@ -60,6 +61,13 @@ export interface ObjectGraphRpc {
    * are VALIDATION_FAILED (422).
    */
   applyAction(ctx: CallCtx, cmd: ApplyActionCmd): Promise<ActionResult>;
+  /**
+   * Deletes every object, link, property-index row and undelivered outbox
+   * row of the workspace in one batch and appends a `$clearWorkspace`
+   * audit entry (the action audit itself is kept). Owner or admin only;
+   * idempotent.
+   */
+  clearWorkspace(ctx: CallCtx): Promise<ClearedGraph>;
   /** Action audit of one object (newest first). */
   listActionLog(
     ctx: CallCtx,

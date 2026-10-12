@@ -1,0 +1,9 @@
+relationshipId,type,confidence,description
+REL-001,associatedWith,0.82,Business partnership between Northwind and Blackwood
+REL-002,locatedAt,0.95,Northwind Trading operates from Port of Rotterdam
+REL-003,partOf,0.7,Container Yard 7 is part of Port of Rotterdam
+REL-004,associatedWith,0.65,Sarah Chen is an employee of Northwind Trading
+REL-005,locatedAt,0.88,East Gate Warehouse is located in Freeport Zone
+REL-006,associatedWith,0.75,Crimson Logistics has ties to Blackwood Corp
+REL-007,partOf,0.9,Shadow Summit event involved Alex Mercer and Blackwood
+REL-008,associatedWith,0.58,Maria Lopez has known connections to Viktor Sokolov

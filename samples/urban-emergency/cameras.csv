@@ -1,0 +1,13 @@
+cameraId,name,location,status,node
+CAM-001,Central Plaza Camera,Central Plaza,online,TN-001
+CAM-002,Riverside Avenue Camera,Riverside Avenue,online,TN-002
+CAM-003,North Gate Junction Camera,North Gate Junction,online,TN-003
+CAM-004,University Crossroad Camera,University Crossroad,online,TN-004
+CAM-005,West Park Loop Camera,West Park Loop,online,TN-005
+CAM-006,Mall Intersection Camera,Mall Intersection,offline,TN-006
+CAM-007,Steel Plant Gate Camera,Steel Plant Gate,online,TN-007
+CAM-008,Chemicals Depot Camera,Chemicals Depot,online,TN-008
+CAM-009,Port Terminal A Camera,Port Terminal A,online,TN-009
+CAM-010,Port Terminal B Camera,Port Terminal B,offline,TN-010
+CAM-011,Highway E1 Ramp Camera,Highway E1 Ramp,online,TN-011
+CAM-012,Bridge Southbound Camera,Bridge Southbound,online,TN-012

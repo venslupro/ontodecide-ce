@@ -3,6 +3,7 @@
  */
 
 export * from './ai_ranker';
+export * from './clear_workspace';
 export * from './generate_recommendation';
 export * from './ports';
 export * from './push';

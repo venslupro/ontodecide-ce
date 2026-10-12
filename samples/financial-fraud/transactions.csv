@@ -1,0 +1,16 @@
+txnId,fromAccount,toAccount,amount,currency,status,flagged
+TXN-001,ACC-001,ACC-002,5000,CNY,completed,false
+TXN-002,ACC-003,ACC-006,1200,CNY,completed,false
+TXN-003,ACC-004,ACC-008,280000,CNY,completed,true
+TXN-004,ACC-005,ACC-010,750000,CNY,pending,true
+TXN-005,ACC-006,ACC-003,3000,CNY,completed,false
+TXN-006,ACC-007,ACC-011,150000,CNY,completed,true
+TXN-007,ACC-008,ACC-012,42000,CNY,completed,false
+TXN-008,ACC-009,ACC-004,18000,CNY,failed,false
+TXN-009,ACC-010,ACC-005,320000,USD,pending,true
+TXN-010,ACC-011,ACC-001,9000,CNY,completed,false
+TXN-011,ACC-012,ACC-008,150000,CNY,completed,false
+TXN-012,ACC-002,ACC-007,600,CNY,completed,false
+TXN-013,ACC-005,ACC-009,95000,CNY,completed,true
+TXN-014,ACC-004,ACC-006,2200,CNY,failed,false
+TXN-015,ACC-011,ACC-003,110000,CNY,pending,true

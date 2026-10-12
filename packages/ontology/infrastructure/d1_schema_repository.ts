@@ -100,8 +100,11 @@ export class D1WorkspaceSchemaRepository
   async update(w: SchemaWrite, ifMatch: number): Promise<boolean> {
     const res = await this.stmt(
       `UPDATE ont_workspace_schema
-       SET definition = ?2, compiled = ?3, updated_at = ?4, etag = etag + 1
-       WHERE tenant_id = ?1 AND etag = ?5`,
+       SET template_id = ?2, template_version = ?3, definition = ?4,
+           compiled = ?5, updated_at = ?6, etag = etag + 1
+       WHERE tenant_id = ?1 AND etag = ?7`,
+      w.templateId,
+      w.templateVersion,
       JSON.stringify(w.definition),
       JSON.stringify(w.compiled),
       w.updatedAt,

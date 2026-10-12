@@ -1,0 +1,9 @@
+lineId,fromSubstation,toSubstation,current,capacity,status
+TL-001,SS-001,SS-002,380,400,normal
+TL-002,SS-001,SS-003,210,300,normal
+TL-003,SS-002,SS-004,420,400,overloaded
+TL-004,SS-003,SS-005,120,200,normal
+TL-005,SS-004,SS-006,290,300,normal
+TL-006,SS-005,SS-007,130,150,normal
+TL-007,SS-006,SS-008,160,150,overloaded
+TL-008,SS-008,SS-010,0,100,down

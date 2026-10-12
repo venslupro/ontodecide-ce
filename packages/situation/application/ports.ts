@@ -117,6 +117,12 @@ export interface RoomStore {
   ): void;
   saveKpiState(id: string, state: KpiState, now: number): void;
   deleteKpi(id: string): void;
+  /**
+   * Deletes everything derived from the workspace's scenario: KPIs, metric
+   * history, automations, alerts and the object cache. Event dedupe, stream
+   * tickets and the WebSocket outbox stay.
+   */
+  clearScenarioData(): void;
 
   lastPoint(metric: string): PointRecord | null;
   pointAtOrBefore(metric: string, ts: number): PointRecord | null;
@@ -243,6 +249,8 @@ export interface SituationRoomApi {
   pushRecommendation(ctx: CallCtx, rec: RecommendationSummary): Promise<void>;
   /** Reloads KPIs and sample automations after a template switch. */
   resetForTemplate(ctx: CallCtx): Promise<void>;
+  /** Clears the room's scenario data and re-initializes it. */
+  clearWorkspace(ctx: CallCtx): Promise<void>;
   applyEvents(
     tid: string,
     events: DomainEventMsg[],

@@ -1,0 +1,13 @@
+trafficNodeId,name,area,congestionLevel,status
+TN-001,Central Plaza,Downtown,78,congested
+TN-002,Riverside Avenue,Downtown,32,normal
+TN-003,North Gate Junction,North District,91,blocked
+TN-004,University Crossroad,North District,45,congested
+TN-005,West Park Loop,West District,18,normal
+TN-006,Mall Intersection,West District,62,congested
+TN-007,Steel Plant Gate,East Industrial,27,normal
+TN-008,Chemicals Depot,East Industrial,11,normal
+TN-009,Port Terminal A,South Port,55,congested
+TN-010,Port Terminal B,South Port,7,normal
+TN-011,Highway E1 Ramp,East Industrial,83,congested
+TN-012,Bridge Southbound,South Port,96,blocked

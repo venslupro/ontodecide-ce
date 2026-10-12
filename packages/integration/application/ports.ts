@@ -57,6 +57,11 @@ export interface JobRepository {
   /** Stored rejects (≤ 200), by row. */
   rejects(jobId: string): Promise<RejectDto[]>;
   markFailed(id: string, nowMs: number): Promise<void>;
+  /**
+   * In one batch: fails every RECEIVING job (no further batches are
+   * accepted) and deletes the saved mappings. Job history is kept.
+   */
+  clearWorkspace(nowMs: number): Promise<{jobs: number; mappings: number}>;
 }
 
 /** Usage counter keys of int_usage. */

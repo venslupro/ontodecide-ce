@@ -39,6 +39,9 @@ export class IntegrationRpc extends WorkerEntrypoint<Env> implements Contract {
   loadSample(...a: Parameters<Contract['loadSample']>) {
     return svc(this.env).rpc.loadSample(...a);
   }
+  clearWorkspace(...a: Parameters<Contract['clearWorkspace']>) {
+    return svc(this.env).rpc.clearWorkspace(...a);
+  }
   usage(...a: Parameters<Contract['usage']>) {
     return svc(this.env).rpc.usage(...a);
   }

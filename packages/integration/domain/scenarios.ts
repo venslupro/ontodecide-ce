@@ -9,7 +9,7 @@
  */
 
 import {BUILT_IN_SCENARIOS, type SampleScenario} from '../contract';
-import {sampleDatasets} from './sample_scenario';
+import {SAMPLE_SEED_ROWS, sampleDatasets} from './sample_scenario';
 import {urbanEmergencyDatasets} from './scenarios/urban_emergency';
 import {predictiveMaintenanceDatasets} from './scenarios/predictive_maintenance';
 import {financialFraudDatasets} from './scenarios/financial_fraud';
@@ -18,7 +18,7 @@ import {intelligenceFusionDatasets} from './scenarios/intelligence_fusion';
 
 /** Seed-row budgets per scenario (D1 rows reserved against the daily cap). */
 const SEED_ROWS: Record<string, number> = {
-  'supply-chain': 1300,
+  'supply-chain': SAMPLE_SEED_ROWS,
   'urban-emergency': 600,
   'predictive-maintenance': 700,
   'financial-fraud': 800,

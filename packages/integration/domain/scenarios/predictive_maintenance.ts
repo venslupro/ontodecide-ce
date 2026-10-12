@@ -2,6 +2,9 @@
  * @fileoverview Predictive-maintenance sample scenario (33 objects, 23 links):
  * 10 Equipment, 15 Sensor (mountedOn), 8 MaintenanceRecord (for). Includes
  * low-health-score and down-status equipment for demo alerts.
+ *
+ * `samples/predictive-maintenance/*.csv` contain exactly these rows (checked by
+ * scenarios_test) so the manual import demo produces the same graph.
  */
 
 import type {Row, SampleDataset} from '../../contract';

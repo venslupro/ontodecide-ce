@@ -1,0 +1,9 @@
+customerId,name,email,kycStatus,accounts
+CUST-001,Zhang Wei,zhang.wei@email.com,verified,ACC-001;ACC-002
+CUST-002,Li Na,li.na@email.com,verified,ACC-003
+CUST-003,Wang Qiang,wang.qiang@email.com,pending,ACC-004;ACC-005
+CUST-004,Liu Yang,liu.yang@email.com,verified,ACC-006
+CUST-005,Chen Min,chen.min@email.com,rejected,ACC-007
+CUST-006,Zhao Lei,zhao.lei@email.com,verified,ACC-008
+CUST-007,Sun Li,sun.li@email.com,pending,ACC-009;ACC-010
+CUST-008,Zhou Jie,zhou.jie@email.com,verified,ACC-011;ACC-012

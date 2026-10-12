@@ -1,10 +1,13 @@
 /**
- * @fileoverview Intelligence-fusion sample scenario (33 objects, 26 links):
+ * @fileoverview Intelligence-fusion sample scenario (33 objects, 48 links):
  * 15 Entity (relatedTo), 10 IntelligenceReport (mentions), 8 Relationship.
  * Includes high-risk entities and low-confidence reports for demo alerts.
  * The `relatedTo` link (Entity→Entity) is declared on the Entity dataset
  * because link validation requires the link type's `from` to match the
  * dataset target type.
+ *
+ * `samples/intelligence-fusion/*.csv` contain exactly these rows (checked by
+ * scenarios_test) so the manual import demo produces the same graph.
  */
 
 import type {Row, SampleDataset} from '../../contract';

@@ -168,6 +168,14 @@ export class D1RecommendationRepository
     };
   }
 
+  async deleteUnexecuted(): Promise<number> {
+    const res = await this.stmt(
+      `DELETE FROM dec_recommendation
+       WHERE tenant_id = ?1 AND status <> 'Executed'`,
+    ).run();
+    return res.meta.changes ?? 0;
+  }
+
   async expireDue(nowMs: number, id?: string): Promise<number> {
     const res = await this.stmt(
       `UPDATE dec_recommendation

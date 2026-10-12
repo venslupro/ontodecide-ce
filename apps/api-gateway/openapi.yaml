@@ -317,8 +317,11 @@ paths:
         urban-emergency, predictive-maintenance, financial-fraud,
         energy-grid, intelligence-fusion), switches the workspace ontology
         to that scenario's template, and loads its sample data. Reloading
-        is allowed so users can switch scenarios; upserts are keyed so the
-        data stays idempotent. The situation room's KPIs and sample
+        the same scenario is allowed; upserts are keyed so the data stays
+        idempotent. Loading a different scenario requires an empty
+        workspace (409 CONFLICT, detail WORKSPACE_NOT_EMPTY, otherwise) so
+        existing objects are never left without their ontology types. The
+        situation room's KPIs and sample
         automations are reset to match the newly applied template. Runs
         within the global daily seed budget. The system is not coupled to
         any scenario — users may also import their own data and model a
@@ -341,7 +344,33 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Job'}
+        '409': {$ref: '#/components/responses/Problem'}
         '429': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+
+  /workspace/clear:
+    post:
+      tags: [workspace]
+      operationId: clearWorkspace
+      summary: Clear the workspace back to its blank state
+      description: |
+        Removes the current scenario's business data and returns the
+        workspace to the blank template, as if newly created: objects,
+        links, the ontology (reset to the blank template, discarding any
+        customisation), KPIs, automations (including user-defined ones),
+        alerts, saved mappings, scenarios and recommendations that were not
+        executed. Unfinished imports are failed. Kept: the account, usage
+        counters (nothing is refunded), import history, the action audit
+        (which gains one `$clearWorkspace` entry) and executed
+        recommendations. Idempotent; a failed clear can be retried. A
+        different example scenario can be loaded afterwards.
+      parameters: [{$ref: '#/components/parameters/ActAsTenant'}]
+      responses:
+        '200':
+          description: What was removed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkspaceCleared'}
         default: {$ref: '#/components/responses/Problem'}
 
   # ——————————————————————————————— archive ———————————————————————————————
@@ -1997,6 +2026,15 @@ components:
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
         rejects: {type: array, items: {$ref: '#/components/schemas/Reject'}}
+    WorkspaceCleared:
+      type: object
+      required: [objects, links, scenarios, recommendations, mappings]
+      properties:
+        objects: {type: integer}
+        links: {type: integer}
+        scenarios: {type: integer}
+        recommendations: {type: integer}
+        mappings: {type: integer}
     JobPage:
       type: object
       required: [items, nextCursor]

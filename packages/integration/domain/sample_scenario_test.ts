@@ -1,9 +1,9 @@
 /**
- * @fileoverview Tests for the built-in sample scenario and its CSV files.
+ * @fileoverview Supply-chain-specific checks of the built-in sample
+ * scenario (row/link counts, template fit and the CSV mirror are checked for
+ * every scenario in scenarios_test).
  */
 
-import {readFileSync} from 'node:fs';
-import {join} from 'node:path';
 import {
   compileOntology,
   SUPPLY_CHAIN_DEFINITION,
@@ -11,17 +11,8 @@ import {
 import {describe, expect, it} from 'vitest';
 import {SAMPLE_SCENARIO} from '../contract';
 import {mapRows, mappingIssues} from './mapping';
-import {SAMPLE_ROWS, sampleDatasets, toCsv} from './sample_scenario';
+import {SAMPLE_ROWS, sampleDatasets} from './sample_scenario';
 import {supplyChainSchema} from './schema_fixture';
-
-const SAMPLES_DIR = join(
-  import.meta.dirname,
-  '..',
-  '..',
-  '..',
-  'samples',
-  'supply-chain',
-);
 
 describe('sample scenario', () => {
   const schema = supplyChainSchema();
@@ -105,12 +96,5 @@ describe('sample scenario', () => {
         r => r.stock !== undefined && Number(r.stock) < Number(r.safetyStock),
       ).length,
     ).toBeGreaterThan(2);
-  });
-
-  it('matches samples/supply-chain/*.csv', () => {
-    for (const ds of datasets) {
-      const csv = readFileSync(join(SAMPLES_DIR, ds.file), 'utf8');
-      expect(csv).toBe(toCsv(ds.rows));
-    }
   });
 });

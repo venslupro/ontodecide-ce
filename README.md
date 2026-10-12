@@ -72,7 +72,7 @@ infra/                    Terraform: D1, Queues, B2 bucket + keys, Turnstile, pa
 scripts/                  gen_wrangler.mjs, gen_secrets.mjs, dev.sh, smoke.mjs, d1_migrate.mjs,
                           check_sql.mjs, check_openapi.mjs, check_bundle.mjs,
                           admin_pending_change.mjs, reset.sh, cleanup_legacy.sh
-samples/supply-chain/     demo CSVs matching the template
+samples/<scenario>/       demo CSVs mirroring each built-in scenario's sample rows
 tests/e2e/                in-process full-loop tests through the gateway
 tests/budget/             D1 rows-written and CPU timing budgets
 tests/contract/           response bodies vs openapi.yaml

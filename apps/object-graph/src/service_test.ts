@@ -1204,6 +1204,91 @@ describe('applyAction', () => {
   });
 });
 
+describe('clearWorkspace', () => {
+  let h: Harness;
+  const other = testCtx({tid: OTHER_TID, sub: '01K6A000000000000000000U02'});
+  beforeEach(async () => {
+    h = setup();
+    h.failQueue(true); // keep an undelivered outbox row
+    await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j',
+      seq: 1,
+      cmds: [
+        part('P1'),
+        part('P2', {}, 2),
+        supplier('S1', {}, 3, [supplies('P1'), supplies('P2')]),
+      ],
+    });
+    h.failQueue(false);
+    await h.rpc.upsertBatch(other, {
+      jobId: 'j',
+      seq: 1,
+      cmds: [supplier('S9')],
+    });
+  });
+
+  const rows = (table: string, tid = TEST_TID) =>
+    count(h, `SELECT COUNT(*) AS n FROM ${table} WHERE tenant_id = ?`, tid);
+
+  it('deletes objects, links, index and outbox rows, keeping the audit', async () => {
+    expect(rows('domain_event')).toBe(1);
+    expect(await h.rpc.clearWorkspace(testCtx())).toEqual({
+      objects: 3,
+      links: 2,
+    });
+    for (const t of ['og_object', 'og_link', 'og_prop_index', 'domain_event']) {
+      expect(rows(t), t).toBe(0);
+    }
+    expect(await h.rpc.stats(testCtx())).toMatchObject({objects: 0, links: 0});
+    const audit = h.db.raw
+      .prepare(
+        'SELECT action_type, target_rid, params, actor FROM og_action_log WHERE tenant_id = ?',
+      )
+      .all(TEST_TID) as Record<string, string>[];
+    expect(audit).toEqual([
+      {
+        action_type: '$clearWorkspace',
+        target_rid: '',
+        params: JSON.stringify({objects: 3, links: 2}),
+        actor: 'owner',
+      },
+    ]);
+    // Other workspaces are untouched.
+    expect(rows('og_object', OTHER_TID)).toBe(1);
+  });
+
+  it('is idempotent and lets the workspace be loaded again', async () => {
+    await h.rpc.clearWorkspace(testCtx());
+    expect(await h.rpc.clearWorkspace(testCtx())).toEqual({
+      objects: 0,
+      links: 0,
+    });
+    const res = await h.rpc.upsertBatch(testCtx(), {
+      jobId: 'j2',
+      seq: 1,
+      cmds: [part('P1')],
+    });
+    expect(res.upserted).toBe(1);
+  });
+
+  it('records admin clears and refuses services', async () => {
+    const ctx = testCtx({
+      role: 'admin',
+      actingAs: true,
+      sub: '01K6A000000000000000000A01',
+    });
+    ctx.actor.userId = '01K6A000000000000000000A01';
+    const err = await codeOf(
+      h.rpc.clearWorkspace(serviceCtx(TEST_TID, 'data-integration')),
+    );
+    expect(err.code).toBe('FORBIDDEN');
+    await h.rpc.clearWorkspace(ctx);
+    expect(
+      h.db.raw.prepare('SELECT actor, actor_user_id FROM og_action_log').get(),
+    ).toEqual({actor: 'admin', actor_user_id: '01K6A000000000000000000A01'});
+  });
+});
+
 describe('tenant isolation', () => {
   it('never reads or writes across workspaces', async () => {
     const h = setup();

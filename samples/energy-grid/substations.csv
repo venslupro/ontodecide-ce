@@ -1,0 +1,11 @@
+substationId,name,voltageKV,load,capacity,loadRatio,status,connectedTo
+SS-001,North Hub,500,420,500,0.84,normal,SS-002;SS-003
+SS-002,East Junction,220,280,300,0.93,warning,SS-001;SS-004
+SS-003,West Switch,220,190,300,0.63,normal,SS-001;SS-005
+SS-004,South Terminal,500,510,500,1.02,emergency,SS-002;SS-006
+SS-005,Central Dist,110,95,150,0.63,normal,SS-003;SS-007
+SS-006,Port Sub,220,310,300,1.03,warning,SS-004;SS-008
+SS-007,Industrial A,110,140,150,0.93,normal,SS-005;SS-009
+SS-008,Industrial B,110,155,150,1.03,warning,SS-006;SS-010
+SS-009,Residential N,35,28,50,0.56,normal,SS-007;SS-010
+SS-010,Residential S,35,42,50,0.84,warning,SS-008;SS-009

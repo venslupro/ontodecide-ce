@@ -1,0 +1,16 @@
+sensorId,equipmentId,type,value,unit,threshold
+SEN-001,EQ-001,vibration,0,mm/s,5
+SEN-002,EQ-002,temperature,7,C,80
+SEN-003,EQ-003,pressure,14,MPa,10
+SEN-004,EQ-004,current,90,A,50
+SEN-005,EQ-005,flow,28,L/min,200
+SEN-006,EQ-006,vibration,35,mm/s,5
+SEN-007,EQ-007,temperature,42,C,80
+SEN-008,EQ-008,pressure,49,MPa,10
+SEN-009,EQ-009,current,90,A,50
+SEN-010,EQ-010,flow,63,L/min,200
+SEN-011,EQ-001,vibration,70,mm/s,5
+SEN-012,EQ-002,temperature,77,C,80
+SEN-013,EQ-003,pressure,18,MPa,10
+SEN-014,EQ-004,current,91,A,50
+SEN-015,EQ-005,flow,98,L/min,200

@@ -70,6 +70,9 @@ export class SituationRpc extends WorkerEntrypoint<Env> implements Contract {
   resetForTemplate(...a: Parameters<Contract['resetForTemplate']>) {
     return svc(this.env).rpc.resetForTemplate(...a);
   }
+  clearWorkspace(...a: Parameters<Contract['clearWorkspace']>) {
+    return svc(this.env).rpc.clearWorkspace(...a);
+  }
 }
 
 /** Lifecycle entrypoint, bound only to identity-access. */
@@ -143,6 +146,9 @@ export class SituationRoom
   }
   resetForTemplate(...a: Parameters<SituationRoomApi['resetForTemplate']>) {
     return this.core.resetForTemplate(...a);
+  }
+  clearWorkspace(...a: Parameters<SituationRoomApi['clearWorkspace']>) {
+    return this.core.clearWorkspace(...a);
   }
   applyEvents(tid: string, events: DomainEventMsg[]) {
     return this.core.applyEvents(tid, events);

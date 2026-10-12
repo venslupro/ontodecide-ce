@@ -50,4 +50,11 @@ export interface SituationRpc {
   pushRecommendation(ctx: CallCtx, rec: RecommendationSummary): Promise<void>;
   /** Reloads the room's KPIs and sample automations after a template switch. */
   resetForTemplate(ctx: CallCtx): Promise<void>;
+  /**
+   * Deletes the room's KPIs, metric history, automations (including the
+   * user's own), alerts and object cache, then re-initializes it from the
+   * current ontology and objects. Called last when a workspace is reset to
+   * its blank state. Owner or admin only; idempotent.
+   */
+  clearWorkspace(ctx: CallCtx): Promise<void>;
 }

@@ -437,6 +437,18 @@ const situationHandlers: HttpHandler[] = [
     businessDb.jobs.unshift(job);
     return json(job, {status: 202});
   }),
+  http.post(`${API}/workspace/clear`, async ({request}) => {
+    await record(request);
+    const cleared = {
+      objects: businessDb.sampleLoaded ? 80 : 0,
+      links: businessDb.sampleLoaded ? 160 : 0,
+      scenarios: 0,
+      recommendations: 0,
+      mappings: 0,
+    };
+    businessDb.sampleLoaded = false;
+    return json(cleared);
+  }),
   http.get(`${API}/automations`, () => json(businessDb.automations)),
   http.post(`${API}/automations`, async ({request}) => {
     const def = (await record(request)) as AutomationDef;
