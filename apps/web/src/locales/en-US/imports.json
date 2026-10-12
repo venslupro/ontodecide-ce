@@ -58,7 +58,11 @@
     },
     "target": "Target object type",
     "targetPlaceholder": "Choose an object type",
-    "targetHint": "Each row becomes one object of this type (merged by primary key)."
+    "targetHint": "Each row becomes one object of this type (merged by primary key).",
+    "noTypes": "This workspace has no object types yet",
+    "noTypesHint": "Each imported row becomes an object of a type. Define an object type in the ontology workbench, or load an example scenario from the cockpit, then come back to import.",
+    "toOntology": "Define object types",
+    "toCockpit": "Load an example scenario"
   },
   "upload": {
     "title": "Upload file",

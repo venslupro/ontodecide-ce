@@ -1,13 +1,18 @@
 /**
  * @fileoverview Wizard step 1 (选择来源): file import is the only source in
  * CE — pick the file format (CSV / XLSX / JSON) and the target object type.
+ * A blank workspace has no object types: the step then points to the
+ * ontology workbench and the example scenarios instead of an empty select.
  */
 
-import {Braces, FileSpreadsheet, FileText} from 'lucide-react';
+import {Link} from '@tanstack/react-router';
+import {Boxes, Braces, FileSpreadsheet, FileText} from 'lucide-react';
 import type {ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
 import type {UiObjectType} from '../../../entities/schema/model';
 import {cn} from '../../../shared/lib/cn';
+import {Button} from '../../../shared/ui/button';
+import {EmptyState} from '../../../shared/ui/empty_state';
 import {Field} from '../../../shared/ui/input';
 import {NativeSelect} from '../../../shared/ui/select';
 import {FILE_FORMATS, type FileFormat} from '../../../workers/parse_core';
@@ -33,6 +38,25 @@ export function SourceStep({
   types: readonly UiObjectType[];
 }) {
   const {t} = useTranslation('imports');
+  if (types.length === 0) {
+    return (
+      <EmptyState
+        icon={<Boxes aria-hidden />}
+        title={t('source.noTypes')}
+        description={t('source.noTypesHint')}
+        action={
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button variant="primary" asChild>
+              <Link to="/ontology">{t('source.toOntology')}</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to="/cockpit">{t('source.toCockpit')}</Link>
+            </Button>
+          </div>
+        }
+      />
+    );
+  }
   return (
     <div className="flex flex-col gap-5">
       <p className="text-sm text-muted">{t('source.onlyFile')}</p>
