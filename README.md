@@ -303,6 +303,8 @@ Pull requests are squash-merged.
 
 ## License
 
-Private, closed-source project © OntoDecide Team
+Copyright © 2026 OntoDecide Team. All rights reserved.
+
+The source code is publicly visible for reference only. No license is granted to use, copy, modify, distribute or deploy it, in whole or in part, without prior written permission.
 
 For licensing or business inquiries, please contact the [maintainers](#maintainers).
