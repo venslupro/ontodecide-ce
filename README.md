@@ -36,7 +36,6 @@ When the trial ends, the workspace data is packed into one ZIP in Backblaze B2, 
   - [Pipelines](#pipelines)
   - [Domain](#domain)
   - [Secrets and variables](#secrets-and-variables)
-  - [Upgrading from V1.3](#upgrading-from-v13)
   - [Go-live checks](#go-live-checks)
 - [API](#api)
 - [Maintainers](#maintainers)
@@ -158,7 +157,7 @@ Open the app at http://localhost:5173 (not `127.0.0.1`: the WebAuthn RP id is `l
 * the admin e-mail and setup code are in `.wrangler/dev-secrets.json`, generated once by `gen_wrangler --env local`;
 * crons can be triggered at `http://127.0.0.1:8787/__scheduled?cron=...`.
 
-`pnpm dev --api-only` starts the Workers without the web app. `pnpm dev` resets the local `.wrangler/state` if it still holds a V1.3 schema.
+`pnpm dev --api-only` starts the Workers without the web app.
 
 Check everything offline, and smoke-test a running `pnpm dev`:
 
@@ -202,7 +201,7 @@ To import your own data, the workspace needs at least one object type: define on
 | `pnpm gen:secrets` | Generate the signing and encryption secrets |
 | `pnpm format` / `pnpm fix` | Prettier / ESLint autofix |
 
-Operations scripts in [`scripts/`](scripts): `d1_migrate.mjs` (D1 migrations), `check_openapi.mjs` and `check_bundle.mjs` (CI checks), `admin_pending_change.mjs`, `reset.sh` and `cleanup_legacy.sh`.
+Operations scripts in [`scripts/`](scripts): `d1_migrate.mjs` (D1 migrations), `check_openapi.mjs` and `check_bundle.mjs` (CI checks), `admin_pending_change.mjs` and `reset.sh`.
 
 ## Deployment
 
@@ -255,7 +254,6 @@ The full list with comments is in [`.env.example`](.env.example).
 - Signing and encryption: `JWT_SIGNING_KEY` (Ed25519 JWK; add `JWT_SIGNING_KEY_PREV` during a key rotation), `EMAIL_PEPPER`, `EMAIL_ENC_KEY`, `BOOTSTRAP_ADMIN_SETUP_CODE`. Generate all four with `pnpm gen:secrets`.
 - E-mail: `RESEND_API_KEY`.
 - Optional: `CF_ANALYTICS_TOKEN` (read-only Analytics token, for the account-wide 80 % check).
-- `NEO4J_AURA_CLIENT_ID` / `NEO4J_AURA_CLIENT_SECRET`: keep only until the [V1.3 cleanup](#upgrading-from-v13) is done.
 
 The Turnstile secret and the B2 archive keys come from Terraform outputs; you don't set them yourself.
 
@@ -264,16 +262,9 @@ The Turnstile secret and the B2 archive keys come from Terraform outputs; you do
 - `BOOTSTRAP_ADMIN_EMAIL`, set on the `production` environment.
 - `APP_DOMAIN`.
 - `MAIL_FROM`: defaults to `noreply@mail.<domain>`; required when no domain is set.
-- Optional: `EMAIL_MODE`, `ARCHIVE_SIGN_SLOT`, `D1_RESET_LEGACY`.
+- Optional: `EMAIL_MODE`, `ARCHIVE_SIGN_SLOT`.
 
-### Upgrading from V1.3
-
-One time, for an existing V1.3 deployment:
-
-1. Merge to `main`. Terraform stops managing the old resources without deleting them: the KV namespaces, the 10 queues, the raw bucket and its key, the situation D1 and the Neo4j instance (`infra/legacy.tf`).
-2. Set the variable `D1_RESET_LEGACY=true` for **one** deploy. The V2.4 schema replaces the V1.3 one, and **all data in the five databases is dropped**; without the flag, the deploy stops before touching them.
-3. Remove `D1_RESET_LEGACY`. Run `scripts/cleanup_legacy.sh`, which deletes the released resources and old Worker secrets, skipping anything still bound. Then delete `infra/legacy.tf`, the neo4jaura provider, the AURA secrets, the old secrets `JWT_SECRET`, `APPROVAL_SECRET`, `WRITEBACK_SECRET`, `CONNECTOR_ENC_KEY`, `BOOTSTRAP_ADMIN_PASSWORD`, `GEMINI_API_KEY`, `GROQ_API_KEY` and the variables `APP_BASE_URL`, `EMAIL_FROM`.
-4. In the Resend dashboard, turn off open and click tracking so archive download links in e-mails are not rewritten. HSTS and other zone TLS settings are the zone owner's responsibility.
+In the Resend dashboard, turn off open and click tracking so the archive download links in e-mails are not rewritten.
 
 ### Go-live checks
 
