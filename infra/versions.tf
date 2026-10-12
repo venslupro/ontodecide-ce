@@ -13,11 +13,6 @@ terraform {
       source  = "Backblaze/b2"
       version = "~> 0.14"
     }
-    # Only to read the forgotten V1.3 instance (legacy.tf); remove with it.
-    neo4jaura = {
-      source  = "neo4j-labs/neo4jaura"
-      version = "~> 1.1"
-    }
   }
 
   # State lives in the private B2 bucket ontodecide-ce-tfstate (S3 API,
@@ -51,8 +46,4 @@ provider "cloudflare" {
 
 provider "b2" {
   # B2_APPLICATION_KEY_ID / B2_APPLICATION_KEY from the environment.
-}
-
-provider "neo4jaura" {
-  # Legacy (legacy.tf). AURA_CLIENT_ID / AURA_CLIENT_SECRET from the environment.
 }

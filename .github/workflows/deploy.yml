@@ -65,8 +65,6 @@ env:
   APP_DOMAIN: ${{ vars.APP_DOMAIN }}
   MAIL_FROM: ${{ vars.MAIL_FROM }}
   EMAIL_MODE: ${{ vars.EMAIL_MODE }}
-  # One-time V1.3 → V2.4 schema reset (scripts/d1_migrate.mjs).
-  D1_RESET_LEGACY: ${{ vars.D1_RESET_LEGACY }}
 
 jobs:
   build:

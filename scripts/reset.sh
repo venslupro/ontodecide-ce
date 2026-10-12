@@ -2,8 +2,7 @@
 #
 # Deletes every deployed OntoDecide CE V2.4 resource and service so the
 # next Terraform + Deploy run starts from zero. Irreversible: all workspace
-# data and archives are lost. Never run by CI. V1.3 leftovers are deleted by
-# scripts/cleanup_legacy.sh.
+# data and archives are lost. Never run by CI.
 #
 #   scripts/reset.sh [--dry-run] [--yes] [--env-file FILE]
 #
