@@ -124,6 +124,11 @@ export class WsClient {
     Pick<WsClientOptions, 'onState' | 'poll' | 'onEnded'>;
 
   constructor(opts: WsClientOptions) {
+    // Options passed explicitly as `undefined` (e.g. an unset test hook)
+    // keep their defaults; spreading them would erase the default.
+    const given = Object.fromEntries(
+      Object.entries(opts).filter(([, v]) => v !== undefined),
+    ) as WsClientOptions;
     this.o = {
       createSocket: (url: string) =>
         new WebSocket(url) as unknown as SocketLike,
@@ -132,7 +137,7 @@ export class WsClient {
       pollMs: WS_DEFAULTS.pollMs,
       failuresBeforePolling: WS_DEFAULTS.failuresBeforePolling,
       heartbeatMs: WS_DEFAULTS.heartbeatMs,
-      ...opts,
+      ...given,
     };
   }
 

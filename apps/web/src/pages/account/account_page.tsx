@@ -9,7 +9,10 @@
  * → POST /me/trial/termination → /ended).
  *
  * Admin variant: "平台管理员 · 不过期 · 不可删除" instead of the timeline,
- * no archive preview and no danger zone; export is kept.
+ * no archive preview and no trial termination; export and the workspace
+ * clear are kept. Both act on the workspace in view: the admin workspace,
+ * or the target workspace while in the admin view (Act-as), which the
+ * clear dialog names explicitly.
  */
 
 import {
@@ -429,11 +432,14 @@ function TerminateDialog({
 function ClearDialog({
   open,
   onOpenChange,
+  me,
 }: {
   open: boolean;
   onOpenChange(v: boolean): void;
+  me: Me;
 }) {
   const {t} = useTranslation('account');
+  const actAs = useSession(s => s.actAs);
   const navigate = useNavigate();
   const clear = useClearWorkspace();
   return (
@@ -467,6 +473,14 @@ function ClearDialog({
           </Button>
         }
       >
+        <p className="mb-3 text-sm text-text">
+          {actAs
+            ? t('clear.targetActAs', {
+                tid: shortTid(actAs.tenantId),
+                email: actAs.email ?? '—',
+              })
+            : t('clear.target', {tid: shortTid(me.workspace.tenantId)})}
+        </p>
         <p className="text-sm font-medium text-text">{t('clear.removed')}</p>
         <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-muted">
           <li>{t('clear.point1')}</li>
@@ -485,7 +499,7 @@ function ClearDialog({
   );
 }
 
-function ClearZone() {
+function ClearZone({me}: {me: Me}) {
   const {t} = useTranslation('account');
   const [open, setOpen] = useState(false);
   return (
@@ -500,7 +514,7 @@ function ClearZone() {
       <Button variant="danger" onClick={() => setOpen(true)}>
         {t('clear.button')}
       </Button>
-      <ClearDialog open={open} onOpenChange={setOpen} />
+      <ClearDialog open={open} onOpenChange={setOpen} me={me} />
     </section>
   );
 }
@@ -553,7 +567,7 @@ export function AccountPage() {
         <AccountCard me={me} admin={admin} />
         {!admin && <ArchivePreview />}
       </div>
-      {!admin && <ClearZone />}
+      <ClearZone me={me} />
       {!admin && <DangerZone />}
     </div>
   );

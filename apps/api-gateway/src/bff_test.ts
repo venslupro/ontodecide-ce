@@ -305,6 +305,40 @@ describe('POST /workspace/clear', () => {
     expect(setTemplate.mock.calls[0]).toEqual([expect.anything(), 'blank']);
   });
 
+  it('lets the admin clear its own workspace or, under Act-as, the target', async () => {
+    const seen: CallCtx[] = [];
+    const {services} = clearServices();
+    const gw = await makeGateway({
+      ...services,
+      objects: {
+        clearWorkspace: async (ctx: CallCtx) => {
+          seen.push(ctx);
+          return {objects: 0, links: 0};
+        },
+      },
+    });
+    const own = await call(gw, 'POST', '/workspace/clear', {
+      token: await adminToken(),
+    });
+    expect(own.status).toBe(200);
+    const target = await call(gw, 'POST', '/workspace/clear', {
+      token: await adminToken(),
+      headers: {'x-act-as-tenant': TARGET_TID},
+    });
+    expect(target.status).toBe(200);
+    expect(seen.map(c => [c.actor.role, c.actor.actingAs])).toEqual([
+      ['admin', false],
+      ['admin', true],
+    ]);
+    expect(seen[1].tid).toBe(TARGET_TID);
+    expect(seen[0].tid).not.toBe(TARGET_TID);
+    // Only the Act-as call is audited (entry + the write).
+    expect(gw.audits.map(a => a.action)).toEqual([
+      'act_as.enter',
+      'tenant.write',
+    ]);
+  });
+
   it('stops at the first failure so the clear can be retried', async () => {
     const {services} = clearServices(true);
     const gw = await makeGateway(services);

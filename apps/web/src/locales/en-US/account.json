@@ -57,6 +57,8 @@
     "button": "Clear workspace",
     "dialogTitle": "Clear the workspace?",
     "dialogBody": "This cannot be undone.",
+    "target": "Workspace {tid} will be cleared.",
+    "targetActAs": "The target workspace {tid} ({email}) will be cleared, not your own admin workspace.",
     "removed": "Removed:",
     "point1": "All objects and links",
     "point2": "The ontology (reset to the blank template, including your changes), KPIs, automations and alerts",

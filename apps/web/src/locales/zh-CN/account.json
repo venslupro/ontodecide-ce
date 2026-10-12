@@ -57,6 +57,8 @@
     "button": "清空工作区",
     "dialogTitle": "确认清空工作区",
     "dialogBody": "此操作不可撤销。",
+    "target": "将清空工作区 {tid}。",
+    "targetActAs": "将清空目标工作区 {tid}（{email}），而不是你自己的管理员工作区。",
     "removed": "将删除：",
     "point1": "全部对象与关系",
     "point2": "本体（恢复为空白模板，你做过的修改也会丢失）、KPI、自动化规则与预警",
