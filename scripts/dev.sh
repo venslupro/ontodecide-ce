@@ -32,10 +32,9 @@ node scripts/gen_wrangler.mjs --env local
 
 for w in "${D1_WORKERS[@]}"; do
   # D1 names follow {project}-{env}-{service}-db (scripts/gen_wrangler.mjs);
-  # migrations come from migrations/<service>/. Local state left over from
-  # V1.3 is dropped (--reset-legacy).
+  # migrations come from migrations/<service>/.
   node scripts/d1_migrate.mjs -c "apps/${w}/wrangler.jsonc" --local \
-    --persist-to "${STATE}" --reset-legacy >/dev/null
+    --persist-to "${STATE}" >/dev/null
   echo "migrated ${PREFIX}-${w}-db"
 done
 

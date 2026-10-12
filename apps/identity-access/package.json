@@ -8,12 +8,8 @@
     "deploy": "wrangler deploy -c wrangler.jsonc"
   },
   "dependencies": {
-    "@ontodecide/shared-kernel": "workspace:*",
     "@ontodecide/identity": "workspace:*",
-    "zod": "^4.1.12",
-    "fflate": "^0.8.2",
-    "aws4fetch": "^1.0.20",
-    "@simplewebauthn/server": "^13.2.2"
+    "@ontodecide/shared-kernel": "workspace:*"
   },
   "devDependencies": {
     "@ontodecide/testing": "workspace:*"

@@ -119,16 +119,6 @@ export const useSession = create<SessionState>(set => ({
   },
 }));
 
-/** Current role (undefined when signed out). */
-export function useRole(): UserRole | undefined {
-  return useSession(s => s.role);
-}
-
-/** Whether the signed-in user is the admin. */
-export function useIsAdmin(): boolean {
-  return useSession(s => s.role === 'admin');
-}
-
 /** Server-corrected now (ms). */
 export function serverNow(): number {
   return Date.now() + useSession.getState().clockSkewMs;

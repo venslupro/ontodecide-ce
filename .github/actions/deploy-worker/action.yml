@@ -85,12 +85,7 @@ runs:
       shell: bash
       env:
         CONFIG: apps/${{ inputs.worker }}/wrangler.jsonc
-      run: |
-        # D1_RESET_LEGACY=true (GitHub variable, one deploy only) drops a
-        # V1.3 schema before the V2.4 migrations; see scripts/d1_migrate.mjs.
-        flags=()
-        [[ "${D1_RESET_LEGACY:-}" != 'true' ]] || flags+=(--reset-legacy)
-        node scripts/d1_migrate.mjs -c "${CONFIG}" "${flags[@]}"
+      run: node scripts/d1_migrate.mjs -c "${CONFIG}"
     # Secrets ship with the deployed version itself (`wrangler deploy
     # --secrets-file`, additive: omitted secrets keep their value), so a
     # freshly created Worker — e.g. identity-access with its */2 cron —

@@ -8,11 +8,10 @@
     "deploy": "wrangler deploy -c wrangler.jsonc"
   },
   "dependencies": {
-    "@ontodecide/shared-kernel": "workspace:*",
-    "@ontodecide/situation": "workspace:*",
-    "@ontodecide/ontology": "workspace:*",
     "@ontodecide/object-graph": "workspace:*",
-    "zod": "^4.1.12"
+    "@ontodecide/ontology": "workspace:*",
+    "@ontodecide/shared-kernel": "workspace:*",
+    "@ontodecide/situation": "workspace:*"
   },
   "devDependencies": {
     "@ontodecide/testing": "workspace:*"

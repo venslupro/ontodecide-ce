@@ -2,6 +2,7 @@
   "name": "ontodecide-ce",
   "version": "2.4.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "OntoDecide CE — ontology-driven decision intelligence on the Cloudflare free tier.",
   "type": "module",
   "packageManager": "pnpm@9.12.0",

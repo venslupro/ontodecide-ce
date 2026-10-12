@@ -26,7 +26,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {cn} from '../../../shared/lib/cn';
-import {typeColor} from '../../../shared/graph/limit';
 
 const ICONS: Record<string, LucideIcon> = {
   box: Box,
@@ -66,23 +65,4 @@ export function TypeIcon({
 }) {
   const Icon = iconFor(icon);
   return <Icon className={cn('size-4 shrink-0', className)} aria-hidden />;
-}
-
-/** Colored dot matching the graph node color of a type. */
-export function TypeDot({
-  type,
-  order,
-  className,
-}: {
-  type: string;
-  order?: readonly string[];
-  className?: string;
-}) {
-  return (
-    <span
-      aria-hidden
-      className={cn('inline-block size-2.5 shrink-0 rounded-full', className)}
-      style={{background: typeColor(type, order)}}
-    />
-  );
 }

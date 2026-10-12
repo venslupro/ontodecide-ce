@@ -10,8 +10,7 @@
 # Wrangler in the CD pipeline (apps/web/wrangler.jsonc,
 # .github/workflows/deploy.yml), not by Terraform. Workers, their bindings,
 # routes, crons and Durable Object migrations also belong to Wrangler
-# (apps/*/wrangler.jsonc.tpl). V1.3 resources are released from state in
-# legacy.tf and deleted by scripts/cleanup_legacy.sh.
+# (apps/*/wrangler.jsonc.tpl).
 #
 # Naming: every resource is named {project}-{env}-{service|module}, e.g.
 # ontodecide-prd-object-graph-db (local.prefix). Exceptions: the Pages

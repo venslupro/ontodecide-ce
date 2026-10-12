@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 #
-# Shared helpers for scripts/reset.sh and scripts/cleanup_legacy.sh:
-# colored step output, dry-run aware deletion, Cloudflare / Backblaze B2 /
-# Neo4j Aura API calls. Sourced, never executed.
+# Shared helpers for scripts/reset.sh: colored step output, dry-run aware
+# deletion, Cloudflare / Backblaze B2 API calls. Sourced, never executed.
 #
 # The sourcing script sets TOTAL_STEPS, parses its options into DRY_RUN,
 # ASSUME_YES and ENV_FILE, then calls load_config with the credential
 # groups it needs.
 
 readonly CF_API="https://api.cloudflare.com/client/v4"
-readonly AURA_API="https://api.neo4j.io"
 
 DRY_RUN=false
 ASSUME_YES=false
@@ -62,9 +60,9 @@ usage() {
 #######################################
 # Loads the credentials file (if any) and checks the required groups.
 # Arguments:
-#   Credential groups: cf, b2, aura.
+#   Credential groups: cf, b2.
 # Globals:
-#   CONFIG_SOURCE CF_TOKEN CF_ACCOUNT B2_ID B2_KEY AURA_ID AURA_SECRET (set)
+#   CONFIG_SOURCE CF_TOKEN CF_ACCOUNT B2_ID B2_KEY (set)
 #######################################
 load_config() {
   CONFIG_SOURCE="environment variables"
@@ -86,8 +84,6 @@ load_config() {
   CF_ACCOUNT="${CLOUDFLARE_ACCOUNT_ID:-${CF_ACCOUNT_ID:-}}"
   B2_ID="${B2_APPLICATION_KEY_ID:-${B2_MASTER_KEY_ID:-}}"
   B2_KEY="${B2_APPLICATION_KEY:-${B2_MASTER_KEY:-}}"
-  AURA_ID="${AURA_CLIENT_ID:-${NEO4J_AURA_CLIENT_ID:-}}"
-  AURA_SECRET="${AURA_CLIENT_SECRET:-${NEO4J_AURA_CLIENT_SECRET:-}}"
 
   local -a missing=()
   local group pair var bin item
@@ -96,7 +92,6 @@ load_config() {
     case "${group}" in
       cf) pairs=(CF_TOKEN:CLOUDFLARE_API_TOKEN CF_ACCOUNT:CLOUDFLARE_ACCOUNT_ID) ;;
       b2) pairs=(B2_ID:B2_APPLICATION_KEY_ID B2_KEY:B2_APPLICATION_KEY) ;;
-      aura) pairs=(AURA_ID:AURA_CLIENT_ID AURA_SECRET:AURA_CLIENT_SECRET) ;;
       *) pairs=() ;;
     esac
     for pair in "${pairs[@]}"; do
@@ -232,20 +227,9 @@ cf() {
     "${CF_API}/accounts/${CF_ACCOUNT}$2"
 }
 
-# Calls the Cloudflare zone API: cf_zone METHOD ZONE_ID PATH.
-cf_zone() {
-  curl -sS -X "$1" -H "Authorization: Bearer ${CF_TOKEN}" \
-    "${CF_API}/zones/$2$3"
-}
-
 # Succeeds if the Cloudflare call cf METHOD PATH reports success.
 cf_ok() {
   cf "$@" | jq -e '.success == true' >/dev/null
-}
-
-# Succeeds if cf_zone METHOD ZONE_ID PATH reports success.
-cf_zone_ok() {
-  cf_zone "$@" | jq -e '.success == true' >/dev/null
 }
 
 #######################################
@@ -371,31 +355,4 @@ b2_keys() {
 b2_delete_key() {
   b2 b2_delete_key "$(jq -nc --arg i "$1" '{applicationKeyId: $i}')" \
     | jq -e '.applicationKeyId' >/dev/null
-}
-
-# ---- Neo4j Aura -----------------------------------------------------------
-
-# Authorizes the Aura API client (sets AURA_TOKEN).
-aura_authorize() {
-  AURA_TOKEN="$(curl -sS -u "${AURA_ID}:${AURA_SECRET}" \
-    -d grant_type=client_credentials "${AURA_API}/oauth/token" \
-    | jq -r '.access_token // empty')"
-  if [[ -z "${AURA_TOKEN}" ]]; then
-    err "Aura authorization failed" \
-      "(check AURA_CLIENT_ID / AURA_CLIENT_SECRET)"
-    exit 1
-  fi
-}
-
-# Prints "name id" for every Aura instance.
-aura_instances() {
-  curl -sS -H "Authorization: Bearer ${AURA_TOKEN}" \
-    "${AURA_API}/v1/instances" | jq -r '.data[]? | "\(.name) \(.id)"'
-}
-
-# Deletes the Aura instance with id $1.
-aura_delete_instance() {
-  curl -sS -f -o /dev/null -X DELETE \
-    -H "Authorization: Bearer ${AURA_TOKEN}" \
-    "${AURA_API}/v1/instances/$1"
 }
