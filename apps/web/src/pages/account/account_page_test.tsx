@@ -8,7 +8,8 @@ import {screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {describe, expect, it, vi} from 'vitest';
 import {useSession} from '../../entities/session/store';
-import {adminMe, ownerMe} from '../../test/fixtures/platform';
+import {ADMIN_TID, adminMe, ownerMe} from '../../test/fixtures/platform';
+import {shortTid} from '../../shared/lib/format';
 import {businessDb} from '../../test/handlers/business';
 import {platformDb, recorded, TEST_CODE} from '../../test/handlers/platform';
 import {renderApp} from '../../test/render';
@@ -119,7 +120,7 @@ describe('AccountPage (owner)', () => {
 });
 
 describe('AccountPage (admin)', () => {
-  it('replaces the timeline and hides the danger zone', async () => {
+  it('replaces the timeline and hides the trial termination', async () => {
     renderApp('/account', {as: 'admin', me: adminMe()});
     expect(
       await screen.findByText('平台管理员 · 不过期 · 不可删除'),
@@ -128,12 +129,40 @@ describe('AccountPage (admin)', () => {
     expect(
       screen.queryByRole('button', {name: '结束试用'}),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', {name: '清空工作区'}),
-    ).not.toBeInTheDocument();
     expect(screen.queryByText('到期后将归档的数据')).not.toBeInTheDocument();
     expect(
       screen.getByRole('button', {name: '立即导出一份'}),
     ).toBeInTheDocument();
+  });
+
+  async function openClear() {
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', {name: '清空工作区'}));
+    const dialog = await screen.findByRole('dialog', {name: '确认清空工作区'});
+    return {user, dialog};
+  }
+  const clearCalls = () =>
+    businessDb.requests.filter(r => r.path === '/workspace/clear');
+
+  it('clears the admin workspace', async () => {
+    renderApp('/account', {as: 'admin', me: adminMe()});
+    const {user, dialog} = await openClear();
+    expect(dialog).toHaveTextContent(`将清空工作区 ${shortTid(ADMIN_TID)}。`);
+    await user.click(within(dialog).getByRole('button', {name: '确认清空'}));
+    await waitFor(() => expect(clearCalls()).toHaveLength(1));
+    expect(clearCalls()[0].headers['x-act-as-tenant']).toBeUndefined();
+  });
+
+  it('names and clears the target workspace in the admin view', async () => {
+    const target = 'ws-01J9AAAAAAAAAAAAAAAAAAAK4';
+    renderApp('/account', {as: 'admin', me: adminMe()});
+    useSession.getState().setActAs({tenantId: target, email: 'a@example.com'});
+    const {user, dialog} = await openClear();
+    expect(dialog).toHaveTextContent(
+      `将清空目标工作区 ${shortTid(target)}（a@example.com）`,
+    );
+    await user.click(within(dialog).getByRole('button', {name: '确认清空'}));
+    await waitFor(() => expect(clearCalls()).toHaveLength(1));
+    expect(clearCalls()[0].headers['x-act-as-tenant']).toBe(target);
   });
 });
