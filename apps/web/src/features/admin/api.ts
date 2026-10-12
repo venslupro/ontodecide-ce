@@ -21,7 +21,6 @@ import type {PageResult} from '@ontodecide/shared-kernel';
 import {
   useInfiniteQuery,
   useQuery,
-  useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query';
 import {api, apiRequest} from '../../shared/api/client';
@@ -272,10 +271,4 @@ export function deletePasskey(id: string, w: WriteCtx): Promise<void> {
 /** Invalidates the platform queries after a write. */
 export function invalidateAdmin(qc: QueryClient): Promise<void> {
   return qc.invalidateQueries({queryKey: ['admin']});
-}
-
-/** Hook form of {@link invalidateAdmin}. */
-export function useInvalidateAdmin(): () => Promise<void> {
-  const qc = useQueryClient();
-  return () => invalidateAdmin(qc);
 }

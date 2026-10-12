@@ -73,15 +73,6 @@
     "PartiallyFailed": "部分失败",
     "Failed": "失败"
   },
-  "ai": {
-    "badge": "AI 建议",
-    "hint": "由 AI 生成，须人工确认后生效",
-    "remaining": "今日剩余 {count, number} 次"
-  },
-  "degraded": {
-    "badge": "降级",
-    "hint": "部分依赖不可用，已显示降级结果"
-  },
   "bool": {
     "true": "是",
     "false": "否"

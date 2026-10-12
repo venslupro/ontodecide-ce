@@ -41,8 +41,6 @@ export interface RenderOptions {
   /** Overrides the `/me` of the signed-in user. */
   me?: Me;
   queryClient?: QueryClient;
-  /** Legacy option (V1.3 roles); ignored, the owner is signed in. */
-  user?: unknown;
 }
 
 /** Creates a QueryClient suited for tests (no retries, no gc delay). */
