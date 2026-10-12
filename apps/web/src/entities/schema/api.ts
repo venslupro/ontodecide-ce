@@ -10,12 +10,7 @@ import {useQuery} from '@tanstack/react-query';
 import {useMemo} from 'react';
 import {useTranslation} from 'react-i18next';
 import {apiRequest} from '../../shared/api/client';
-import {
-  EMPTY_UI_MODEL,
-  toUiModel,
-  type UiModel,
-  type UiObjectType,
-} from './model';
+import {EMPTY_UI_MODEL, toUiModel, type UiModel} from './model';
 
 /** Query key of the workspace ontology (prefix `ontology`). */
 export const ontologyKey = () => ['ontology', 'schema'] as const;
@@ -48,18 +43,4 @@ export function useUiModel(): {
     [q.data, i18n.language],
   );
   return {model, isLoading: q.isLoading, error: q.error};
-}
-
-/** One UI object type (undefined while loading or unknown). */
-export function useObjectType(apiName: string | undefined): {
-  type?: UiObjectType;
-  isLoading: boolean;
-  error: unknown;
-} {
-  const {model, isLoading, error} = useUiModel();
-  return {
-    type: apiName ? model.byName[apiName] : undefined,
-    isLoading,
-    error,
-  };
 }

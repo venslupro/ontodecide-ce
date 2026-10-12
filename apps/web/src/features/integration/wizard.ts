@@ -11,6 +11,3 @@ export const WIZARD_STEPS = [
   'validate',
   'run',
 ] as const;
-
-/** A wizard step key. */
-export type WizardStep = (typeof WIZARD_STEPS)[number];

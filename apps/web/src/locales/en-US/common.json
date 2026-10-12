@@ -73,15 +73,6 @@
     "PartiallyFailed": "Partially failed",
     "Failed": "Failed"
   },
-  "ai": {
-    "badge": "AI suggestion",
-    "hint": "AI-generated — requires human confirmation",
-    "remaining": "{count, number} left today"
-  },
-  "degraded": {
-    "badge": "Degraded",
-    "hint": "A dependency is unavailable; showing degraded results"
-  },
   "bool": {
     "true": "Yes",
     "false": "No"

@@ -51,8 +51,3 @@ export async function guardPublicAuth(): Promise<string | null> {
   if (s.status !== 'unknown') return null;
   return (await restoreSession()) === 'ok' ? '/cockpit' : null;
 }
-
-/** Whether the current session may open /admin. */
-export function canOpenAdmin(): boolean {
-  return useSession.getState().role === 'admin';
-}

@@ -1,17 +1,10 @@
 /**
  * @fileoverview Badges, including status badges that always pair color with
- * an icon and text (WCAG: never color alone), AI and degraded markers.
+ * an icon and text (WCAG: never color alone).
  */
 
 import {cva, type VariantProps} from 'class-variance-authority';
-import {
-  AlertOctagon,
-  AlertTriangle,
-  CheckCircle2,
-  Info,
-  Sparkles,
-  CloudOff,
-} from 'lucide-react';
+import {AlertOctagon, AlertTriangle, CheckCircle2, Info} from 'lucide-react';
 import type {HTMLAttributes, ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
 import {cn} from '../lib/cn';
@@ -97,43 +90,5 @@ export function SeverityBadge({
     <StatusBadge level={severityLevel(severity)} className={className}>
       {t(`severity.${severity}`, {defaultValue: severity})}
     </StatusBadge>
-  );
-}
-
-/** Marks AI-generated content (must be confirmed by a human). */
-export function AiBadge({
-  className,
-  label,
-}: {
-  className?: string;
-  label?: string;
-}) {
-  const {t} = useTranslation('common');
-  return (
-    <Badge tone="violet" className={className} title={t('ai.hint')}>
-      <Sparkles aria-hidden />
-      {label ?? t('ai.badge')}
-    </Badge>
-  );
-}
-
-/** Degraded marker shown next to widget titles when `degraded: true`. */
-export function DegradedBadge({
-  reason,
-  className,
-}: {
-  reason?: string;
-  className?: string;
-}) {
-  const {t} = useTranslation('common');
-  return (
-    <Badge
-      tone="warn"
-      className={className}
-      title={reason ?? t('degraded.hint')}
-    >
-      <CloudOff aria-hidden />
-      {t('degraded.badge')}
-    </Badge>
   );
 }

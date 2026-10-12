@@ -66,8 +66,3 @@ export function restoreSession(): Promise<RestoreOutcome> {
   });
   return restoring;
 }
-
-/** Boolean form of {@link restoreSession}. */
-export async function ensureSession(): Promise<boolean> {
-  return (await restoreSession()) === 'ok';
-}

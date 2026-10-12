@@ -69,11 +69,6 @@ export function readChartTokens(): ChartTokens {
   };
 }
 
-/** Data series colors 1–3 (status colors are never used as series). */
-export function seriesColors(t: ChartTokens): string[] {
-  return [t.cyan, t.blue, t.violet, t.orange];
-}
-
 let cachedTokens: ChartTokens | null = null;
 
 /** Returns the (constant) chart tokens (memoized; stable reference). */
