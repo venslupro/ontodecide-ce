@@ -56,10 +56,6 @@ env:
   AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_STATE_KEY || secrets.B2_MASTER_KEY }}
   B2_APPLICATION_KEY_ID: ${{ secrets.B2_MASTER_KEY_ID }}
   B2_APPLICATION_KEY: ${{ secrets.B2_MASTER_KEY }}
-  # Legacy: the neo4jaura provider reads the forgotten V1.3 instance
-  # (infra/legacy.tf); drop with it.
-  AURA_CLIENT_ID: ${{ secrets.NEO4J_AURA_CLIENT_ID }}
-  AURA_CLIENT_SECRET: ${{ secrets.NEO4J_AURA_CLIENT_SECRET }}
 
 defaults:
   run:

@@ -12,7 +12,7 @@ import {join} from 'node:path';
 import {initialScripts, parseEntries, staticImports} from './check_bundle.mjs';
 import {checkOpenApi, validateOpenApi} from './check_openapi.mjs';
 import {isExempt} from './check_sql.mjs';
-import {dropAllSql, unknownMigrations} from './d1_migrate.mjs';
+import {unknownMigrations} from './d1_migrate.mjs';
 
 test('check_sql exemptions', () => {
   assert.equal(
@@ -108,22 +108,4 @@ test('d1_migrate helpers', () => {
     unknownMigrations(['0001_ce_x.sql', '0001_x_init.sql'], ['0001_ce_x.sql']),
     ['0001_x_init.sql'],
   );
-  const sql = dropAllSql([
-    {type: 'table', name: 'd1_migrations', sql: ''},
-    {type: 'table', name: '_cf_KV', sql: ''},
-    {type: 'table', name: 'og_object', sql: 'CREATE TABLE og_object(x)'},
-    {
-      type: 'table',
-      name: 'og_fts',
-      sql: 'CREATE VIRTUAL TABLE og_fts USING fts5(x)',
-    },
-    {type: 'view', name: 'v', sql: 'CREATE VIEW v AS SELECT 1'},
-  ]);
-  assert.deepEqual(sql.split('\n'), [
-    'PRAGMA defer_foreign_keys = ON;',
-    'DROP VIEW IF EXISTS "v";',
-    'DROP TABLE IF EXISTS "og_fts";',
-    'DROP TABLE IF EXISTS "og_object";',
-    'DROP TABLE IF EXISTS d1_migrations;',
-  ]);
 });
