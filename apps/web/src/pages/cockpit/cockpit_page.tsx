@@ -7,11 +7,13 @@
  * same query cache.
  */
 
+import {BUILT_IN_SCENARIOS} from '@ontodecide/integration/contract';
 import {useNavigate} from '@tanstack/react-router';
 import {FlaskConical, Sparkles} from 'lucide-react';
 import {useTranslation} from 'react-i18next';
 import {ExpiryBanner} from '../../app/layouts/banners';
 import {QuotaBars} from '../../entities/quota';
+import {useOntology} from '../../entities/schema/api';
 import {useObjectStats} from '../../features/object-graph/api';
 import {useOverview, type Range} from '../../features/situation/api';
 import {AlertStream} from '../../features/situation/components/alert_stream';
@@ -60,14 +62,17 @@ function LiveDot() {
 
 /** Cockpit page. */
 export function CockpitPage() {
-  const {t} = useTranslation('cockpit');
+  const {t, i18n} = useTranslation('cockpit');
   const navigate = useNavigate();
   const search = useLooseSearch();
   const patch = useSearchPatch();
   const range: Range = searchString(search, 'range') === '7d' ? '7d' : '24h';
   const ov = useOverview(range);
   const stats = useObjectStats();
+  const templateId = useOntology().data?.templateId;
   useRecommendationMerger();
+  const scenario = BUILT_IN_SCENARIOS.find(s => s.id === templateId);
+  const lang = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
 
   const data = ov.data;
   const empty = isEmptyWorkspace(data, stats.data?.objects);
@@ -81,7 +86,11 @@ export function CockpitPage() {
     <div className="flex flex-col gap-4">
       <ExpiryBanner />
       <PageHeader
-        breadcrumb={t('breadcrumb')}
+        breadcrumb={
+          scenario
+            ? t('breadcrumb', {name: scenario.name[lang]})
+            : t('breadcrumbWorkspace')
+        }
         title={t('title')}
         actions={
           <>

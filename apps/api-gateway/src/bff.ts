@@ -3,10 +3,13 @@
  * `GET /me` and `GET /situation/overview` merge the personal quotas that
  * each service counts locally (修订说明书 12.7: no callback into
  * identity-access); `GET /me/export` streams JSON Lines chunk by chunk;
- * `GET /objects/{rid}?expand=links` joins the object with its link slice.
+ * `GET /objects/{rid}?expand=links` joins the object with its link slice;
+ * `POST /workspace/clear` resets the workspace to its blank state across
+ * the services.
  */
 
 import type {LinksQuery} from '@ontodecide/object-graph/contract';
+import {BLANK_TEMPLATE_ID} from '@ontodecide/ontology/contract';
 import {
   AppError,
   CE_LIMITS,
@@ -189,4 +192,41 @@ export async function getObjectWithLinksBff(
   if (!o) throw new AppError('NOT_FOUND');
   if ('error' in links) throw links.error;
   return jsonWithEtag({...o, links: links.slice}, o.version);
+}
+
+/** Response of `POST /workspace/clear`. */
+export interface WorkspaceCleared {
+  objects: number;
+  links: number;
+  scenarios: number;
+  recommendations: number;
+  mappings: number;
+}
+
+/**
+ * POST /workspace/clear: removes the current scenario's business data and
+ * returns the workspace to the blank template, one service after another.
+ * Unfinished imports are stopped first so no batch lands on the cleared
+ * graph; the situation room goes last so it re-initializes from the blank
+ * ontology and the empty graph. Every step is idempotent, so a failed clear
+ * is retried as a whole. Account data, usage counters, import history, the
+ * action audit and executed recommendations are kept.
+ */
+export async function clearWorkspaceBff(
+  env: Env,
+  ctx: CallCtx,
+): Promise<Response> {
+  const {mappings} = await env.INTEGRATION.clearWorkspace(ctx);
+  const {scenarios, recommendations} = await env.DECISION.clearWorkspace(ctx);
+  const {objects, links} = await env.OBJECTS.clearWorkspace(ctx);
+  await env.ONTOLOGY.setTemplate(ctx, BLANK_TEMPLATE_ID);
+  await env.SITUATION.clearWorkspace(ctx);
+  const body: WorkspaceCleared = {
+    objects,
+    links,
+    scenarios,
+    recommendations,
+    mappings,
+  };
+  return json(body);
 }

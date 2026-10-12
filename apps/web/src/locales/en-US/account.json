@@ -51,6 +51,21 @@
     "failed": "Export failed",
     "adminNote": "Exports the admin workspace's current data (JSON Lines)"
   },
+  "clear": {
+    "title": "Clear workspace data",
+    "body": "Delete all business data of the current scenario and return the workspace to its blank state, so you can load another example scenario or import new data.",
+    "button": "Clear workspace",
+    "dialogTitle": "Clear the workspace?",
+    "dialogBody": "This cannot be undone.",
+    "removed": "Removed:",
+    "point1": "All objects and links",
+    "point2": "The ontology (reset to the blank template, including your changes), KPIs, automations and alerts",
+    "point3": "Saved mappings, scenarios and recommendations that were not executed; running imports are stopped",
+    "kept": "Kept:",
+    "keptBody": "Your account and sessions, today's usage (nothing is refunded), import history, the action audit and executed recommendations.",
+    "confirm": "Clear workspace",
+    "done": "Workspace cleared ({objects} objects, {links} links removed)"
+  },
   "danger": {
     "title": "End the trial early and delete",
     "body": "Stops the trial now. Your data is packed as a ZIP and the download link is e-mailed to you (valid 7 days); then the account and e-mail are deleted. Requires an e-mail code.",

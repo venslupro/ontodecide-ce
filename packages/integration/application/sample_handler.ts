@@ -7,9 +7,12 @@
  * rows' object and link types exist. The system is not coupled to any
  * scenario — any of the built-in ones may be loaded, and users can still
  * import their own CSV / XLSX / JSON data. Loading is not restricted to
- * once per workspace: users may switch scenarios or reload (upserts are
- * keyed, so reloading the same scenario is idempotent); only the daily
- * seed-row budget limits usage.
+ * once per workspace: the same scenario may be reloaded (upserts are keyed,
+ * so reloading is idempotent and also resumes a failed load); only the
+ * daily seed-row budget limits usage. Switching to a different scenario is
+ * only allowed on an empty workspace (CONFLICT otherwise): replacing the
+ * ontology under existing objects would orphan them and discard any custom
+ * ontology changes.
  */
 
 import {AppError, utcDay} from '@ontodecide/shared-kernel';
@@ -44,6 +47,15 @@ export async function loadSample(
   const scenario: SampleScenario | null = getSampleScenario(scenarioId);
   if (!scenario) {
     throw new AppError('NOT_FOUND', `Unknown sample scenario: ${scenarioId}`);
+  }
+  const [current, stats] = await Promise.all([
+    deps.ontology.getCompiledSchema(ctx),
+    deps.objects.stats(ctx),
+  ]);
+  if (stats.objects > 0 && current.templateId !== scenario.templateId) {
+    throw new AppError('CONFLICT', 'WORKSPACE_NOT_EMPTY', {
+      extras: {templateId: current.templateId},
+    });
   }
   const now = deps.clock.now();
   const budget: UsageRef = {day: utcDay(now), scope: '*', key: 'seed_rows'};

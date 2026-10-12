@@ -2,7 +2,8 @@
  * @fileoverview Cockpit: fixed layout from the overview BFF (KPI cards,
  * alerts by severity, impacted objects, pending recommendations with the
  * ranking badge), alert acknowledgement, range switch, and the empty
- * workspace with sample data (success, QUOTA_EXCEEDED inline, CONFLICT).
+ * workspace with sample data (scenario cards, success, QUOTA_EXCEEDED inline,
+ * CONFLICT).
  */
 
 import {screen, waitFor, within} from '@testing-library/react';
@@ -102,8 +103,9 @@ describe('CockpitPage', () => {
     it('loads the sample scenario', async () => {
       emptyStats();
       renderWithProviders(<CockpitPage />, {url: '/cockpit'});
-      const select = await screen.findByRole('combobox');
-      await userEvent.selectOptions(select, 'supply-chain');
+      await userEvent.click(
+        await screen.findByRole('radio', {name: '供应链风险监测与预警'}),
+      );
       await userEvent.click(
         await screen.findByRole('button', {name: '加载所选场景'}),
       );
@@ -123,8 +125,9 @@ describe('CockpitPage', () => {
         ),
       );
       renderWithProviders(<CockpitPage />, {url: '/cockpit'});
-      const select = await screen.findByRole('combobox');
-      await userEvent.selectOptions(select, 'supply-chain');
+      await userEvent.click(
+        await screen.findByRole('radio', {name: '供应链风险监测与预警'}),
+      );
       await userEvent.click(
         await screen.findByRole('button', {name: '加载所选场景'}),
       );
@@ -134,17 +137,27 @@ describe('CockpitPage', () => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
 
-    it('allows reloading / switching scenarios (no CONFLICT block)', async () => {
+    it('offers every built-in scenario as a card', async () => {
+      emptyStats();
+      renderWithProviders(<CockpitPage />, {url: '/cockpit'});
+      expect(await screen.findAllByRole('radio')).toHaveLength(6);
+      expect(screen.getByText('80 个对象 · 160 条关系')).toBeInTheDocument();
+      expect(screen.getByRole('button', {name: '加载所选场景'})).toBeDisabled();
+    });
+
+    it('explains CONFLICT when the workspace holds other data', async () => {
       emptyStats();
       businessDb.sampleLoaded = true;
       renderWithProviders(<CockpitPage />, {url: '/cockpit'});
-      const select = await screen.findByRole('combobox');
-      await userEvent.selectOptions(select, 'supply-chain');
+      await userEvent.click(
+        await screen.findByRole('radio', {name: '供应链风险监测与预警'}),
+      );
       await userEvent.click(
         await screen.findByRole('button', {name: '加载所选场景'}),
       );
-      // The sample handler no longer blocks reloading; the call succeeds.
-      expect(businessDb.sampleLoaded).toBe(true);
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        '请先在「账户与数据」中清空工作区',
+      );
     });
   });
 });

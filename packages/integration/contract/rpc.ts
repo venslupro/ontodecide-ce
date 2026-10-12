@@ -52,11 +52,18 @@ export interface IntegrationRpc {
     input: MappingDraftInput,
   ): Promise<MappingDraft>;
   /**
-   * Loads a built-in example scenario once per workspace, within the global
-   * daily seed budget (QUOTA_EXCEEDED) — CONFLICT when already loaded. The
-   * workspace ontology is switched to the scenario's template first.
+   * Loads a built-in example scenario within the global daily seed budget
+   * (QUOTA_EXCEEDED). The workspace ontology is switched to the scenario's
+   * template first. Reloading the current scenario is idempotent; another
+   * scenario needs an empty workspace (CONFLICT, WORKSPACE_NOT_EMPTY).
    */
   loadSample(ctx: CallCtx, scenarioId: string): Promise<JobDto>;
+  /**
+   * Fails the workspace's unfinished import jobs and deletes its saved
+   * mappings (they target the ontology being cleared); job history stays.
+   * Owner or admin only; idempotent.
+   */
+  clearWorkspace(ctx: CallCtx): Promise<{jobs: number; mappings: number}>;
   /** importRowsToday and mappingDraftsToday of the caller. */
   usage(ctx: CallCtx): Promise<QuotaItem[]>;
 }

@@ -3,7 +3,13 @@
  * (node:sqlite D1), an in-memory object graph and a fake Workers AI.
  */
 
-import {AppError, FixedClock, MINUTE_MS} from '@ontodecide/shared-kernel';
+import {
+  AppError,
+  FixedClock,
+  MINUTE_MS,
+  serviceCtx,
+  utcDay,
+} from '@ontodecide/shared-kernel';
 import type {CallCtx} from '@ontodecide/shared-kernel';
 import {
   createTestD1,
@@ -695,6 +701,58 @@ describe('IntegrationRpc', () => {
     });
   });
 
+  describe('clearWorkspace', () => {
+    it('fails unfinished jobs and deletes saved mappings, keeping history', async () => {
+      const done = await rpc.createImport(ctx, {
+        fileName: 'done.csv',
+        targetType: 'Product',
+        totalRows: 1,
+        mapping: PRODUCT_MAPPING,
+      });
+      await rpc.submitBatch(ctx, done.id, {
+        seq: 0,
+        last: true,
+        rows: products(1),
+      });
+      const open = await rpc.createImport(ctx, {
+        fileName: 'open.csv',
+        targetType: 'Product',
+        totalRows: 10,
+        mapping: PRODUCT_MAPPING,
+      });
+      const mappings = () =>
+        db
+          .prepare('SELECT COUNT(*) AS n FROM int_mapping')
+          .first<{n: number}>()
+          .then(r => r!.n);
+      expect(await mappings()).toBeGreaterThan(0);
+
+      expect(await rpc.clearWorkspace(ctx)).toEqual({
+        jobs: 1,
+        mappings: expect.any(Number),
+      });
+      expect(await mappings()).toBe(0);
+      expect((await rpc.getImport(ctx, done.id)).status).toBe('DONE');
+      expect((await rpc.getImport(ctx, open.id)).status).toBe('FAILED');
+      expect(
+        await code(
+          rpc.submitBatch(ctx, open.id, {
+            seq: 0,
+            last: true,
+            rows: products(1),
+          }),
+        ),
+      ).toBe('CONFLICT');
+      expect(await rpc.clearWorkspace(ctx)).toEqual({jobs: 0, mappings: 0});
+    });
+
+    it('refuses service principals', async () => {
+      expect(
+        await code(rpc.clearWorkspace(serviceCtx(TEST_TID, 'decision-engine'))),
+      ).toBe('FORBIDDEN');
+    });
+  });
+
   describe('loadSample', () => {
     it('writes 80 objects and 160 links; reloading is idempotent', async () => {
       const job = await rpc.loadSample(ctx, 'supply-chain');
@@ -750,6 +808,21 @@ describe('IntegrationRpc', () => {
       expect(job.status).toBe('DONE');
       const jobs = (await rpc.listImports(ctx, {})).items.map(j => j.status);
       expect(jobs.sort()).toEqual(['DONE', 'FAILED']);
+    });
+
+    it('refuses another scenario once the workspace holds data', async () => {
+      await rpc.loadSample(ctx, 'supply-chain');
+      const budget = {
+        day: utcDay(deps.clock.now()),
+        scope: '*',
+        key: 'seed_rows',
+      } as const;
+      const used = await deps.usage.read(budget);
+      expect(used).toBeGreaterThan(0);
+      expect(await code(rpc.loadSample(ctx, 'energy-grid'))).toBe('CONFLICT');
+      // Rejected before the seed budget is taken.
+      expect(await deps.usage.read(budget)).toBe(used);
+      expect(deps.objects.objects.get(TEST_TID)!.size).toBe(80);
     });
   });
 

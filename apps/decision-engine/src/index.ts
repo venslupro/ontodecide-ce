@@ -42,6 +42,9 @@ export class DecisionRpc
   decide(...a: P<'decide'>) {
     return svc(this.env).rpc.decide(...a);
   }
+  clearWorkspace(...a: P<'clearWorkspace'>) {
+    return svc(this.env).rpc.clearWorkspace(...a);
+  }
   usage(...a: P<'usage'>) {
     return svc(this.env).rpc.usage(...a);
   }

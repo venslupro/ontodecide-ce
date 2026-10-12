@@ -13,6 +13,7 @@ import {
   HOUR_MS,
   MINUTE_MS,
   STREAM_CLOSE_EXPIRED,
+  serviceCtx,
   sha256Hex,
 } from '@ontodecide/shared-kernel';
 import {MemorySqlStorage, TEST_TID, testCtx} from '@ontodecide/testing';
@@ -563,6 +564,44 @@ describe('alerts', () => {
     expect(await codeOf(r.core.acknowledgeAlert(ctx, closed.id))).toBe(
       'CONFLICT',
     );
+  });
+});
+
+describe('clearWorkspace', () => {
+  it('drops scenario data, including user automations, and re-initializes', async () => {
+    const r = makeRoom();
+    r.objects.put(S1, {risk: 85});
+    await r.core.overview(ctx, {range: '24h'});
+    await r.core.createAutomation(ctx, scheduleDef(2));
+    await r.core.applyEvents(TEST_TID, [event([[S1, ['risk']]])]);
+    r.clock.advance(HOUR_MS);
+    await r.core.alarm();
+    expect((await r.core.listAlerts(ctx, {}, {})).items.length).toBeGreaterThan(
+      0,
+    );
+    expect(r.store.listPoints(0).length).toBeGreaterThan(0);
+
+    // The workspace was reset to the blank template with no objects.
+    r.objects.objects.clear();
+    r.ontology.seeds = {kpis: [], automations: []};
+    await r.core.clearWorkspace(ctx);
+
+    const o = await r.core.overview(ctx, {range: '24h'});
+    expect(o.kpis).toEqual([]);
+    expect(o.alerts).toEqual([]);
+    expect((await r.core.listAlerts(ctx, {}, {})).items).toEqual([]);
+    expect(r.store.listAutomations()).toEqual([]);
+    expect(r.store.listObjects()).toEqual([]);
+    expect(r.store.listPoints(0)).toEqual([]);
+  });
+
+  it('refuses service principals', async () => {
+    const r = makeRoom();
+    expect(
+      await codeOf(
+        r.core.clearWorkspace(serviceCtx(TEST_TID, 'data-integration')),
+      ),
+    ).toBe('FORBIDDEN');
   });
 });
 

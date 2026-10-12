@@ -13,7 +13,8 @@
     "title": "My trial quota",
     "reset": "Resets daily at 00:00 UTC"
   },
-  "breadcrumb": "Supply-chain risk · sample scenario",
+  "breadcrumb": "{name} · sample scenario",
+  "breadcrumbWorkspace": "My workspace",
   "title": "Situation overview",
   "runScenario": "Run scenario",
   "range": {
@@ -71,11 +72,13 @@
     "description": "Pick an example scenario to explore right away, or import your own CSV / XLSX / JSON file.",
     "loadSample": "Load selected scenario",
     "selectScenario": "Choose a scenario…",
+    "scenarioSize": "{objects} objects · {links} links",
     "importFile": "Import a file",
     "loaded": "Loading the sample scenario",
     "loadingData": "Loading scenario data…",
     "loadingHint": "Preparing objects, links and ontology — {pct}%",
     "budgetUsed": "Today's sample scenario budget is used up; resets {at}. You can still import a file.",
-    "alreadyLoaded": "The sample scenario was already loaded; refreshing."
+    "alreadyLoaded": "The sample scenario was already loaded; refreshing.",
+    "notEmpty": "The workspace already holds data of another scenario. Clear the workspace under Account & data first, then load another scenario."
   }
 }

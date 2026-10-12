@@ -181,6 +181,15 @@ export interface ActionLogDto {
   executedAt: string;
 }
 
+/** Business data removed by ObjectGraphRpc.clearWorkspace. */
+export interface ClearedGraph {
+  objects: number;
+  links: number;
+}
+
+/** Action type of the audit entry written when a workspace is cleared. */
+export const CLEAR_WORKSPACE_ACTION = '$clearWorkspace';
+
 /** Traversal and write limits. */
 export const GRAPH_LIMITS = {
   maxDepth: 2,

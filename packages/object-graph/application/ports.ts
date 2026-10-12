@@ -136,6 +136,20 @@ export interface ObjectWriter {
     log: ActionLogRow;
     outbox: OutboxRow;
   }): Promise<CommitOutcome>;
+  /**
+   * In one batch: appends the audit entry (its `params` get the object and
+   * link counts before deletion), then deletes the property index, links,
+   * objects and undelivered outbox rows. Returns the deleted counts.
+   */
+  clearAll(audit: ClearAudit): Promise<{objects: number; links: number}>;
+}
+
+/** Audit entry of a workspace clear. */
+export interface ClearAudit {
+  id: string;
+  actor: string;
+  actorUserId: string | null;
+  executedAt: number;
 }
 
 /** Link traversal (workspace-scoped). */

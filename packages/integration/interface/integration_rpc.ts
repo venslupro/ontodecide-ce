@@ -14,6 +14,7 @@ import {
 } from '../contract';
 import type {IntegrationRpc, MappingSpec} from '../contract';
 import {
+  clearWorkspace,
   createImport,
   getImport,
   listImports,
@@ -63,6 +64,7 @@ export function createIntegrationRpc(deps: IntegrationDeps): IntegrationRpc {
       ),
     loadSample: (ctx, scenarioId) =>
       loadSample(deps, ctx, parseOrThrow(scenarioIdSchema, scenarioId)),
+    clearWorkspace: ctx => clearWorkspace(deps, ctx),
     usage: ctx => usage(deps, ctx),
   };
 }

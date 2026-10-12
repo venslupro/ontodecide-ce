@@ -1,6 +1,7 @@
 /**
  * @fileoverview Situation queries and mutations: cockpit overview (BFF),
- * alerts, acknowledgement, sample data and automation CRUD (If-Match).
+ * alerts, acknowledgement, sample data, workspace clear and automation CRUD
+ * (If-Match).
  * Every key starts with `situation` so realtime increments from
  * `useSituationStream` land in the same cache.
  */
@@ -115,7 +116,8 @@ export function useAckAlert() {
  * `'supply-chain'`, `'urban-emergency'`); the workspace ontology is switched
  * to that scenario's template first, then the sample rows are written. The
  * situation room is reset so KPIs and automations match the new template.
- * Reloading is allowed (users may switch scenarios); upserts are keyed.
+ * Reloading the current scenario is allowed (upserts are keyed); another
+ * scenario needs an empty workspace (CONFLICT — see useClearWorkspace).
  */
 export function useLoadSample() {
   const qc = useQueryClient();
@@ -133,6 +135,29 @@ export function useLoadSample() {
       void qc.invalidateQueries({queryKey: ['decision']});
       void qc.invalidateQueries({queryKey: qk.me()});
     },
+  });
+}
+
+/** Response of POST /workspace/clear. */
+export interface WorkspaceCleared {
+  objects: number;
+  links: number;
+  scenarios: number;
+  recommendations: number;
+  mappings: number;
+}
+
+/**
+ * Clears the workspace back to the blank template (POST /workspace/clear):
+ * objects, links, ontology, KPIs, automations, alerts, saved mappings,
+ * scenarios and unexecuted recommendations. Every cached query of the
+ * workspace is stale afterwards, so all of them are invalidated.
+ */
+export function useClearWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<WorkspaceCleared>('/workspace/clear'),
+    onSuccess: () => void qc.invalidateQueries(),
   });
 }
 

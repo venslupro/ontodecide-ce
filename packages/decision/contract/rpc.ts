@@ -50,6 +50,14 @@ export interface DecisionRpc {
     input: DecisionInput,
     idempotencyKey: string,
   ): Promise<RecommendationDto>;
+  /**
+   * Deletes the workspace's scenarios and every recommendation that was not
+   * executed (executed ones stay as history for the action audit). Owner or
+   * admin only; idempotent.
+   */
+  clearWorkspace(
+    ctx: CallCtx,
+  ): Promise<{scenarios: number; recommendations: number}>;
   /** aiRecsToday of the caller. */
   usage(ctx: CallCtx): Promise<QuotaItem[]>;
 }

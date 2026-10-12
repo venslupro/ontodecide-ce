@@ -4,7 +4,12 @@
  * from the current objects (ObjectGraphRpc.listObjects, ≤ 3 pages).
  */
 
-import {AppError, type CallCtx, serviceCtx} from '@ontodecide/shared-kernel';
+import {
+  AppError,
+  actorLabel,
+  type CallCtx,
+  serviceCtx,
+} from '@ontodecide/shared-kernel';
 import type {ObjectDto} from '@ontodecide/object-graph/contract';
 import type {TemplateSeeds} from '@ontodecide/ontology/contract';
 import {
@@ -62,6 +67,25 @@ export async function resetForTemplate(
   for (const k of store.listKpis()) store.deleteKpi(k.id);
   for (const a of store.listAutomations()) store.deleteAutomation(a.id);
   store.deleteMeta(META.initialized);
+  rt.reset();
+  rt.rulesChanged();
+  await ensureInitialized(rt);
+}
+
+/**
+ * Clears everything derived from the workspace's scenario and installs the
+ * current template's content again (see SituationRpc.clearWorkspace).
+ */
+export async function clearWorkspace(
+  rt: RoomRuntime,
+  ctx: CallCtx,
+): Promise<void> {
+  if (!['owner', 'admin'].includes(actorLabel(ctx))) {
+    throw new AppError('FORBIDDEN', 'This principal cannot clear a workspace');
+  }
+  rt.touch(ctx);
+  rt.deps.store.clearScenarioData();
+  rt.deps.store.deleteMeta(META.initialized);
   rt.reset();
   rt.rulesChanged();
   await ensureInitialized(rt);

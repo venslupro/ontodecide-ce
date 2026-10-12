@@ -48,6 +48,9 @@ export class ObjectGraphRpc extends WorkerEntrypoint<Env> implements Contract {
   applyAction(...a: Parameters<Contract['applyAction']>) {
     return svc(this.env).rpc.applyAction(...a);
   }
+  clearWorkspace(...a: Parameters<Contract['clearWorkspace']>) {
+    return svc(this.env).rpc.clearWorkspace(...a);
+  }
   listActionLog(...a: Parameters<Contract['listActionLog']>) {
     return svc(this.env).rpc.listActionLog(...a);
   }

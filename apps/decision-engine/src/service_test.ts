@@ -8,6 +8,7 @@ import {
   AI_MODELS,
   AppError,
   HOUR_MS,
+  serviceCtx,
   type CallCtx,
 } from '@ontodecide/shared-kernel';
 import {hasTombstone} from '@ontodecide/shared-kernel/d1';
@@ -672,6 +673,40 @@ describe('decide', () => {
         ),
       ),
     ).toBe('CONFLICT');
+  });
+});
+
+describe('clearWorkspace', () => {
+  it('deletes scenarios and unexecuted recommendations, keeping executed ones', async () => {
+    const h = harness({withAi: false});
+    const executed = await generate(h);
+    await h.svc.rpc.decide(testCtx(), executed.id, {decision: 'confirm'}, KEY);
+    const pending = await generate(h);
+    expect(await h.svc.rpc.clearWorkspace(testCtx())).toEqual({
+      scenarios: 2,
+      recommendations: 1,
+    });
+    const left = await h.svc.rpc.listRecommendations(testCtx(), {}, {});
+    expect(left.items.map(r => r.id)).toEqual([executed.id]);
+    expect(await code(h.svc.rpc.getRecommendation(testCtx(), pending.id))).toBe(
+      'NOT_FOUND',
+    );
+    expect(
+      await code(h.svc.rpc.getScenario(testCtx(), pending.scenarioId!)),
+    ).toBe('NOT_FOUND');
+    expect(await h.svc.rpc.clearWorkspace(testCtx())).toEqual({
+      scenarios: 0,
+      recommendations: 0,
+    });
+  });
+
+  it('refuses service principals', async () => {
+    const h = harness({withAi: false});
+    expect(
+      await code(
+        h.svc.rpc.clearWorkspace(serviceCtx(TEST_TID, 'data-integration')),
+      ),
+    ).toBe('FORBIDDEN');
   });
 });
 

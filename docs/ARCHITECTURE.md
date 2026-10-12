@@ -234,6 +234,7 @@ required headers → Act-as writes: `IDENTITY.audit(tenant.write)` first
 | POST /me/trial/termination | workspace · write | IDENTITY.terminateTrial → 202 |
 | GET /me/export | workspace · read | IDENTITY.exportChunk loop → `application/jsonl` stream |
 | POST /workspace/sample-data | workspace · write | INTEGRATION.loadSample → 202 JobDto |
+| POST /workspace/clear | workspace · write | BFF: INTEGRATION → DECISION → OBJECTS `.clearWorkspace`, ONTOLOGY.setTemplate(blank), SITUATION.clearWorkspace → 200 counts |
 | GET /archive-deletions/{token} | public · ip | IDENTITY.getArchiveDeletion |
 | POST /archive-deletions/{token} | public · ip | IDENTITY.deleteArchiveByToken → 204 |
 | GET /ontology | workspace · read | ONTOLOGY.getOntology (ETag) |
@@ -297,6 +298,8 @@ closes sockets with code 4401.
    80 objects / 160 links through `OBJECTS.upsertBatch` (one statement per
    table + one outbox row) → `domain-events` → SituationRoom updates KPIs,
    raises alerts (≤ 1 OPEN per automation × rid), pushes over WebSocket.
+   Another scenario needs an empty workspace (409 otherwise):
+   `POST /workspace/clear` first returns it to the blank template.
 3. **File import**: `POST /imports` → mapping (deterministic + AI draft) →
    `POST /imports/{id}/batches` × n (≤ 100 rows, sync, idempotent by seq).
 4. **Decision**: `POST /scenarios` (deterministic propagation, γ = 0.9,

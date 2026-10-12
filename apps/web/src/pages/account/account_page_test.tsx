@@ -9,6 +9,7 @@ import userEvent from '@testing-library/user-event';
 import {describe, expect, it, vi} from 'vitest';
 import {useSession} from '../../entities/session/store';
 import {adminMe, ownerMe} from '../../test/fixtures/platform';
+import {businessDb} from '../../test/handlers/business';
 import {platformDb, recorded, TEST_CODE} from '../../test/handlers/platform';
 import {renderApp} from '../../test/render';
 import {lifecycleMilestones} from './account_page';
@@ -73,6 +74,29 @@ describe('AccountPage (owner)', () => {
     click.mockRestore();
   });
 
+  it('clears the workspace after confirmation and returns to the cockpit', async () => {
+    businessDb.sampleLoaded = true;
+    const user = userEvent.setup();
+    const {router} = renderApp('/account');
+    await user.click(await screen.findByRole('button', {name: '清空工作区'}));
+    const dialog = await screen.findByRole('dialog', {name: '确认清空工作区'});
+    expect(
+      within(dialog).getByText(/本体（恢复为空白模板/),
+    ).toBeInTheDocument();
+    expect(businessDb.sampleLoaded).toBe(true);
+    await user.click(within(dialog).getByRole('button', {name: '确认清空'}));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/cockpit'),
+    );
+    expect(businessDb.sampleLoaded).toBe(false);
+    expect(
+      businessDb.requests.filter(r => r.path === '/workspace/clear'),
+    ).toHaveLength(1);
+    expect(
+      await screen.findByText('工作区已清空（删除 80 个对象、160 条关系）'),
+    ).toBeInTheDocument();
+  });
+
   it('ends the trial with an e-mail code and lands on /ended', async () => {
     const user = userEvent.setup();
     const {router, queryClient} = renderApp('/account');
@@ -103,6 +127,9 @@ describe('AccountPage (admin)', () => {
     expect(screen.getByText(/平台管理员（系统唯一）/)).toBeInTheDocument();
     expect(
       screen.queryByRole('button', {name: '结束试用'}),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', {name: '清空工作区'}),
     ).not.toBeInTheDocument();
     expect(screen.queryByText('到期后将归档的数据')).not.toBeInTheDocument();
     expect(

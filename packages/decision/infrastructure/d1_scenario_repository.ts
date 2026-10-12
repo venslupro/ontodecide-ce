@@ -35,6 +35,13 @@ export class D1ScenarioRepository
     ).run();
   }
 
+  async deleteAll(): Promise<number> {
+    const res = await this.stmt(
+      'DELETE FROM dec_scenario WHERE tenant_id = ?1',
+    ).run();
+    return res.meta.changes ?? 0;
+  }
+
   async get(id: string): Promise<ScenarioDto | null> {
     const row = await this.stmt(
       `SELECT id, name, perturbations, candidates, result, created_at

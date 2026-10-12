@@ -6,6 +6,7 @@
 import type {GraphDeps} from '../application';
 import {
   applyAction,
+  clearWorkspace,
   getLinks,
   getObject,
   getObjects,
@@ -31,6 +32,7 @@ export function createObjectGraphRpc(deps: GraphDeps): ObjectGraphRpc {
     stats: ctx => stats(deps, ctx),
     upsertBatch: (ctx, cmd) => upsertBatch(deps, ctx, cmd),
     applyAction: (ctx, cmd) => applyAction(deps, ctx, cmd),
+    clearWorkspace: ctx => clearWorkspace(deps, ctx),
     listActionLog: (ctx, rid, page) => listActionLog(deps, ctx, rid, page),
   };
 }

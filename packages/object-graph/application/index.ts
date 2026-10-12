@@ -3,6 +3,7 @@
  */
 
 export * from './apply_action';
+export * from './clear_workspace';
 export * from './get_object';
 export * from './graph_queries';
 export * from './list_action_log';

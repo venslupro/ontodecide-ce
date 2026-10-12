@@ -7,6 +7,7 @@
  * references the shared template, a notice says the first change copies it.
  */
 
+import {BUILT_IN_SCENARIOS} from '@ontodecide/integration/contract';
 import type {OntologyDto, TypeDef} from '@ontodecide/ontology/contract';
 import {resolveText} from '@ontodecide/shared-kernel';
 import {useQueryClient} from '@tanstack/react-query';
@@ -233,9 +234,10 @@ export function OntologyPage() {
   const general = [...byPath.values()].filter(
     i => i.path === '' || i.code === 'server',
   );
-  const templateName = t(`template.${o.templateId}`, {
-    defaultValue: o.templateId,
-  });
+  const scenario = BUILT_IN_SCENARIOS.find(s => s.id === o.templateId);
+  const templateName = scenario
+    ? scenario.name[locale === 'zh-CN' ? 'zh-CN' : 'en-US']
+    : t(`template.${o.templateId}`, {defaultValue: o.templateId});
   const typeNames = o.definition.objectTypes.map(x => x.apiName);
   const typeOptions = o.definition.objectTypes.map(x => ({
     value: x.apiName,

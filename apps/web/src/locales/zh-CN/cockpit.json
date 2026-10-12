@@ -13,7 +13,8 @@
     "title": "我的试用额度",
     "reset": "每日 0 点（UTC）重置"
   },
-  "breadcrumb": "供应链风险监测 · 示例场景",
+  "breadcrumb": "{name} · 示例场景",
+  "breadcrumbWorkspace": "我的工作区",
   "title": "态势总览",
   "runScenario": "运行推演",
   "range": {
@@ -71,11 +72,13 @@
     "description": "选择一个示例场景立即开始探索，或导入你自己的 CSV / XLSX / JSON 文件。",
     "loadSample": "加载所选场景",
     "selectScenario": "选择场景…",
+    "scenarioSize": "{objects} 个对象 · {links} 条关系",
     "importFile": "导入文件",
     "loaded": "示例场景已开始加载",
     "loadingData": "正在加载场景数据…",
     "loadingHint": "正在准备对象、链接和本体 — {pct}%",
     "budgetUsed": "今日示例场景名额已用完，{at} 重置；你仍可导入文件。",
-    "alreadyLoaded": "示例场景已加载过，正在刷新数据。"
+    "alreadyLoaded": "示例场景已加载过，正在刷新数据。",
+    "notEmpty": "工作区已有其他场景的数据。请先在「账户与数据」中清空工作区，再加载其他场景。"
   }
 }

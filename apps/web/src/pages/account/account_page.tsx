@@ -3,8 +3,10 @@
  * trial lifecycle timeline (T, +48 h, +72 h, 7-day link, deletion), the
  * account (the only Owner, e-mail code login, sessions n / 3, language,
  * time zone), the archive preview with "export now" (GET /me/export →
- * `ontodecide-export-<date>.jsonl`), and the danger zone to end the trial
- * early (POST /me/codes → code → POST /me/trial/termination → /ended).
+ * `ontodecide-export-<date>.jsonl`), and the danger zone: clear the
+ * workspace back to the blank template (POST /workspace/clear, e.g. to
+ * switch example scenarios) and end the trial early (POST /me/codes → code
+ * → POST /me/trial/termination → /ended).
  *
  * Admin variant: "平台管理员 · 不过期 · 不可删除" instead of the timeline,
  * no archive preview and no danger zone; export is kept.
@@ -16,7 +18,8 @@ import {
   type ArchiveFile,
 } from '@ontodecide/shared-kernel';
 import {useQueryClient} from '@tanstack/react-query';
-import {Download, ShieldCheck, Trash2} from 'lucide-react';
+import {useNavigate} from '@tanstack/react-router';
+import {Download, Eraser, ShieldCheck, Trash2} from 'lucide-react';
 import {useState, type ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useMe} from '../../entities/session/api';
@@ -29,6 +32,7 @@ import {
   terminateTrial,
 } from '../../features/identity/api';
 import {LangSwitch} from '../../features/identity/components/lang_switch';
+import {useClearWorkspace} from '../../features/situation/api';
 import {isApiError} from '../../shared/api/errors';
 import {errorMessage, errorTraceId} from '../../shared/api/error_message';
 import {qk} from '../../shared/api/query_keys';
@@ -422,6 +426,85 @@ function TerminateDialog({
   );
 }
 
+function ClearDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange(v: boolean): void;
+}) {
+  const {t} = useTranslation('account');
+  const navigate = useNavigate();
+  const clear = useClearWorkspace();
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={v => {
+        if (!v) clear.reset();
+        onOpenChange(v);
+      }}
+    >
+      <DialogContent
+        title={t('clear.dialogTitle')}
+        description={t('clear.dialogBody')}
+        footer={
+          <Button
+            variant="danger"
+            loading={clear.isPending}
+            onClick={() =>
+              clear.mutate(undefined, {
+                onSuccess: r => {
+                  onOpenChange(false);
+                  toast.success(
+                    t('clear.done', {objects: r.objects, links: r.links}),
+                  );
+                  void navigate({to: '/cockpit'});
+                },
+              })
+            }
+          >
+            {t('clear.confirm')}
+          </Button>
+        }
+      >
+        <p className="text-sm font-medium text-text">{t('clear.removed')}</p>
+        <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-muted">
+          <li>{t('clear.point1')}</li>
+          <li>{t('clear.point2')}</li>
+          <li>{t('clear.point3')}</li>
+        </ul>
+        <p className="mt-3 text-sm font-medium text-text">{t('clear.kept')}</p>
+        <p className="mt-1 text-sm text-muted">{t('clear.keptBody')}</p>
+        {clear.error && (
+          <p role="alert" className="mt-3 text-sm text-crit">
+            {errorMessage(clear.error, t)}
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ClearZone() {
+  const {t} = useTranslation('account');
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="danger-zone flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+      <div className="min-w-0 flex-1">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
+          <Eraser className="size-4 text-crit" aria-hidden />
+          {t('clear.title')}
+        </h2>
+        <p className="mt-2 text-sm text-muted">{t('clear.body')}</p>
+      </div>
+      <Button variant="danger" onClick={() => setOpen(true)}>
+        {t('clear.button')}
+      </Button>
+      <ClearDialog open={open} onOpenChange={setOpen} />
+    </section>
+  );
+}
+
 function DangerZone() {
   const {t} = useTranslation('account');
   const [open, setOpen] = useState(false);
@@ -470,6 +553,7 @@ export function AccountPage() {
         <AccountCard me={me} admin={admin} />
         {!admin && <ArchivePreview />}
       </div>
+      {!admin && <ClearZone />}
       {!admin && <DangerZone />}
     </div>
   );

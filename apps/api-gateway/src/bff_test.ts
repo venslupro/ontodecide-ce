@@ -259,6 +259,64 @@ describe('POST /workspace/sample-data', () => {
   });
 });
 
+describe('POST /workspace/clear', () => {
+  function clearServices(failObjects = false) {
+    const setTemplate = vi.fn(async () => ({etag: 3}));
+    return {
+      setTemplate,
+      services: {
+        integration: {clearWorkspace: async () => ({jobs: 1, mappings: 2})},
+        decision: {
+          clearWorkspace: async () => ({scenarios: 3, recommendations: 4}),
+        },
+        objects: {
+          clearWorkspace: async () => {
+            if (failObjects) throw new AppError('UNAVAILABLE');
+            return {objects: 80, links: 160};
+          },
+        },
+        ontology: {setTemplate},
+        situation: {clearWorkspace: async () => {}},
+      },
+    };
+  }
+
+  it('clears every service in order and resets the ontology to blank', async () => {
+    const {setTemplate, services} = clearServices();
+    const gw = await makeGateway(services);
+    const res = await call(gw, 'POST', '/workspace/clear', {
+      token: await ownerToken(),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      objects: 80,
+      links: 160,
+      scenarios: 3,
+      recommendations: 4,
+      mappings: 2,
+    });
+    expect(gw.calls).toEqual([
+      'INTEGRATION.clearWorkspace',
+      'DECISION.clearWorkspace',
+      'OBJECTS.clearWorkspace',
+      'ONTOLOGY.setTemplate',
+      'SITUATION.clearWorkspace',
+    ]);
+    expect(setTemplate.mock.calls[0]).toEqual([expect.anything(), 'blank']);
+  });
+
+  it('stops at the first failure so the clear can be retried', async () => {
+    const {services} = clearServices(true);
+    const gw = await makeGateway(services);
+    const res = await call(gw, 'POST', '/workspace/clear', {
+      token: await ownerToken(),
+    });
+    expect(res.status).toBe(503);
+    expect(gw.calls).not.toContain('ONTOLOGY.setTemplate');
+    expect(gw.calls).not.toContain('SITUATION.clearWorkspace');
+  });
+});
+
 describe('GET /objects/{rid}?expand=links', () => {
   const RID = 'ri.Supplier.01K6A00000000000000000R001';
   const object = {
