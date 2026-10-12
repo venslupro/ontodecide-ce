@@ -1,0 +1,11 @@
+equipmentId,name,location,healthScore,status,lastMaintenance,overdue
+EQ-001,CNC Lathe A1,Workshop 1,92,running,2026-09-15,false
+EQ-002,Hydraulic Press B2,Workshop 1,64,warning,2026-08-20,true
+EQ-003,Conveyor Line C3,Workshop 2,88,running,2026-09-28,false
+EQ-004,Injection Mold D4,Workshop 2,38,down,2026-06-10,true
+EQ-005,Welding Robot E5,Workshop 3,77,running,2026-09-01,false
+EQ-006,Air Compressor F6,Workshop 3,51,warning,2026-07-22,true
+EQ-007,Cooling Tower G7,Utilities,95,running,2026-09-30,false
+EQ-008,Packaging Machine H8,Workshop 4,43,warning,2026-08-05,true
+EQ-009,Boiler I9,Utilities,29,down,2026-05-18,true
+EQ-010,AGV Fleet J10,Warehouse,81,running,2026-09-12,false

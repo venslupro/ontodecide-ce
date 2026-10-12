@@ -1,10 +1,13 @@
 /**
- * @fileoverview Energy-grid sample scenario (26 objects, 24 links):
+ * @fileoverview Energy-grid sample scenario (26 objects, 28 links):
  * 8 PowerPlant (feeds), 10 Substation (connects), 8 TransmissionLine.
  * Includes offline plants, overloaded lines and emergency substations for
  * demo alerts. The `connects` link (Substation→Substation) is declared on the
  * Substation dataset because link validation requires the link type's `from`
  * to match the dataset target type.
+ *
+ * `samples/energy-grid/*.csv` contain exactly these rows (checked by
+ * scenarios_test) so the manual import demo produces the same graph.
  */
 
 import type {Row, SampleDataset} from '../../contract';

@@ -1,0 +1,16 @@
+entityId,name,type,riskLevel,relatedEntities
+ENT-001,Alex Mercer,person,82,ENT-002;ENT-006
+ENT-002,Northwind Trading,organization,65,ENT-001;ENT-004
+ENT-003,Port of Rotterdam,location,30,ENT-002;ENT-007
+ENT-004,Sarah Chen,person,45,ENT-002;ENT-008
+ENT-005,Shadow Summit,event,88,ENT-001;ENT-006
+ENT-006,Blackwood Corp,organization,91,ENT-001;ENT-005
+ENT-007,Container Yard 7,location,22,ENT-003;ENT-009
+ENT-008,James Park,person,38,ENT-004;ENT-010
+ENT-009,Maria Lopez,person,70,ENT-007;ENT-011
+ENT-010,East Gate Warehouse,location,55,ENT-008;ENT-012
+ENT-011,Viktor Sokolov,person,78,ENT-009;ENT-013
+ENT-012,Crimson Logistics,organization,60,ENT-010;ENT-014
+ENT-013,David Kim,person,25,ENT-011;ENT-015
+ENT-014,Freeport Zone,location,48,ENT-012
+ENT-015,Lisa Wang,person,15,ENT-013

@@ -1,0 +1,9 @@
+recordId,equipmentId,type,date,technician,cost
+MR-001,EQ-001,preventive,2026-09-15,Wang Wei,3200
+MR-002,EQ-002,corrective,2026-08-20,Li Ming,8500
+MR-003,EQ-003,preventive,2026-09-28,Zhang Jun,2100
+MR-004,EQ-004,emergency,2026-06-10,Chen Hua,42000
+MR-005,EQ-005,preventive,2026-09-01,Liu Fang,1800
+MR-006,EQ-006,corrective,2026-07-22,Wang Wei,6700
+MR-007,EQ-007,preventive,2026-09-30,Zhao Lei,950
+MR-008,EQ-009,emergency,2026-05-18,Chen Hua,38500

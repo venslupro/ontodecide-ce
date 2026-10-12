@@ -1,7 +1,10 @@
 /**
- * @fileoverview Urban-emergency sample scenario (30 objects, 30 links):
+ * @fileoverview Urban-emergency sample scenario (30 objects, 18 links):
  * 12 TrafficNode, 12 Camera (monitors), 6 Incident (occursAt). Includes
  * high-congestion and critical-incident data points for demo alerts.
+ *
+ * `samples/urban-emergency/*.csv` contain exactly these rows (checked by
+ * scenarios_test) so the manual import demo produces the same graph.
  */
 
 import type {Row, SampleDataset} from '../../contract';

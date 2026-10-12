@@ -1,0 +1,9 @@
+plantId,name,type,capacity,output,status,substation
+PP-001,Solar Valley,solar,200,180,online,SS-001
+PP-002,Wind Ridge,wind,150,95,online,SS-002
+PP-003,Coal Creek,coal,600,620,online,SS-003
+PP-004,Gas Turbine,gas,300,0,offline,SS-004
+PP-005,Nuclear Point,nuclear,1000,980,online,SS-005
+PP-006,Solar Plains,solar,120,110,online,SS-006
+PP-007,Hydro Dam,gas,400,0,maintenance,SS-007
+PP-008,Wind Coast,wind,180,160,online,SS-008

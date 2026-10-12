@@ -8,8 +8,8 @@
  * revenue (CNY/day), dailyDemand, status); links Supplier → Material
  * `supplies` (weight = share) and Material → Product `usedIn`.
  *
- * `samples/supply-chain/*.csv` contain exactly these rows (checked by a
- * test) so the manual import demo produces the same graph.
+ * `samples/supply-chain/*.csv` contain exactly these rows (checked by
+ * scenarios_test) so the manual import demo produces the same graph.
  */
 
 import type {Row, SampleDataset} from '../contract';
