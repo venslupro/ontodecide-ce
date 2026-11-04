@@ -64,6 +64,9 @@ const TRANSIENT = new Set([
   502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527,
 ]);
 const RETRY_DELAYS_S = [2, 5, 10, 20, 30];
+// DNS and TLS propagation for a newly attached custom domain can outlast the
+// HTTP edge-error window. Allow network failures one longer backoff sequence.
+const NETWORK_RETRY_DELAYS_S = [...RETRY_DELAYS_S, 45, 60];
 
 /** Markers that identify a Cloudflare edge error page (Error 1xxx):
  *  DNS resolution (1001), SSL handshake (1020), worker limit (1023), etc.
@@ -103,11 +106,13 @@ async function fetchRetry(url, init) {
       console.log(
         `  … ${res.status}${cfError ? ' (Cloudflare edge)' : ''} from ${url}, retrying in ${delay}s`,
       );
+      await new Promise(r => setTimeout(r, delay * 1000));
     } catch (e) {
-      if (delay === undefined) throw e;
-      console.log(`  … ${e.message} from ${url}, retrying in ${delay}s`);
+      const networkDelay = NETWORK_RETRY_DELAYS_S[attempt];
+      if (networkDelay === undefined) throw e;
+      console.log(`  … ${e.message} from ${url}, retrying in ${networkDelay}s`);
+      await new Promise(r => setTimeout(r, networkDelay * 1000));
     }
-    await new Promise(r => setTimeout(r, delay * 1000));
   }
 }
 
