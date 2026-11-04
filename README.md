@@ -55,7 +55,7 @@ Please report vulnerabilities privately to the [maintainers](#maintainers) rathe
 
 ## Background
 
-The design is specified in four documents (V2.4): 社区版设计修订说明书 (authoritative), 总体设计说明书, 详细设计说明书 and 前端详细设计说明书. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) maps them onto this repository; [`docs/ROLES.md`](docs/ROLES.md) describes the Owner and Admin roles.
+OntoDecide CE is organized into bounded contexts for identity, ontology, data integration, object graphs, situation awareness, and decision intelligence. The repository combines a React single-page application with Cloudflare Workers, D1 databases, Durable Objects, Queues, and Workers AI.
 
 ### Architecture
 
@@ -125,7 +125,7 @@ tests/contract/           response bodies vs openapi.yaml
 * **Per-workspace limits** (`CE_LIMITS` in `packages/shared-kernel`): ≤ 300 objects, ≤ 900 links, ≤ 2,000 imported rows per day, ≤ 3 AI recommendations and ≤ 2 AI mapping drafts per day, ≤ 3 scheduled automations, 5 MB per import file, 512 KB per request body.
 * **Low D1 writes:** `WITHOUT ROWID` tables, a single index on property values, single-statement `json_each` batch writes, and no write when the props hash is unchanged.
 * **Atomic capped counters** guard every scarce action.
-* **Degradation paths:** when the AI quota runs out or a model fails, recommendations fall back to rule ranking (labelled 「规则排序」). When Resend is over quota or returns 429 / 5xx, e-mail is deferred to the next cron tick. When the WebSocket fails, the cockpit polls every 30 s.
+* **Degradation paths:** when the AI quota runs out or a model fails, recommendations fall back to rule-based ranking. When Resend is over quota or returns 429 / 5xx, e-mail is deferred to the next cron tick. When the WebSocket fails, the cockpit polls every 30 s.
 
 ## Install
 
@@ -268,7 +268,7 @@ In the Resend dashboard, turn off open and click tracking so the archive downloa
 
 ### Go-live checks
 
-The design asks for three live checks before go-live:
+Complete these three live checks before go-live:
 
 - `/api/*` on `ontodecide-ce.<domain>` reaches api-gateway through the Pages Function proxy, not the static Pages host.
 - Workers AI `@cf/qwen/qwen3-30b-a3b-fp8` accepts `enable_thinking: false` and JSON-schema output (the code falls back to `@cf/openai/gpt-oss-20b` automatically either way).

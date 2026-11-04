@@ -32,13 +32,28 @@ tags:
   - {name: ontology, summary: Ontology, parent: workspace, kind: nav}
   - {name: data, summary: Imports, parent: workspace, kind: nav}
   - {name: objects, summary: Objects and actions, parent: workspace, kind: nav}
-  - {name: situation, summary: Situation awareness, parent: workspace, kind: nav}
-  - {name: decision, summary: Scenarios and recommendations, parent: workspace, kind: nav}
+  - {
+      name: situation,
+      summary: Situation awareness,
+      parent: workspace,
+      kind: nav,
+    }
+  - {
+      name: decision,
+      summary: Scenarios and recommendations,
+      parent: workspace,
+      kind: nav,
+    }
   - {name: archive, summary: Archive deletion links, kind: nav}
   - {name: admin, summary: Platform administration (Admin), kind: nav}
   - {name: admin-users, summary: Accounts, parent: admin, kind: nav}
   - {name: admin-archives, summary: Archives, parent: admin, kind: nav}
-  - {name: admin-platform, summary: Settings and audit, parent: admin, kind: nav}
+  - {
+      name: admin-platform,
+      summary: Settings and audit,
+      parent: admin,
+      kind: nav,
+    }
   - {name: admin-passkeys, summary: Admin passkeys, parent: admin, kind: nav}
   - {name: ops, summary: Operations, kind: nav}
 security:
@@ -771,9 +786,24 @@ paths:
       operationId: getObject
       summary: Object detail (optionally with its links)
       parameters:
-        - {name: expand, in: query, description: '`links` adds the link slice around the object', schema: {type: string, enum: [links]}}
-        - {name: depth, in: query, description: Link depth with `expand=links`, schema: {type: integer, minimum: 1, maximum: 2, default: 1}}
-        - {name: linkTypes, in: query, description: Comma-separated link types with `expand=links`, schema: {type: string}}
+        - {
+            name: expand,
+            in: query,
+            description: '`links` adds the link slice around the object',
+            schema: {type: string, enum: [links]},
+          }
+        - {
+            name: depth,
+            in: query,
+            description: Link depth with `expand=links`,
+            schema: {type: integer, minimum: 1, maximum: 2, default: 1},
+          }
+        - {
+            name: linkTypes,
+            in: query,
+            description: Comma-separated link types with `expand=links`,
+            schema: {type: string},
+          }
         - {$ref: '#/components/parameters/ActAsTenant'}
       responses:
         '200':
@@ -815,10 +845,27 @@ paths:
       operationId: getObjectLinks
       summary: Links around an object (depth ≤ 2)
       parameters:
-        - {name: depth, in: query, schema: {type: integer, minimum: 1, maximum: 2, default: 1}}
-        - {name: linkTypes, in: query, description: Comma-separated link types, schema: {type: string}}
-        - {name: direction, in: query, schema: {type: string, enum: [out, in, both], default: both}}
-        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 300, default: 200}}
+        - {
+            name: depth,
+            in: query,
+            schema: {type: integer, minimum: 1, maximum: 2, default: 1},
+          }
+        - {
+            name: linkTypes,
+            in: query,
+            description: Comma-separated link types,
+            schema: {type: string},
+          }
+        - {
+            name: direction,
+            in: query,
+            schema: {type: string, enum: [out, in, both], default: both},
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: {type: integer, minimum: 1, maximum: 300, default: 200},
+          }
         - {$ref: '#/components/parameters/ActAsTenant'}
       responses:
         '200':
@@ -878,7 +925,11 @@ paths:
       operationId: getSituationOverview
       summary: Cockpit (KPIs, trends, alerts, pending recommendations, quotas)
       parameters:
-        - {name: range, in: query, schema: {type: string, enum: [24h, 7d], default: 24h}}
+        - {
+            name: range,
+            in: query,
+            schema: {type: string, enum: [24h, 7d], default: 24h},
+          }
         - {$ref: '#/components/parameters/ActAsTenant'}
       responses:
         '200':
@@ -894,8 +945,16 @@ paths:
       operationId: listAlerts
       summary: List alerts
       parameters:
-        - {name: status, in: query, schema: {type: string, enum: [OPEN, ACKED, CLOSED]}}
-        - {name: severity, in: query, schema: {$ref: '#/components/schemas/Severity'}}
+        - {
+            name: status,
+            in: query,
+            schema: {type: string, enum: [OPEN, ACKED, CLOSED]},
+          }
+        - {
+            name: severity,
+            in: query,
+            schema: {$ref: '#/components/schemas/Severity'},
+          }
         - {name: rid, in: query, schema: {type: string}}
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
@@ -1014,7 +1073,12 @@ paths:
       security: []
       parameters:
         - {name: ticket, in: query, required: true, schema: {type: string}}
-        - {name: Upgrade, in: header, required: true, schema: {type: string, enum: [websocket]}}
+        - {
+            name: Upgrade,
+            in: header,
+            required: true,
+            schema: {type: string, enum: [websocket]},
+          }
       responses:
         '101': {description: Switching protocols}
         '401': {$ref: '#/components/responses/Problem'}
@@ -1072,7 +1136,11 @@ paths:
       operationId: listRecommendations
       summary: List recommendations
       parameters:
-        - {name: status, in: query, schema: {$ref: '#/components/schemas/RecStatus'}}
+        - {
+            name: status,
+            in: query,
+            schema: {$ref: '#/components/schemas/RecStatus'},
+          }
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
         - {$ref: '#/components/parameters/ActAsTenant'}
@@ -1159,7 +1227,12 @@ paths:
       operationId: adminListUsers
       summary: All accounts (full e-mail)
       parameters:
-        - {name: status, in: query, schema: {type: string, enum: [ACTIVE, EXPIRED, ARCHIVING, ARCHIVE_ONLY]}}
+        - {
+            name: status,
+            in: query,
+            schema:
+              {type: string, enum: [ACTIVE, EXPIRED, ARCHIVING, ARCHIVE_ONLY]},
+          }
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
       responses:
@@ -1655,7 +1728,16 @@ components:
         limit: {type: integer}
     Quotas:
       type: object
-      required: [objects, links, importRowsToday, aiRecsToday, mappingDraftsToday, sessions, resetsAt]
+      required:
+        [
+          objects,
+          links,
+          importRowsToday,
+          aiRecsToday,
+          mappingDraftsToday,
+          sessions,
+          resetsAt,
+        ]
       properties:
         objects: {$ref: '#/components/schemas/Used'}
         links: {$ref: '#/components/schemas/Used'}
@@ -1788,8 +1870,17 @@ components:
         sessions: {$ref: '#/components/schemas/Used'}
         passkeys: {type: integer, description: Admin only}
         recoveryCodesLeft: {type: integer, description: Admin only}
-        sessionExpiresAt: {type: string, format: date-time, description: When the current session expires (admin ≤ 8 h)}
-        recoveryPending: {type: boolean, description: Admin only; signed in with a recovery code and must bind a new passkey first}
+        sessionExpiresAt:
+          {
+            type: string,
+            format: date-time,
+            description: When the current session expires (admin ≤ 8 h),
+          }
+        recoveryPending:
+          {
+            type: boolean,
+            description: Admin only; signed in with a recovery code and must bind a new passkey first,
+          }
     MeWithQuotas:
       allOf:
         - {$ref: '#/components/schemas/Me'}
@@ -1824,7 +1915,11 @@ components:
       properties:
         apiName: {$ref: '#/components/schemas/ApiName'}
         displayName: {$ref: '#/components/schemas/I18nText'}
-        dataType: {type: string, description: 'string|integer|double|boolean|date|timestamp|geopoint|enum|objectRef:<Type>'}
+        dataType:
+          {
+            type: string,
+            description: 'string|integer|double|boolean|date|timestamp|geopoint|enum|objectRef:<Type>',
+          }
         required: {type: boolean}
         unit: {type: string}
         indexed: {type: boolean}
@@ -1841,7 +1936,12 @@ components:
         icon: {type: string}
         primaryKey: {type: string}
         titleProperty: {type: string}
-        properties: {type: array, minItems: 1, items: {$ref: '#/components/schemas/PropertyDef'}}
+        properties:
+          {
+            type: array,
+            minItems: 1,
+            items: {$ref: '#/components/schemas/PropertyDef'},
+          }
         description: {$ref: '#/components/schemas/I18nText'}
     LinkTypeDef:
       type: object
@@ -1859,12 +1959,14 @@ components:
             defaultWeight: {type: number, minimum: 0, maximum: 1}
     ActionTypeDef:
       type: object
-      required: [apiName, displayName, targetType, parameters, preconditions, effects]
+      required:
+        [apiName, displayName, targetType, parameters, preconditions, effects]
       properties:
         apiName: {$ref: '#/components/schemas/ApiName'}
         displayName: {$ref: '#/components/schemas/I18nText'}
         targetType: {type: string}
-        parameters: {type: array, items: {type: object, additionalProperties: true}}
+        parameters:
+          {type: array, items: {type: object, additionalProperties: true}}
         preconditions:
           type: array
           items:
@@ -1892,7 +1994,8 @@ components:
         description: {$ref: '#/components/schemas/I18nText'}
     Ontology:
       type: object
-      required: [templateId, templateVersion, custom, etag, definition, updatedAt]
+      required:
+        [templateId, templateVersion, custom, etag, definition, updatedAt]
       properties:
         templateId: {type: string}
         templateVersion: {type: string}
@@ -1900,13 +2003,19 @@ components:
         etag: {type: integer}
         definition:
           type: object
-          required: [objectTypes, linkTypes, actionTypes, functions, simulationKpis]
+          required:
+            [objectTypes, linkTypes, actionTypes, functions, simulationKpis]
           properties:
-            objectTypes: {type: array, items: {$ref: '#/components/schemas/ObjectTypeDef'}}
-            linkTypes: {type: array, items: {$ref: '#/components/schemas/LinkTypeDef'}}
-            actionTypes: {type: array, items: {$ref: '#/components/schemas/ActionTypeDef'}}
-            functions: {type: array, items: {type: object, additionalProperties: true}}
-            simulationKpis: {type: array, items: {type: object, additionalProperties: true}}
+            objectTypes:
+              {type: array, items: {$ref: '#/components/schemas/ObjectTypeDef'}}
+            linkTypes:
+              {type: array, items: {$ref: '#/components/schemas/LinkTypeDef'}}
+            actionTypes:
+              {type: array, items: {$ref: '#/components/schemas/ActionTypeDef'}}
+            functions:
+              {type: array, items: {type: object, additionalProperties: true}}
+            simulationKpis:
+              {type: array, items: {type: object, additionalProperties: true}}
         updatedAt: {type: [string, 'null'], format: date-time}
     DefinitionList:
       type: object
@@ -1954,7 +2063,8 @@ components:
               to: {$ref: '#/components/schemas/ApiName'}
               from: {type: string}
               transform: {type: string, maxLength: 200}
-              matchedBy: {type: string, enum: [exact, synonym, similarity, ai, manual]}
+              matchedBy:
+                {type: string, enum: [exact, synonym, similarity, ai, manual]}
         links:
           type: array
           maxItems: 10
@@ -1989,12 +2099,23 @@ components:
       properties:
         seq: {type: integer, minimum: 0, maximum: 10000}
         last: {type: boolean}
-        rows: {type: array, maxItems: 100, items: {type: object, additionalProperties: true}}
+        rows:
+          {
+            type: array,
+            maxItems: 100,
+            items: {type: object, additionalProperties: true},
+          }
     MappingDraftRequest:
       type: object
       required: [fields, sampleRows, targetType]
       properties:
-        fields: {type: array, minItems: 1, maxItems: 100, items: {type: string, maxLength: 200}}
+        fields:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 100,
+            items: {type: string, maxLength: 200},
+          }
         sampleRows: {type: array, maxItems: 20, items: {type: array, items: {}}}
         targetType: {$ref: '#/components/schemas/ApiName'}
     Reject:
@@ -2007,7 +2128,22 @@ components:
         detail: {type: string}
     Job:
       type: object
-      required: [id, kind, fileName, targetType, mapping, status, totalRows, received, upserted, skipped, rejected, createdAt, updatedAt]
+      required:
+        [
+          id,
+          kind,
+          fileName,
+          targetType,
+          mapping,
+          status,
+          totalRows,
+          received,
+          upserted,
+          skipped,
+          rejected,
+          createdAt,
+          updatedAt,
+        ]
       properties:
         id: {type: string}
         kind: {type: string, enum: [file, sample]}
@@ -2057,7 +2193,12 @@ components:
       required: [op]
       description: and/or/not/eq/neq/gt/gte/lt/lte/in/contains/exists over object properties
       properties:
-        op: {type: string, enum: [and, or, not, eq, neq, gt, gte, lt, lte, in, contains, exists]}
+        op:
+          {
+            type: string,
+            enum:
+              [and, or, not, eq, neq, gt, gte, lt, lte, in, contains, exists],
+          }
         args: {type: array, items: {$ref: '#/components/schemas/FilterExpr'}}
         arg: {$ref: '#/components/schemas/FilterExpr'}
         prop: {type: string}
@@ -2072,14 +2213,19 @@ components:
         at: {type: integer, description: Unix ms}
     Object:
       type: object
-      required: [rid, type, primaryKey, title, props, provenance, version, updatedAt]
+      required:
+        [rid, type, primaryKey, title, props, provenance, version, updatedAt]
       properties:
         rid: {$ref: '#/components/schemas/Rid'}
         type: {type: string}
         primaryKey: {type: string}
         title: {type: string}
         props: {type: object, additionalProperties: true}
-        provenance: {type: object, additionalProperties: {$ref: '#/components/schemas/Provenance'}}
+        provenance:
+          {
+            type: object,
+            additionalProperties: {$ref: '#/components/schemas/Provenance'},
+          }
         version: {type: integer}
         updatedAt: {type: string, format: date-time}
         invalidProps: {type: array, items: {type: string}}
@@ -2138,7 +2284,17 @@ components:
         recommendationId: {type: string}
     ActionResult:
       type: object
-      required: [actionLogId, actionType, rid, version, before, after, executedAt, replayed]
+      required:
+        [
+          actionLogId,
+          actionType,
+          rid,
+          version,
+          before,
+          after,
+          executedAt,
+          replayed,
+        ]
       properties:
         actionLogId: {type: string}
         actionType: {type: string}
@@ -2150,7 +2306,8 @@ components:
         replayed: {type: boolean}
     ActionLog:
       type: object
-      required: [id, actionType, targetRid, params, before, after, actor, executedAt]
+      required:
+        [id, actionType, targetRid, params, before, after, actor, executedAt]
       properties:
         id: {type: string}
         actionType: {type: string}
@@ -2158,7 +2315,8 @@ components:
         params: {type: object, additionalProperties: true}
         before: {type: object, additionalProperties: true}
         after: {type: object, additionalProperties: true}
-        actor: {type: string, description: 'owner, admin or svc:decision-engine'}
+        actor:
+          {type: string, description: 'owner, admin or svc:decision-engine'}
         actorUserId: {type: string}
         recommendationId: {type: string}
         executedAt: {type: string, format: date-time}
@@ -2195,7 +2353,21 @@ components:
             lastFiredAt: {type: [string, 'null'], format: date-time}
     Alert:
       type: object
-      required: [id, automationId, automationName, rid, title, severity, status, snapshot, hits, raisedAt, ackedAt, closedAt]
+      required:
+        [
+          id,
+          automationId,
+          automationName,
+          rid,
+          title,
+          severity,
+          status,
+          snapshot,
+          hits,
+          raisedAt,
+          ackedAt,
+          closedAt,
+        ]
       properties:
         id: {type: string}
         automationId: {type: string}
@@ -2217,7 +2389,19 @@ components:
         nextCursor: {type: [string, 'null']}
     Kpi:
       type: object
-      required: [id, name, objectType, aggregate, value, previous, target, unit, higherIsBetter, updatedAt]
+      required:
+        [
+          id,
+          name,
+          objectType,
+          aggregate,
+          value,
+          previous,
+          target,
+          unit,
+          higherIsBetter,
+          updatedAt,
+        ]
       properties:
         id: {type: string}
         name: {$ref: '#/components/schemas/I18nText'}
@@ -2240,7 +2424,17 @@ components:
         hop: {type: integer}
     CockpitOverview:
       type: object
-      required: [kpis, trends, alerts, impacted, initialized, generatedAt, pendingRecommendations, quotas]
+      required:
+        [
+          kpis,
+          trends,
+          alerts,
+          impacted,
+          initialized,
+          generatedAt,
+          pendingRecommendations,
+          quotas,
+        ]
       properties:
         kpis: {type: array, items: {$ref: '#/components/schemas/Kpi'}}
         trends:
@@ -2259,7 +2453,8 @@ components:
                     ts: {type: string, format: date-time}
                     value: {type: number}
         alerts: {type: array, items: {$ref: '#/components/schemas/Alert'}}
-        impacted: {type: array, items: {$ref: '#/components/schemas/ImpactedObject'}}
+        impacted:
+          {type: array, items: {$ref: '#/components/schemas/ImpactedObject'}}
         initialized: {type: boolean}
         generatedAt: {type: string, format: date-time}
         pendingRecommendations:
@@ -2278,7 +2473,8 @@ components:
       required: [seq, type, data, occurredAt]
       properties:
         seq: {type: integer}
-        type: {type: string, enum: [snapshot, kpi, alert, recommendation, trial]}
+        type:
+          {type: string, enum: [snapshot, kpi, alert, recommendation, trial]}
         data: {}
         occurredAt: {type: string, format: date-time}
     WsResume:
@@ -2289,7 +2485,11 @@ components:
         lastSeq: {type: integer}
 
     # —— decision ——
-    RecStatus: {type: string, enum: [Proposed, Confirmed, Rejected, Expired, Executed, ExecFailed]}
+    RecStatus:
+      {
+        type: string,
+        enum: [Proposed, Confirmed, Rejected, Expired, Executed, ExecFailed],
+      }
     Perturbation:
       type: object
       required: [rid, property, change]
@@ -2299,7 +2499,17 @@ components:
         change: {type: number, minimum: -1, maximum: 1}
     Candidate:
       type: object
-      required: [id, actionType, displayName, target, targetTitle, params, expectedImpact, affectedCount]
+      required:
+        [
+          id,
+          actionType,
+          displayName,
+          target,
+          targetTitle,
+          params,
+          expectedImpact,
+          affectedCount,
+        ]
       properties:
         id: {type: string}
         actionType: {type: string}
@@ -2311,14 +2521,17 @@ components:
         affectedCount: {type: integer}
     ScenarioResult:
       type: object
-      required: [baseline, scenario, affected, riskLevel, kpis, nodeCount, computedAt]
+      required:
+        [baseline, scenario, affected, riskLevel, kpis, nodeCount, computedAt]
       properties:
         baseline: {type: object, additionalProperties: {type: number}}
         scenario: {type: object, additionalProperties: {type: number}}
         withActions:
           type: object
-          additionalProperties: {type: object, additionalProperties: {type: number}}
-        affected: {type: array, items: {$ref: '#/components/schemas/ImpactedObject'}}
+          additionalProperties:
+            {type: object, additionalProperties: {type: number}}
+        affected:
+          {type: array, items: {$ref: '#/components/schemas/ImpactedObject'}}
         riskLevel: {type: string, enum: [LOW, MEDIUM, HIGH]}
         kpis: {type: array, items: {type: object, additionalProperties: true}}
         nodeCount: {type: integer}
@@ -2328,7 +2541,13 @@ components:
       required: [perturbations]
       properties:
         name: {type: string, maxLength: 120}
-        perturbations: {type: array, minItems: 1, maxItems: 10, items: {$ref: '#/components/schemas/Perturbation'}}
+        perturbations:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 10,
+            items: {$ref: '#/components/schemas/Perturbation'},
+          }
         candidateActions:
           type: array
           maxItems: 10
@@ -2345,13 +2564,32 @@ components:
       properties:
         id: {type: string}
         name: {type: string}
-        perturbations: {type: array, items: {$ref: '#/components/schemas/Perturbation'}}
-        candidates: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+        perturbations:
+          {type: array, items: {$ref: '#/components/schemas/Perturbation'}}
+        candidates:
+          {type: array, items: {$ref: '#/components/schemas/Candidate'}}
         result: {$ref: '#/components/schemas/ScenarioResult'}
         createdAt: {type: string, format: date-time}
     Recommendation:
       type: object
-      required: [id, status, focus, summary, rationale, candidates, ranking, evidence, risks, confidence, rankedBy, locale, createdAt, expiresAt, version]
+      required:
+        [
+          id,
+          status,
+          focus,
+          summary,
+          rationale,
+          candidates,
+          ranking,
+          evidence,
+          risks,
+          confidence,
+          rankedBy,
+          locale,
+          createdAt,
+          expiresAt,
+          version,
+        ]
       properties:
         id: {type: string}
         status: {$ref: '#/components/schemas/RecStatus'}
@@ -2360,7 +2598,8 @@ components:
         scenarioId: {type: string}
         summary: {type: string}
         rationale: {type: string}
-        candidates: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+        candidates:
+          {type: array, items: {$ref: '#/components/schemas/Candidate'}}
         ranking: {type: array, items: {type: string}}
         evidence:
           type: array
@@ -2398,7 +2637,8 @@ components:
       type: object
       required: [items, nextCursor]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/Recommendation'}}
+        items:
+          {type: array, items: {$ref: '#/components/schemas/Recommendation'}}
         nextCursor: {type: [string, 'null']}
     GenerateRequest:
       type: object
@@ -2417,7 +2657,20 @@ components:
     # —— admin ——
     PlatformOverview:
       type: object
-      required: [activeTrials, signupsToday, archives, purgeBacklog, signup, freeQuota, analyticsAt, recentActions, analyticsConfigured, stuckArchives, signKeyRotationDue]
+      required:
+        [
+          activeTrials,
+          signupsToday,
+          archives,
+          purgeBacklog,
+          signup,
+          freeQuota,
+          analyticsAt,
+          recentActions,
+          analyticsConfigured,
+          stuckArchives,
+          signKeyRotationDue,
+        ]
       properties:
         analyticsConfigured:
           type: boolean
@@ -2444,7 +2697,11 @@ components:
             type: object
             required: [key, used, limit]
             properties:
-              key: {type: string, enum: [workers, d1Writes, neurons, queues, emailResend]}
+              key:
+                {
+                  type: string,
+                  enum: [workers, d1Writes, neurons, queues, emailResend],
+                }
               used: {type: number}
               limit: {type: number}
         analyticsAt: {type: [string, 'null'], format: date-time}
@@ -2460,7 +2717,19 @@ components:
               kind: {type: string, enum: [modify, delete, enter, view]}
     AdminUserRow:
       type: object
-      required: [userId, tenantId, email, status, trialExpiresAt, zipExpiresAt, sessions, banned, objects, links]
+      required:
+        [
+          userId,
+          tenantId,
+          email,
+          status,
+          trialExpiresAt,
+          zipExpiresAt,
+          sessions,
+          banned,
+          objects,
+          links,
+        ]
       properties:
         userId: {type: [string, 'null']}
         tenantId: {$ref: '#/components/schemas/Ulid'}
@@ -2470,8 +2739,16 @@ components:
         zipExpiresAt: {type: [string, 'null'], format: date-time}
         sessions: {type: integer}
         banned: {type: boolean}
-        objects: {type: integer, description: Objects held by the workspace (0 once purged)}
-        links: {type: integer, description: Links held by the workspace (0 once purged)}
+        objects:
+          {
+            type: integer,
+            description: Objects held by the workspace (0 once purged),
+          }
+        links:
+          {
+            type: integer,
+            description: Links held by the workspace (0 once purged),
+          }
     AdminUser:
       allOf:
         - {$ref: '#/components/schemas/AdminUserRow'}
@@ -2514,7 +2791,15 @@ components:
         nextCursor: {type: [string, 'null']}
     PlatformSettings:
       type: object
-      required: [signupEnabled, signupDailyLimit, activeWorkspaceLimit, trialHours, archiveDays, version]
+      required:
+        [
+          signupEnabled,
+          signupDailyLimit,
+          activeWorkspaceLimit,
+          trialHours,
+          archiveDays,
+          version,
+        ]
       properties:
         signupEnabled: {type: boolean}
         signupDailyLimit: {type: integer, minimum: 0, maximum: 20}

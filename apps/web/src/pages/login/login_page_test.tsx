@@ -49,10 +49,13 @@ describe('LoginPage', () => {
       as: 'anonymous',
       url: '/login',
     });
-    expect(await screen.findByText('用邮箱登录')).toBeInTheDocument();
+    expect(await screen.findByText('融合数据，推演结果，')).toBeInTheDocument();
+    expect(screen.getByText('实时决策')).toBeInTheDocument();
     expect(screen.queryByText('欢迎回来')).not.toBeInTheDocument();
     // Display switches live in the page header, not in the form card.
-    const card = screen.getByRole('heading', {name: '登录'}).closest('section');
+    const card = screen
+      .getByRole('heading', {name: '欢迎进入决策驾驶舱'})
+      .closest('section');
     expect(
       within(card!).queryByRole('radiogroup', {name: '界面语言'}),
     ).not.toBeInTheDocument();
